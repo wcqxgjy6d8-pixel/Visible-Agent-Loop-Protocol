@@ -16,6 +16,8 @@
 - Optional squad routing.
 - Cross-platform Full Mode guidance for macOS, Linux, Windows SSH, Windows
   beta, and Manual Mode fallback.
+- Quickstart, FAQ, comparison document, issue templates, code of conduct, and
+  a complete Full Mode evidence example.
 
 ## 0.2 Reference CLI
 

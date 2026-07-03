@@ -1,0 +1,37 @@
+name: Runtime adapter
+description: Discuss compatibility for a runtime, daemon queue, platform, or terminal controller.
+title: "[Runtime Adapter]: "
+labels: ["runtime-adapter"]
+body:
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime name
+      placeholder: HERDR, custom daemon, managed platform, terminal controller, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: capabilities
+    attributes:
+      label: Available capabilities
+      description: List agent scan, status read, dispatch submit, receipt, evidence, wait, and provider matrix support.
+    validations:
+      required: true
+  - type: textarea
+    id: missing
+    attributes:
+      label: Missing capabilities
+      description: Which Full Mode requirements are not available yet?
+    validations:
+      required: true
+  - type: dropdown
+    id: target_mode
+    attributes:
+      label: Target mode
+      options:
+        - Full Mode
+        - Remote Mode
+        - Manual Mode
+        - Unknown
+    validations:
+      required: true

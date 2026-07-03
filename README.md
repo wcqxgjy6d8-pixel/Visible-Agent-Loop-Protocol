@@ -33,6 +33,8 @@ herdr status
 See [INSTALL.md](INSTALL.md) for Homebrew, Windows, SSH remote, and fallback
 paths.
 
+New users should start with [docs/quickstart.md](docs/quickstart.md).
+
 ## Platform Paths
 
 | User system | Recommended path | Mode |
@@ -148,6 +150,9 @@ Visible-Agent-Loop-Protocol/
   docs/
     runtime.md
     platform-support.md
+    quickstart.md
+    faq.md
+    comparison.md
     runtime-adapters.md
     task-state-machine.md
     provider-matrix.md
@@ -169,6 +174,7 @@ Visible-Agent-Loop-Protocol/
     context-policy.json
     routing.json
     dispatch.md
+    full-mode-task/
 ```
 
 ## Non-Negotiables

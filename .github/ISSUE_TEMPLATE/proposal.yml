@@ -1,0 +1,33 @@
+name: Protocol proposal
+description: Propose a protocol change or new concept.
+title: "[Proposal]: "
+labels: ["proposal"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What should change?
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What real workflow or reliability gap does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: protocol_effect
+    attributes:
+      label: Protocol effect
+      description: Does this affect lifecycle, receipts, evidence, schemas, adapters, or gates?
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility
+      description: How does this preserve Full Mode, Remote Mode, and Manual Mode distinctions?
+    validations:
+      required: false

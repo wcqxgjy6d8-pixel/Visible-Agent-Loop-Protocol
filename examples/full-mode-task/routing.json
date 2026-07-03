@@ -1,0 +1,81 @@
+{
+  "schema_version": "valp-capability-routing.v1",
+  "task_id": "TASK-EXAMPLE-001",
+  "profile": "software-code",
+  "runtime_adapter": {
+    "class": "pane_controller",
+    "name": "example-full-mode-runtime",
+    "full_mode_capable": true,
+    "state_mapping_ref": "docs/task-state-machine.md"
+  },
+  "capabilities_needed": [
+    "implementation",
+    "verification",
+    "code_review"
+  ],
+  "selected_agents": [
+    "codex",
+    "claude"
+  ],
+  "agent_match_reasons": {
+    "codex": [
+      "implementation",
+      "test execution",
+      "evidence writing"
+    ],
+    "claude": [
+      "read-only review",
+      "risk review"
+    ]
+  },
+  "selected_agent_context_policies": {
+    "codex": {
+      "soft_warning_pct": 55,
+      "hard_compression_pct": 65,
+      "emergency_stop_pct": 80
+    },
+    "claude": {
+      "soft_warning_pct": 60,
+      "hard_compression_pct": 70,
+      "emergency_stop_pct": 80
+    }
+  },
+  "provider_matrix": {
+    "generated_at": "2026-07-03T00:00:00Z",
+    "providers": {
+      "codex": {
+        "cli_available": true,
+        "mcp_support": "supported",
+        "skill_discovery_path": "$CODEX_HOME/skills",
+        "session_resume_support": "supported",
+        "approval_behavior": "manual_or_policy",
+        "known_limitations": []
+      },
+      "claude": {
+        "cli_available": true,
+        "mcp_support": "supported",
+        "skill_discovery_path": ".claude/skills/",
+        "session_resume_support": "supported",
+        "approval_behavior": "provider_policy",
+        "known_limitations": []
+      }
+    }
+  },
+  "skill_recommendations": {
+    "schema_version": "valp-skill-recommendations.v1",
+    "status": "not_run",
+    "reason": "sample task keeps skills out of scope"
+  },
+  "runtime_task_state_mapping": {
+    "queued": "accepted_by_runtime_not_delivery",
+    "dispatched": "dispatch_submitted_only_with_proof",
+    "running": "executing",
+    "completed": "dispatch_completed_only_with_expected_evidence",
+    "failed": "failed_or_blocked_with_reason",
+    "cancelled": "cancelled"
+  },
+  "squad_routing": {
+    "used": false
+  },
+  "capabilities_missing": []
+}

@@ -19,3 +19,5 @@
 - Adds optional squad routing rules.
 - Adds platform support guidance for macOS, Linux, Windows SSH, Windows beta,
   and degraded Manual Mode.
+- Adds quickstart, FAQ, comparison document, code of conduct, issue templates,
+  and a complete Full Mode task example.

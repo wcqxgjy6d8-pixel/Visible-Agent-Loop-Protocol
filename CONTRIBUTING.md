@@ -19,4 +19,5 @@ Keep the protocol boring, auditable, and implementation-neutral.
 - Does the change keep receipt semantics clear?
 - Does the change preserve cross-platform wording?
 - Does the change include evidence paths?
-
+- Does the change avoid claiming a CLI/runtime feature that is not implemented?
+- Does the change update quickstart, FAQ, or examples when user-facing behavior changes?

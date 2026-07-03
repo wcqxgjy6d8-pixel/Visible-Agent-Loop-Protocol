@@ -1,0 +1,52 @@
+{
+  "schema_version": "valp-visible-loop-state.v1",
+  "task_id": "TASK-EXAMPLE-001",
+  "profile": "software-code",
+  "status": "done",
+  "runtime_adapter": {
+    "class": "pane_controller",
+    "name": "example-full-mode-runtime"
+  },
+  "runtime_task_state_mapping": {
+    "completed": "dispatch_completed_only_with_expected_evidence"
+  },
+  "provider_matrix": {
+    "status": "scanned",
+    "ref": "routing.json"
+  },
+  "squad_routing": {
+    "used": false
+  },
+  "selected_agents": [
+    "codex",
+    "claude"
+  ],
+  "capabilities_needed": [
+    "implementation",
+    "verification",
+    "code_review"
+  ],
+  "capabilities_missing": [],
+  "context_policies": {
+    "codex": {
+      "hard_compression_pct": 65,
+      "emergency_stop_pct": 80
+    },
+    "claude": {
+      "hard_compression_pct": 70,
+      "emergency_stop_pct": 80
+    }
+  },
+  "skill_recommendations": {
+    "status": "not_run"
+  },
+  "gates": {
+    "dispatch_receipts": "passed",
+    "expected_evidence": "passed",
+    "verification": "passed",
+    "review": "passed",
+    "approval": "not_required"
+  },
+  "approval_required": [],
+  "updated_at": "2026-07-03T00:00:00Z"
+}

@@ -1,0 +1,39 @@
+name: Bug report
+description: Report an inconsistency, broken schema, or unclear protocol behavior.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is wrong or inconsistent?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should the protocol or documentation say instead?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Link files, sections, schema paths, or examples.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - spec
+        - docs
+        - schemas
+        - examples
+        - install/platform support
+        - other
+    validations:
+      required: true

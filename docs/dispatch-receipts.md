@@ -41,6 +41,13 @@ dispatch_completed
 
 `dispatch_submitted` is not enough when evidence is expected.
 
+Because the ledger is append-only, validators must evaluate the latest receipt
+for each selected agent. A historical `dispatch_completed` does not satisfy the
+gate if a later receipt for the same agent is `dispatch_blocked`,
+`dispatch_inserted`, or only `dispatch_submitted`. If late evidence appears
+after a timeout, the runtime must append a newer `dispatch_completed` receipt
+that points to the recovered evidence.
+
 ## Receipt Ledger
 
 Receipts are appended to:
@@ -74,4 +81,3 @@ manual_result_attested
 ```
 
 These are not equivalent to Full Mode runtime receipts.
-

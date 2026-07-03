@@ -190,15 +190,21 @@ class TaskAudit:
         agents = self._selected_agents()
         if not self.receipts:
             return self._fail("dispatch_receipts", "Dispatch receipts satisfy the required gates", "Missing or empty dispatch-receipts.jsonl", evidence)
-        completed_agents = {
-            r.get("agent")
-            for r in self.receipts
-            if r.get("event") == "dispatch_completed" and r.get("agent")
-        }
-        missing = [agent for agent in agents if agent not in completed_agents]
+        latest = self._latest_receipts_by_agent()
+        missing = [agent for agent in agents if agent not in latest]
+        incomplete = [
+            f"{agent}={latest[agent].get('event')}"
+            for agent in agents
+            if agent in latest and latest[agent].get("event") != "dispatch_completed"
+        ]
+        failed = []
         if missing:
-            return self._fail("dispatch_receipts", "Dispatch receipts satisfy the required gates", "Missing dispatch_completed for: " + ", ".join(missing), evidence)
-        return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "dispatch_completed found for selected agents", evidence)
+            failed.append("missing receipt for: " + ", ".join(missing))
+        if incomplete:
+            failed.append("latest receipt is not dispatch_completed for: " + ", ".join(incomplete))
+        if failed:
+            return self._fail("dispatch_receipts", "Dispatch receipts satisfy the required gates", "; ".join(failed), evidence)
+        return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is dispatch_completed for selected agents", evidence)
 
     def check_expected_evidence(self) -> AuditItem:
         refs = self._expected_evidence_refs()
@@ -296,6 +302,14 @@ class TaskAudit:
                 if match:
                     refs.add(match.group(1))
         return sorted(refs)
+
+    def _latest_receipts_by_agent(self) -> dict[str, dict[str, Any]]:
+        latest: dict[str, dict[str, Any]] = {}
+        for receipt in self.receipts:
+            agent = receipt.get("agent")
+            if agent:
+                latest[str(agent)] = receipt
+        return latest
 
     def _review_evidence_exists(self) -> bool:
         if (self.task_dir / "agents/claude/review.md").exists():

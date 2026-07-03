@@ -363,6 +363,13 @@ state or equivalent proof.
 
 If expected evidence is declared, gates require `dispatch_completed`.
 
+Receipt ledgers are append-only, so gates must evaluate the latest receipt for
+each selected agent, not merely search for any historical success. A later
+`dispatch_blocked` supersedes an earlier `dispatch_completed` until a newer
+`dispatch_completed` receipt records the recovered evidence. This prevents old
+success receipts from hiding a failed retry, a missed pane submission, or an
+agent that timed out before producing required evidence.
+
 ## 11. Context Compression
 
 Context compression is part of capability scanning, not a late-stage cleanup.

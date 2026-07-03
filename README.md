@@ -35,6 +35,21 @@ paths.
 
 New users should start with [docs/quickstart.md](docs/quickstart.md).
 
+## First Reference CLI
+
+VALP 0.2 starts with an executable quality gate:
+
+```bash
+bin/valp audit examples/full-mode-task
+```
+
+`valp audit` scans a task evidence folder and checks the Done Criteria from
+`SPEC.md`: routing, runtime adapter, context policies, provider matrix,
+receipts, expected evidence, verification, review, approvals, final synthesis,
+and routing feedback.
+
+See [docs/cli-audit.md](docs/cli-audit.md).
+
 ## Platform Paths
 
 | User system | Recommended path | Mode |
@@ -145,6 +160,10 @@ Visible-Agent-Loop-Protocol/
   SPEC.md
   INSTALL.md
   ROADMAP.md
+  bin/
+    valp
+  valp_cli/
+    audit.py
   LICENSE
   CHANGELOG.md
   CONTRIBUTING.md
@@ -152,6 +171,7 @@ Visible-Agent-Loop-Protocol/
   PRIVACY.md
   docs/
     runtime.md
+    cli-audit.md
     platform-support.md
     quickstart.md
     faq.md

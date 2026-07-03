@@ -6,6 +6,20 @@ Task: TASK-EXAMPLE-001
 
 Done.
 
+## Decisions
+
+- Codex implementation evidence and command verification are accepted.
+- Claude read-only review is accepted as review evidence.
+- No approval-gated action was required.
+
+## Disagreements
+
+None recorded for this synthetic example.
+
+## Evidence Gaps
+
+None recorded for this synthetic example.
+
 ## Evidence
 
 - Routing: `routing.json`

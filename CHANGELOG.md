@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Adds the first reference CLI command: `valp audit`.
+- Maps `SPEC.md` Done Criteria into executable PASS/WARN/FAIL/SKIP audit items.
+- Adds text and JSON audit output for VALP task evidence folders.
+- Adds unit tests for passing and failing audit cases.
+
 ## 0.1.0-draft
 
 - Initial open protocol draft.

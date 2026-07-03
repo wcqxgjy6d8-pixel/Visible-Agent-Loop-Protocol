@@ -154,6 +154,18 @@ final synthesis is recorded
 routing feedback is recorded for non-trivial tasks, if supported
 ```
 
+Run the reference audit command against a task folder:
+
+```bash
+bin/valp audit examples/full-mode-task
+```
+
+For machine-readable output:
+
+```bash
+bin/valp audit examples/full-mode-task --json
+```
+
 ## 9. If Runtime Is Not Available
 
 Use Manual Mode only as a degraded fallback. Manual Mode can preserve task

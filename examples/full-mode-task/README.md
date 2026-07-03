@@ -27,3 +27,9 @@ examples/full-mode-task/
 The key point is not the exact folder name. The key point is that routing,
 dispatch, receipts, evidence, review, feedback, and final synthesis are all
 visible.
+
+Audit this example with:
+
+```bash
+bin/valp audit examples/full-mode-task
+```

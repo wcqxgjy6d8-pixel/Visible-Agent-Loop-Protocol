@@ -558,3 +558,8 @@ A task is done only when:
 - approvals are resolved;
 - final synthesis records decisions, disagreements, evidence gaps, and result.
 - feedback record is written for non-trivial tasks when the runtime supports it.
+
+The reference CLI command `valp audit` maps these bullets into executable audit
+items. The CLI is not required by the protocol, but it is the reference quality
+gate for checking whether a recorded task evidence folder satisfies the Done
+Criteria.

@@ -24,12 +24,14 @@
 
 ## 0.2 Reference CLI
 
-- Generate workspace scaffold.
-- Validate schemas.
+- `valp audit` for task evidence folders.
+- Map Done Criteria to executable audit items.
 - Validate dispatch receipts.
 - Validate context policy presence.
 - Validate approval gates.
-- Produce task audit report.
+- Produce text and JSON task audit reports.
+- Generate workspace scaffold.
+- Validate schemas.
 
 ## 0.3 Runtime Adapters
 

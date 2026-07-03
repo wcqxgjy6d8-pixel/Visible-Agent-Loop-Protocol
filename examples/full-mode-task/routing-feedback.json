@@ -1,0 +1,43 @@
+{
+  "schema_version": "valp-routing-feedback.v1",
+  "task_id": "TASK-EXAMPLE-001",
+  "profile": "software-code",
+  "selected_agents": ["codex", "claude"],
+  "candidate_agents": ["codex", "claude", "agy"],
+  "routing_confidence": {
+    "overall": "high",
+    "notes": [
+      "Codex had implementation and verification capability.",
+      "Claude had read-only review capability.",
+      "Agy was rejected because no prototype task was needed."
+    ]
+  },
+  "expected_evidence": [
+    "agents/codex/evidence.md",
+    "agents/claude/review.md",
+    "evidence/verification.md"
+  ],
+  "actual_evidence": [
+    "agents/codex/evidence.md",
+    "agents/claude/review.md",
+    "evidence/verification.md",
+    "evidence/final-synthesis.md"
+  ],
+  "verification_result": "passed",
+  "review_result": "passed",
+  "approval_outcomes": [],
+  "blockers": [],
+  "result": "done",
+  "lessons": [
+    "Keep implementation and review receipts separate.",
+    "Record rejected prototype candidates when the task does not need exploration."
+  ],
+  "next_routing_hints": [
+    "Use Codex for source edits only when current tools and context budget are verified.",
+    "Use Claude for read-only review when expected review evidence is declared."
+  ],
+  "privacy_notes": [
+    "No secrets or hidden transcripts are stored; evidence paths only."
+  ],
+  "updated_at": "2026-07-03T00:00:00Z"
+}

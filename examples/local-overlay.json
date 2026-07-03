@@ -1,0 +1,45 @@
+{
+  "schema_version": "valp-local-overlay.v1",
+  "updated_at": "2026-07-03T00:00:00Z",
+  "operator": "example-operator",
+  "workspace_defaults": {
+    "evidence_root": ".herdr-loop/tasks",
+    "manual_mode": "fallback_only"
+  },
+  "runtime_preferences": {
+    "preferred_full_mode_runtime": "herdr-or-compatible-runtime",
+    "remote_mode_allowed": true
+  },
+  "agent_capability_profiles": {
+    "codex": {
+      "routing_hint_only": true,
+      "likely_roles": ["implementation", "verification", "tool_execution"],
+      "strengths": ["file edits", "command evidence", "tests"],
+      "must_not_do": ["bypass approval gates"],
+      "skill_library_paths": ["$CODEX_HOME/skills"],
+      "context_policy": {
+        "soft_warning_pct": 55,
+        "hard_compression_pct": 65,
+        "emergency_stop_pct": 80
+      }
+    },
+    "claude": {
+      "routing_hint_only": true,
+      "likely_roles": ["read_only_review", "architecture_review", "risk_review"],
+      "strengths": ["design critique", "risk review", "architecture review"],
+      "must_not_do": ["claim runtime facts without evidence"]
+    }
+  },
+  "project_folder_conventions": {
+    "task_folder": ".herdr-loop/tasks/<task-id>",
+    "agent_worklog": "agents/<agent>/worklog.md"
+  },
+  "approval_preferences": {
+    "release_publish_upload_submit": "explicit_user_approval_required",
+    "delete_auth_secrets_memory_agent_config_mcp_config": "explicit_user_approval_required"
+  },
+  "notes": [
+    "Agent profiles are hints, not assignments.",
+    "Every task must run fresh capability routing."
+  ]
+}

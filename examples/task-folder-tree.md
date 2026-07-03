@@ -10,6 +10,8 @@ ExampleProject/
     hermes/
       worklog.md
   .herdr-loop/
+    local-overlay.json
+    routing-feedback.jsonl
     agents/
       capabilities.json
       context-policy.json
@@ -18,6 +20,7 @@ ExampleProject/
         task.md
         state.json
         routing.json
+        routing-feedback.json
         skill-recommendations.json
         timeline.jsonl
         dispatch-receipts.jsonl
@@ -39,4 +42,3 @@ ExampleProject/
         findings/
           findings.json
 ```
-

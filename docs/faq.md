@@ -79,6 +79,20 @@ A current capability record for agent backends: CLI availability, MCP support,
 skill discovery path, session resume support, approval behavior, model
 selection, context policy, and known limitations.
 
+## What is a local overlay?
+
+A local overlay is machine or workspace-specific configuration: agent names,
+likely strengths, skill paths, runtime preferences, context limits, and folder
+conventions. It is allowed to guide routing, but it cannot override protocol
+gates. Agent profiles are hints, not fixed assignments.
+
+## Can VALP learn which agent is best?
+
+Yes, through routing feedback. After meaningful tasks, the runtime can record
+which agents were selected, what evidence they produced, what failed, and what
+should change next time. That history improves future routing, but every task
+still runs fresh capability, context, provider, and permission scans.
+
 ## Can a skill router decide the agent?
 
 No. Skill recommendation is evidence, not authority. It cannot bypass role

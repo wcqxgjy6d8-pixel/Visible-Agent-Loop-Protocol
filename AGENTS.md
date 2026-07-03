@@ -17,6 +17,8 @@ This repository documents an open protocol.
 - Update relevant `docs/` pages after spec changes.
 - Update examples and schemas when machine-readable fields change.
 - Keep Full Mode, Remote Mode, and Manual Mode clearly separated.
+- Keep local overlays separate from protocol semantics.
+- Keep capability profiles as routing hints, not fixed assignments.
 - Do not weaken receipt semantics.
 - Do not weaken approval gates.
 - Do not claim platform support beyond current runtime documentation.
@@ -29,8 +31,9 @@ Before considering protocol edits complete:
 python3 -m json.tool examples/context-policy.json >/dev/null
 python3 -m json.tool examples/routing.json >/dev/null
 python3 -m json.tool schemas/capabilities.schema.json >/dev/null
+python3 -m json.tool schemas/local-overlay.schema.json >/dev/null
+python3 -m json.tool schemas/routing-feedback.schema.json >/dev/null
 python3 -m json.tool schemas/state.schema.json >/dev/null
 python3 -m json.tool schemas/routing.schema.json >/dev/null
 python3 -m json.tool schemas/receipts.schema.json >/dev/null
 ```
-

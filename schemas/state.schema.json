@@ -24,11 +24,14 @@
       "items": {"type": "string"}
     },
     "runtime_adapter": {"type": "object"},
+    "local_overlay": {"type": "object"},
     "runtime_task_state_mapping": {"type": "object"},
     "provider_matrix": {"type": "object"},
     "squad_routing": {"type": "object"},
     "context_policies": {"type": "object"},
     "skill_recommendations": {"type": "object"},
+    "routing_confidence": {"type": "object"},
+    "routing_feedback": {"type": "object"},
     "gates": {"type": "object"},
     "approval_required": {"type": "array"},
     "updated_at": {"type": "string"}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Local Overlay",
+  "type": "object",
+  "required": ["schema_version", "updated_at"],
+  "properties": {
+    "schema_version": {
+      "const": "valp-local-overlay.v1"
+    },
+    "updated_at": {"type": "string"},
+    "operator": {"type": "string"},
+    "workspace_defaults": {"type": "object"},
+    "runtime_preferences": {"type": "object"},
+    "agent_capability_profiles": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "routing_hint_only": {"type": "boolean"},
+          "likely_roles": {"type": "array", "items": {"type": "string"}},
+          "strengths": {"type": "array", "items": {"type": "string"}},
+          "must_not_do": {"type": "array", "items": {"type": "string"}},
+          "skill_library_paths": {"type": "array", "items": {"type": "string"}},
+          "context_policy": {"type": "object"},
+          "approval_behavior": {"type": "string"},
+          "feedback_refs": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "project_folder_conventions": {"type": "object"},
+    "approval_preferences": {"type": "object"},
+    "notes": {"type": "array", "items": {"type": "string"}}
+  }
+}

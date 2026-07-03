@@ -37,9 +37,13 @@ MCP config scan
 official provider documentation
 workspace operator configuration
 recent successful run evidence
+local overlay capability profile, marked as hint only
+routing feedback records, marked as historical priors
 ```
 
 Marketing claims are not enough. Current local availability matters.
+Local overlay and feedback data can explain likely fit, but they do not prove
+current availability.
 
 ## Fields That Affect Routing
 

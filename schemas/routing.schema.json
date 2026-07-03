@@ -10,6 +10,7 @@
     "task_id": {"type": "string"},
     "profile": {"type": "string"},
     "runtime_adapter": {"type": "object"},
+    "local_overlay": {"type": "object"},
     "routing_reason": {"type": "string"},
     "capabilities_needed": {
       "type": "array",
@@ -20,11 +21,18 @@
       "items": {"type": "string"}
     },
     "agent_match_reasons": {"type": "object"},
+    "candidate_scores": {"type": "object"},
+    "routing_confidence": {"type": "object"},
+    "rejected_candidates": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
     "selected_agent_context_policies": {"type": "object"},
     "skill_recommendations": {"type": "object"},
     "provider_matrix": {"type": "object"},
     "runtime_task_state_mapping": {"type": "object"},
     "squad_routing": {"type": "object"},
+    "routing_feedback_ref": {"type": "string"},
     "capabilities_missing": {
       "type": "array",
       "items": {"type": "string"}

@@ -5,6 +5,10 @@ Profiles adapt the generic protocol to a domain.
 The protocol kernel remains the same. Profiles define gates, likely agents,
 evidence types, and approval risks.
 
+Likely roles are defaults for routing, not fixed assignments. The runtime must
+still scan local overlays, tools, skills, context policy, permission boundaries,
+and expected evidence before selecting agents.
+
 ## Core Profiles
 
 ```text
@@ -90,4 +94,3 @@ summary
 uncertainty
 final synthesis
 ```
-

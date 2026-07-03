@@ -8,6 +8,11 @@
     "full_mode_capable": true,
     "state_mapping_ref": "docs/task-state-machine.md"
   },
+  "local_overlay": {
+    "used": true,
+    "ref": ".herdr-loop/local-overlay.json",
+    "note": "Local agent profiles were used as hints only; current runtime evidence selected the route."
+  },
   "capabilities_needed": [
     "implementation",
     "verification",
@@ -28,6 +33,48 @@
       "risk review"
     ]
   },
+  "candidate_scores": {
+    "codex": {
+      "profile_fit": 0.9,
+      "tool_fit": 0.95,
+      "skill_fit": 0.8,
+      "permission_fit": 1,
+      "context_fit": 0.9,
+      "evidence_history": 0.8,
+      "availability": 0.9,
+      "risk_fit": 0.85,
+      "overall": 0.89,
+      "confidence": "high"
+    },
+    "claude": {
+      "profile_fit": 0.85,
+      "tool_fit": 0.8,
+      "skill_fit": 0.75,
+      "permission_fit": 1,
+      "context_fit": 0.9,
+      "evidence_history": 0.75,
+      "availability": 0.9,
+      "risk_fit": 0.9,
+      "overall": 0.84,
+      "confidence": "high"
+    },
+    "agy": {
+      "overall": 0.35,
+      "confidence": "low",
+      "reason": "No prototype task was required."
+    }
+  },
+  "routing_confidence": {
+    "overall": "high",
+    "reason": "Selected agents match implementation, verification, and read-only review evidence gates."
+  },
+  "rejected_candidates": [
+    {
+      "agent": "agy",
+      "reason": "The task did not need isolated prototype evidence.",
+      "confidence": "low"
+    }
+  ],
   "selected_agent_context_policies": {
     "codex": {
       "soft_warning_pct": 55,
@@ -77,5 +124,6 @@
   "squad_routing": {
     "used": false
   },
+  "routing_feedback_ref": "routing-feedback.json",
   "capabilities_missing": []
 }

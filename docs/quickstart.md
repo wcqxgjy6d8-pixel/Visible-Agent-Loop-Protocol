@@ -108,15 +108,19 @@ Record:
 ```text
 runtime adapter
 provider matrix
+local overlay ref, if used
 context policies
 skills and MCP availability
 permission boundaries
 selected agents
 routing reasons
+candidate confidence
+rejected high-relevance candidates, if relevant
 missing capabilities
 ```
 
-Do not route by habit.
+Do not route by habit. Local capability profiles are hints, not fixed
+assignments.
 
 ## 7. Dispatch And Require Receipts
 
@@ -147,6 +151,7 @@ verification passed or has a scoped blocker
 review has no unresolved critical/high findings
 approval gates are resolved
 final synthesis is recorded
+routing feedback is recorded for non-trivial tasks, if supported
 ```
 
 ## 9. If Runtime Is Not Available

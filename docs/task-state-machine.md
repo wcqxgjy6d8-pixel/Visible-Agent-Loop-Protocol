@@ -19,12 +19,14 @@ new
   -> published
   -> scanning_capabilities
   -> scanning_context
+  -> loading_local_overlay
   -> selecting_runtime_adapter
   -> classifying_task
   -> selecting_profile
   -> decomposing_tasks
   -> recommending_skills
   -> building_provider_matrix
+  -> scoring_routes
   -> routing_capabilities
   -> routing_squad
   -> dispatching
@@ -105,3 +107,17 @@ A runtime can finish an execution task without finishing a VALP task.
 
 VALP is done only when receipts, expected evidence, review, approval gates, and
 final synthesis are recorded.
+
+## Routing Feedback State
+
+For non-trivial tasks, the final recording phase should also write routing
+feedback when the runtime supports it. Feedback is not a completion shortcut; it
+is a memory artifact for future routing.
+
+```text
+recording
+  -> write final synthesis
+  -> write routing feedback, if useful
+  -> append workspace routing feedback index, if configured
+  -> done | blocked | failed | cancelled
+```

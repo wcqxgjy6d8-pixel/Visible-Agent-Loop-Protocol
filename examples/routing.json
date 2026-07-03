@@ -8,6 +8,11 @@
     "full_mode_capable": true,
     "state_mapping_ref": "docs/task-state-machine.md"
   },
+  "local_overlay": {
+    "used": true,
+    "ref": ".herdr-loop/local-overlay.json",
+    "note": "Capability profiles are routing hints, not fixed assignments."
+  },
   "capabilities_needed": [
     "implementation",
     "verification",
@@ -31,6 +36,39 @@
       "read_only_review"
     ]
   },
+  "candidate_scores": {
+    "hermes": {
+      "overall": 0.82,
+      "confidence": "high",
+      "reason": "coordination and gate ownership fit the task"
+    },
+    "codex": {
+      "overall": 0.88,
+      "confidence": "high",
+      "reason": "implementation tools and verification fit the task"
+    },
+    "claude": {
+      "overall": 0.76,
+      "confidence": "medium",
+      "reason": "review fit is strong but runtime facts still require evidence"
+    },
+    "agy": {
+      "overall": 0.38,
+      "confidence": "low",
+      "reason": "prototype capability does not match required production evidence"
+    }
+  },
+  "routing_confidence": {
+    "overall": "high",
+    "reason": "Required implementation, verification, coordination, and review capabilities are present."
+  },
+  "rejected_candidates": [
+    {
+      "agent": "agy",
+      "reason": "No prototype or isolated exploration task was needed for this route.",
+      "confidence": "low"
+    }
+  ],
   "selected_agent_context_policies": {
     "codex": {
       "hard_compression_pct": 65,
@@ -66,5 +104,6 @@
   "squad_routing": {
     "used": false
   },
+  "routing_feedback_ref": ".herdr-loop/tasks/TASK-001/routing-feedback.json",
   "capabilities_missing": []
 }

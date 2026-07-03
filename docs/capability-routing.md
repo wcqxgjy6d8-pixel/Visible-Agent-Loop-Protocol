@@ -18,10 +18,12 @@ permission boundaries
 context policy
 skill recommendation backend availability
 project AGENTS.md
+local overlay capability profiles
 task profile
 approval gates
 squad roster, if used
 historical evidence, if available
+routing feedback, if available
 ```
 
 ## Capability Evidence Layers
@@ -38,6 +40,55 @@ historical evidence, if available
 | skill recommendation | which skill fits a decomposed task | advisory |
 | squad routing | leader and member routing evidence | advisory until member dispatch receipts exist |
 | verification history | prior pass/fail evidence | strong when current |
+| local overlay profile | operator/workspace hints about likely strengths | advisory |
+| routing feedback | prior outcome records for similar tasks | strong only as a prior |
+
+Capability profiles are routing hints, not assignments. A current scan can
+override a remembered strength, and a permission boundary can override every
+preference.
+
+## Intelligent Routing Steps
+
+```text
+decompose the user request
+map each execution task to required capabilities and evidence
+load local overlay profiles, if present
+scan runtime, tools, MCP, skills, and context policy
+score candidate agents
+record selected agents and rejected high-relevance candidates
+route discovery/review first when confidence is low
+```
+
+Recommended score fields:
+
+```json
+{
+  "codex": {
+    "profile_fit": 0.9,
+    "tool_fit": 0.95,
+    "skill_fit": 0.8,
+    "permission_fit": 1,
+    "context_fit": 0.7,
+    "evidence_history": 0.8,
+    "availability": 0.9,
+    "risk_fit": 0.85,
+    "overall": 0.86
+  }
+}
+```
+
+Scores explain the route; they do not prove completion.
+
+## Confidence Bands
+
+| Band | Meaning | Default action |
+|---|---|---|
+| high | agent has required tools, permission, context, and evidence history | dispatch normal work |
+| medium | agent can likely work, but risk or evidence is incomplete | dispatch smaller scoped task or require review |
+| low | important capability or permission is missing/unknown | route discovery, ask for setup, or stop |
+
+If the best implementer is medium confidence and the task is high risk, VALP
+should require review before mutation or ask for explicit approval.
 
 ## Routing Outputs
 
@@ -50,11 +101,28 @@ historical evidence, if available
     "full_mode_capable": true
   },
   "selected_agents": ["hermes", "codex", "claude"],
+  "local_overlay": {
+    "used": true,
+    "ref": ".herdr/valp-local-overlay.json",
+    "note": "Agent profiles used as routing hints only."
+  },
   "agent_match_reasons": {
     "codex": ["implementation", "verification"],
     "claude": ["read_only_review"],
     "hermes": ["coordination", "gates"]
   },
+  "candidate_scores": {
+    "codex": {"overall": 0.86, "confidence": "high"},
+    "claude": {"overall": 0.78, "confidence": "medium"},
+    "agy": {"overall": 0.42, "confidence": "low"}
+  },
+  "rejected_candidates": [
+    {
+      "agent": "agy",
+      "reason": "prototype profile does not match source-edit evidence gate",
+      "confidence": "low"
+    }
+  ],
   "selected_agent_context_policies": {},
   "skill_recommendations": {
     "status": "not_run",
@@ -78,5 +146,7 @@ historical evidence, if available
 - Do not route more work to an agent beyond its hard context threshold.
 - Do not allow skill recommendation to bypass role boundaries.
 - Do not allow provider matrix claims to bypass proof or approval gates.
+- Do not let local overlay profiles become fixed assignments.
+- Do not let historical feedback replace current scans.
 - Do not treat squad leader judgment as worker completion evidence.
 - Record missing capabilities instead of pretending they exist.

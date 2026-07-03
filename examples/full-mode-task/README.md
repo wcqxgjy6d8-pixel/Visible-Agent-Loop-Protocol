@@ -10,6 +10,7 @@ examples/full-mode-task/
   task.md
   state.json
   routing.json
+  routing-feedback.json
   dispatch-receipts.jsonl
   agents/
     codex/
@@ -24,4 +25,5 @@ examples/full-mode-task/
 ```
 
 The key point is not the exact folder name. The key point is that routing,
-dispatch, receipts, evidence, review, and final synthesis are all visible.
+dispatch, receipts, evidence, review, feedback, and final synthesis are all
+visible.

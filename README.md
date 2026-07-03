@@ -75,10 +75,11 @@ Visible Agent Loop is a control system, not a chat convention:
 ```text
 publish task
   -> scan runtime, tools, skills, context budgets
+  -> load local overlay, if present
   -> select runtime adapter
   -> classify task profile
   -> build provider matrix
-  -> route agents by evidence
+  -> score and route agents by evidence
   -> route squad if needed
   -> dispatch visibly
   -> require receipts
@@ -91,7 +92,9 @@ publish task
 No agent is assumed to be known from memory. Agent selection is based on current
 runtime evidence: declared role, installed skills, available MCP/tools, runtime
 status, permission boundary, context policy, optional skill recommendation
-evidence, and prior verification records.
+evidence, local overlay hints, prior verification records, and routing feedback.
+Local capability profiles are hints, not fixed assignments. Every task reruns
+capability routing.
 
 Managed-agent platforms, daemon queues, and terminal-pane systems can all be
 VALP-compatible if they export the required runtime adapter evidence. A runtime
@@ -155,6 +158,8 @@ Visible-Agent-Loop-Protocol/
     comparison.md
     runtime-adapters.md
     task-state-machine.md
+    local-overlays.md
+    intelligent-routing.md
     provider-matrix.md
     squad-routing.md
     workspace.md
@@ -162,10 +167,13 @@ Visible-Agent-Loop-Protocol/
     context-compression.md
     dispatch-receipts.md
     skill-recommendation.md
+    routing-feedback.md
     profiles.md
     manual-mode.md
   schemas/
     capabilities.schema.json
+    local-overlay.schema.json
+    routing-feedback.schema.json
     state.schema.json
     routing.schema.json
     receipts.schema.json
@@ -186,7 +194,10 @@ Visible-Agent-Loop-Protocol/
 - High-risk actions require explicit user approval.
 - Long context is a reliability risk and must be scanned before dispatch.
 - Skill recommendation is evidence, not authority.
+- Local overlays are hints, not protocol overrides.
+- Agent profiles are routing hints, not fixed assignments.
 - Provider capability is scanned, not assumed.
+- Routing feedback improves future routing but never replaces current scans.
 - Runtime queue completion is not VALP completion unless evidence gates pass.
 - Squad routing is visible routing evidence, not hidden agent judgment.
 - Profiles adapt the protocol to domains; projects are inputs, not protocol

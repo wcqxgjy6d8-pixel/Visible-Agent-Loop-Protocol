@@ -17,6 +17,12 @@
   VALP completion without expected evidence.
 - Adds provider matrix as routing evidence.
 - Adds optional squad routing rules.
+- Adds local overlay concept so machine-specific agent profiles stay separate
+  from protocol semantics.
+- Adds intelligent routing confidence, candidate scoring, and rejected-candidate
+  evidence.
+- Adds routing feedback records so future routing can learn from outcomes
+  without replacing current scans.
 - Adds platform support guidance for macOS, Linux, Windows SSH, Windows beta,
   and degraded Manual Mode.
 - Adds quickstart, FAQ, comparison document, code of conduct, issue templates,

@@ -38,6 +38,27 @@ not the same as a VALP task; it must be mapped into VALP evidence.
 : A domain adapter that defines gates and evidence for a task type, such as
 `software-code`, `research`, `apple-app`, or `web-frontend`.
 
+`local overlay`
+: Operator or workspace-specific configuration layered on top of the open
+protocol. It may describe local agents, paths, runtimes, habits, and defaults,
+but it cannot override non-negotiable gates.
+
+`capability profile`
+: A remembered or configured description of an agent's likely strengths,
+boundaries, tools, and context policy. It is a routing hint, not a fixed role or
+assignment.
+
+`routing confidence`
+: A recorded estimate of how strong the routing evidence is for each selected
+agent and each rejected candidate. It helps decide whether to proceed, ask for
+review, use a squad, or route a discovery task first.
+
+`feedback record`
+: A post-task record of what actually happened: selected agents, evidence
+quality, review outcomes, blockers, completion result, and lessons for future
+routing. Feedback records improve future routing but do not replace current
+capability scans.
+
 `provider matrix`
 : A current capability table for agent backends, including CLI availability,
 MCP support, skill discovery path, session resume support, approval behavior,
@@ -64,13 +85,14 @@ INTAKE
   -> PUBLISH
   -> SCAN CAPABILITIES
   -> SCAN CONTEXT POLICIES
+  -> LOAD LOCAL OVERLAY
   -> SELECT RUNTIME ADAPTER
   -> CLASSIFY TASK
   -> SELECT PROFILE
   -> DECOMPOSE EXECUTION TASKS
   -> RECOMMEND SKILLS, IF BACKEND EXISTS
   -> BUILD PROVIDER MATRIX
-  -> ROUTE AGENTS
+  -> SCORE AND ROUTE AGENTS
   -> ROUTE SQUAD, IF USED
   -> WRITE VISIBLE DISPATCH
   -> SUBMIT DISPATCH
@@ -93,12 +115,14 @@ new
   -> published
   -> scanning_capabilities
   -> scanning_context
+  -> loading_local_overlay
   -> selecting_runtime_adapter
   -> classifying_task
   -> selecting_profile
   -> decomposing_tasks
   -> recommending_skills
   -> building_provider_matrix
+  -> scoring_routes
   -> routing_capabilities
   -> routing_squad
   -> dispatching
@@ -173,7 +197,51 @@ approval gate status
 An adapter may use its own internal state names, but it must publish the mapping
 to VALP receipt states.
 
-## 6. Capability Evidence
+## 6. Local Overlays
+
+VALP separates open protocol semantics from local execution facts.
+
+The open protocol defines lifecycle, evidence, receipts, approval gates, context
+policy, adapter contracts, and done criteria. A local overlay may define:
+
+```text
+workspace defaults
+local agent names
+runtime adapter preferences
+agent capability profiles
+skill library paths
+project folder conventions
+operator approval preferences
+context policy overrides
+historical feedback refs
+```
+
+Local overlays are useful because real users have different machines, agents,
+terminals, and runtimes. They must remain subordinate to protocol gates:
+
+- A local overlay cannot declare hidden dispatch valid.
+- A local overlay cannot treat insertion as submission.
+- A local overlay cannot skip expected evidence.
+- A local overlay cannot bypass approval gates.
+- A local overlay cannot turn a capability profile into a fixed assignment.
+- A local overlay cannot suppress context compression thresholds unless stricter
+  policy replaces them.
+
+The preferred layering is:
+
+```text
+VALP spec
+  -> runtime adapter
+  -> local overlay
+  -> workspace/project AGENTS.md or equivalent
+  -> task routing/evidence
+```
+
+When layers disagree, the safer and more specific evidence wins. A current
+runtime scan beats old memory. A project permission boundary beats a general
+agent strength. A protocol hard gate beats every local preference.
+
+## 7. Capability Evidence
 
 No agent is assumed to be fully known from memory. Capability routing combines
 several evidence layers:
@@ -188,12 +256,65 @@ context policy and compression budget
 skill recommendation evidence
 provider matrix evidence
 historical verification/review quality
+local overlay capability profile
+recent feedback records
 ```
 
 Only command output, receipts, expected evidence, and review records prove that
 work is done.
 
-## 7. Runtime Modes
+Capability profiles are not assignments. They answer "what is this agent often
+good at?" Routing answers "what should this task use now, given current tools,
+context, permissions, evidence, and risk?"
+
+## 8. Intelligent Routing
+
+VALP routing should be explainable and adaptive. A routing decision must record
+both selected and meaningfully rejected candidates when the choice affects risk
+or quality.
+
+Minimum routing decision steps:
+
+```text
+decompose the task into execution tasks
+identify required capabilities and evidence gates
+load local overlay profiles, if present
+scan current runtime/tool/skill/context state
+rank candidate agents for each execution task
+record confidence and risk for selected agents
+record missing capability or uncertainty
+route discovery/review before implementation when confidence is low
+```
+
+Recommended scoring factors:
+
+| Factor | Meaning |
+|---|---|
+| profile_fit | match between task profile and agent capability profile |
+| tool_fit | current tools/MCP/runtime support needed for the task |
+| skill_fit | installed skill or recommendation match |
+| permission_fit | whether the agent is allowed to do the work |
+| context_fit | whether context budget is below hard threshold |
+| evidence_history | recent verification/review quality for similar work |
+| availability | runtime status, queue pressure, or pane readiness |
+| risk_fit | whether the agent should handle high-risk or read-only work |
+
+Scores are advisory. The routing output must still explain the decision in
+plain language and list hard blockers separately.
+
+Low confidence rules:
+
+- If no agent has the needed tools, mark `capabilities_missing` and stop or ask
+  for setup.
+- If only one agent can act but confidence is low, route a small discovery task
+  first.
+- If implementation confidence is medium but risk is high, require review before
+  mutation.
+- If context policy is near the hard threshold, compress before dispatch.
+- If a prior feedback record says an agent failed this task type recently,
+  require fresh evidence before routing similar work again.
+
+## 9. Runtime Modes
 
 Full Mode requires HERDR or a VALP-compatible runtime. Manual Mode is allowed
 only as a degraded workflow.
@@ -219,7 +340,7 @@ locations. Queue completion alone is not enough.
 Manual Mode may write task folders and evidence files, but it cannot claim
 automatic dispatch proof.
 
-## 8. Dispatch Receipts
+## 10. Dispatch Receipts
 
 Valid receipt states:
 
@@ -242,7 +363,7 @@ state or equivalent proof.
 
 If expected evidence is declared, gates require `dispatch_completed`.
 
-## 9. Context Compression
+## 11. Context Compression
 
 Context compression is part of capability scanning, not a late-stage cleanup.
 Each agent has a `context_policy`.
@@ -269,7 +390,7 @@ compression_target_pct_max: 25
 
 User or project policy may override defaults.
 
-## 10. Provider Matrix
+## 12. Provider Matrix
 
 Every routed agent should have a current provider capability record before work
 is assigned.
@@ -296,7 +417,7 @@ current runtime status, installed tools, official documentation, or explicit
 operator configuration. Missing values must be recorded as unknown instead of
 guessed.
 
-## 11. Skill Recommendation
+## 13. Skill Recommendation
 
 Skill recommendation is abstract. The protocol does not require a specific
 router implementation.
@@ -314,7 +435,7 @@ understand request
 Recommendation output is evidence, not authority. It cannot bypass role
 boundaries, approval gates, receipt gates, or context gates.
 
-## 12. Squad Routing
+## 14. Squad Routing
 
 Squads are optional. A squad may be used when the task should be routed by a
 leader agent instead of assigned directly to one worker.
@@ -332,7 +453,44 @@ Rules:
 
 Squad routing is routing evidence. It is not completion evidence.
 
-## 13. Evidence Store
+## 15. Feedback And Learning
+
+VALP should learn from outcomes without becoming stale memory.
+
+After each non-trivial task, write a feedback record when the runtime supports
+it. The record should include:
+
+```text
+task id
+profile
+selected agents
+candidate agents considered, if meaningful
+routing confidence
+expected evidence
+actual evidence
+verification result
+review result
+approval outcomes
+blockers and failure reasons
+what should change next time
+```
+
+Feedback may update future capability profiles, but future tasks must still run
+a fresh capability, provider, context, and permission scan. Historical success
+is a useful prior, not proof that the agent can do the current task.
+
+Feedback should be stored in a task-local evidence file and optionally copied to
+a workspace-level routing memory:
+
+```text
+<workspace>/.herdr-loop/tasks/<task-id>/routing-feedback.json
+<workspace>/.herdr-loop/routing-feedback.jsonl
+```
+
+Do not store secrets, raw private data, or full hidden conversations in routing
+feedback. Record evidence paths and short summaries instead.
+
+## 16. Evidence Store
 
 Canonical task evidence lives under:
 
@@ -353,7 +511,7 @@ The `.herdr-loop` folder name is the reference runtime-compatible default. Other
 implementations may use a different internal folder if they export the same
 VALP evidence contract.
 
-## 14. Approval Gates
+## 17. Approval Gates
 
 The following require explicit user approval:
 
@@ -381,14 +539,17 @@ external_private_data
 
 No approval is inferred from silence.
 
-## 15. Done Criteria
+## 18. Done Criteria
 
 A task is done only when:
 
 - profile and routing are recorded;
 - runtime adapter and task state mapping are recorded;
+- local overlay inputs are recorded when used;
 - selected agents and context policies are recorded;
 - provider matrix fields needed for the task are recorded;
+- routing confidence, missing capabilities, and rejected high-relevance
+  candidates are recorded when they affect the decision;
 - squad routing evidence is recorded when a squad is used;
 - dispatch receipts satisfy the required gates;
 - expected evidence exists;
@@ -396,3 +557,4 @@ A task is done only when:
 - review findings have no unresolved critical/high blockers;
 - approvals are resolved;
 - final synthesis records decisions, disagreements, evidence gaps, and result.
+- feedback record is written for non-trivial tasks when the runtime supports it.

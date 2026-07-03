@@ -7,6 +7,10 @@
     "class": "pane_controller",
     "name": "example-full-mode-runtime"
   },
+  "local_overlay": {
+    "used": true,
+    "ref": ".herdr-loop/local-overlay.json"
+  },
   "runtime_task_state_mapping": {
     "completed": "dispatch_completed_only_with_expected_evidence"
   },
@@ -39,6 +43,14 @@
   },
   "skill_recommendations": {
     "status": "not_run"
+  },
+  "routing_confidence": {
+    "overall": "high",
+    "ref": "routing.json"
+  },
+  "routing_feedback": {
+    "status": "written",
+    "ref": "routing-feedback.json"
   },
   "gates": {
     "dispatch_receipts": "passed",

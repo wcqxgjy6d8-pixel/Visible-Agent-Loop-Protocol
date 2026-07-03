@@ -70,3 +70,21 @@ Any local backend may implement the minimal contract.
 `task-skill-router` is one possible backend adapter. The protocol does not
 depend on it.
 
+## Relationship To Local Overlays
+
+A local overlay may record which agents have which skill libraries. A recommender
+may rank those skills after task decomposition. Neither layer is allowed to turn
+a suggested skill into a permission grant.
+
+The routing record should show:
+
+```text
+which recommender ran
+which execution tasks were scored
+which installed skills matched
+which agent library owns the skill
+whether the selected agent is allowed to use it
+```
+
+If the skill is missing, surface it as a capability gap or future improvement.
+Do not pretend another agent has the skill unless the current scan proves it.

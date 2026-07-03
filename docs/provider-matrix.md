@@ -18,6 +18,7 @@ It is scanned before routing. It is not assumed from memory.
   "model_selection": "static|dynamic|runtime_default|unknown",
   "max_concurrency": 1,
   "context_policy": {},
+  "runtime_preflight": {},
   "known_limitations": [],
   "last_verified_at": "2026-07-03T00:00:00Z"
 }
@@ -64,6 +65,10 @@ current availability.
 
 `context_policy`
 : Determines whether the agent can safely receive more work.
+
+`runtime_preflight`
+: Determines whether the runtime pane, CLI, display size, and update state are
+ready enough for dispatch.
 
 `known_limitations`
 : Must be shown in routing output when they affect the task.

@@ -26,6 +26,7 @@ agent list
 agent metadata/status
 provider matrix
 context policy
+runtime preflight
 dispatch submission proof
 runtime task state mapping
 expected evidence refs
@@ -47,6 +48,7 @@ Required proof:
 
 ```text
 dispatch file written
+runtime preflight passed
 text inserted, if applicable
 submit action proven
 agent output read
@@ -55,6 +57,11 @@ expected evidence found
 
 Text inserted into an input box remains only `dispatch_inserted`. It does not
 prove delivery.
+
+Pane controllers should also export pane dimensions when available. A visible
+agent can fail at the UI layer when the pane is too small for its TUI. If a
+selected agent's pane is below the adapter's minimum size, the adapter must stop
+dispatch or record the dispatch as blocked until the pane is repaired.
 
 ## Daemon Queue Adapter
 

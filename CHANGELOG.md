@@ -11,6 +11,15 @@
 - Maps `SPEC.md` Done Criteria into executable PASS/WARN/FAIL/SKIP audit items.
 - Adds text and JSON audit output for VALP task evidence folders.
 - Adds unit tests for passing and failing audit cases.
+- Adds runtime preflight checks for pane size, agent pane readiness, CLI probes,
+  and restart/update-needed status where the adapter exposes them.
+- Runs available task-skill-router backends during routing and writes
+  `skill-recommendations.json`.
+- Injects relevant recommended skills into each agent dispatch prompt.
+- Adds `evidence-status.json` semantics so invalid, superseded, rejected, or
+  blocked evidence cannot satisfy Done.
+- Adds audit checks for runtime preflight, skill recommendation execution, and
+  unsupported runtime/build/test verification claims.
 
 ## 0.1.0-draft
 

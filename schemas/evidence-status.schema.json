@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Evidence Status",
+  "type": "object",
+  "required": ["schema_version", "evidence"],
+  "properties": {
+    "schema_version": {
+      "const": "valp-evidence-status.v1"
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "enum": ["valid", "superseded", "invalid", "rejected", "blocked"]
+          },
+          "reason": {"type": "string"},
+          "superseded_by": {"type": "string"},
+          "updated_at": {"type": "string"}
+        }
+      }
+    }
+  }
+}

@@ -42,6 +42,7 @@ gate:
 
 ```bash
 bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it"
+bin/valp preflight --agent agy
 bin/valp dispatch TASK-001 --workspace /path/to/workspace
 bin/valp audit examples/full-mode-task
 ```
@@ -49,11 +50,15 @@ bin/valp audit examples/full-mode-task
 `valp publish` creates the task, scans local capabilities, routes selected
 agents, writes dispatch files, and records `dispatch_written` receipts.
 
+`valp preflight` checks runtime readiness such as agent panes, terminal size,
+CLI version probes, and restart/update signals when the adapter can expose them.
+
 `valp dispatch` prints HERDR adapter submit commands by default. Use
 `--submit` to call `herdr-loop submit-dispatch`.
 
 `valp audit` scans a task evidence folder and checks the Done Criteria from
-`SPEC.md`.
+`SPEC.md`, including runtime preflight, skill recommendation evidence, invalid
+evidence status, and unsupported runtime/build/test claims.
 
 See [docs/cli-audit.md](docs/cli-audit.md).
 
@@ -101,7 +106,9 @@ publish task
   -> select runtime adapter
   -> classify task profile
   -> build provider matrix
+  -> preflight runtime and panes
   -> score and route agents by evidence
+  -> run skill recommendation, if available
   -> route squad if needed
   -> dispatch visibly
   -> require receipts
@@ -113,8 +120,9 @@ publish task
 
 No agent is assumed to be known from memory. Agent selection is based on current
 runtime evidence: declared role, installed skills, available MCP/tools, runtime
-status, permission boundary, context policy, optional skill recommendation
-evidence, local overlay hints, prior verification records, and routing feedback.
+status, pane/CLI preflight, permission boundary, context policy, optional skill
+recommendation evidence, local overlay hints, prior verification records, and
+routing feedback.
 Local capability profiles are hints, not fixed assignments. Every task reruns
 capability routing.
 
@@ -179,6 +187,7 @@ Visible-Agent-Loop-Protocol/
   docs/
     runtime.md
     cli-audit.md
+    runtime-preflight.md
     platform-support.md
     quickstart.md
     faq.md
@@ -204,6 +213,8 @@ Visible-Agent-Loop-Protocol/
     state.schema.json
     routing.schema.json
     receipts.schema.json
+    evidence-status.schema.json
+    skill-recommendations.schema.json
   examples/
     task-folder-tree.md
     context-policy.json

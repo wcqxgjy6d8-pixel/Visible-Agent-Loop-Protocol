@@ -3,8 +3,8 @@
 VALP's normal path is Full Mode: install a compatible runtime, verify it can see
 agents, then run tasks with dispatch receipts and evidence gates.
 
-This document avoids promising a VALP CLI that does not exist yet. It shows the
-minimum operational path for using the protocol with a Full Mode runtime.
+This document shows the minimum operational path for using the reference CLI
+with a Full Mode runtime.
 
 ## 1. Pick Your Platform Path
 
@@ -113,6 +113,7 @@ bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug a
 .herdr-loop/tasks/TASK-001/task.md
 .herdr-loop/tasks/TASK-001/state.json
 .herdr-loop/tasks/TASK-001/routing.json
+.herdr-loop/tasks/TASK-001/skill-recommendations.json
 .herdr-loop/tasks/TASK-001/dispatch-receipts.jsonl
 .herdr-loop/tasks/TASK-001/agents/<agent>/dispatch.md
 ```
@@ -127,6 +128,7 @@ provider matrix
 local overlay ref, if used
 context policies
 skills and MCP availability
+skill recommendations surfaced into dispatch prompts
 permission boundaries
 selected agents
 routing reasons
@@ -145,7 +147,18 @@ bin/valp scan --workspace /path/to/workspace --task TASK-001
 bin/valp route TASK-001 --workspace /path/to/workspace
 ```
 
-## 7. Dispatch And Require Receipts
+## 7. Preflight
+
+Before sending work, check the runtime:
+
+```bash
+bin/valp preflight --agent codex --agent claude
+```
+
+For pane runtimes, this should record pane id, status, terminal size, minimum
+size, CLI probe result, and restart/update-needed status when available.
+
+## 8. Dispatch And Require Receipts
 
 Valid dispatch receipt states:
 
@@ -173,15 +186,18 @@ To actually submit through the local HERDR adapter:
 bin/valp dispatch TASK-001 --workspace /path/to/workspace --submit
 ```
 
-## 8. Verify, Review, Record
+## 9. Verify, Review, Record
 
 A task is done only when:
 
 ```text
 runtime adapter and routing are recorded
 selected agent context policies are recorded
+provider matrix and runtime preflight are recorded
+skill recommendations are recorded when available
 dispatch receipts satisfy gates
 expected evidence exists
+runtime/build/test claims cite concrete evidence
 verification passed or has a scoped blocker
 review has no unresolved critical/high findings
 approval gates are resolved
@@ -201,7 +217,7 @@ For machine-readable output:
 bin/valp audit examples/full-mode-task --json
 ```
 
-## 9. If Runtime Is Not Available
+## 10. If Runtime Is Not Available
 
 Use Manual Mode only as a degraded fallback. Manual Mode can preserve task
 folders and evidence notes, but it cannot prove automatic dispatch submission,

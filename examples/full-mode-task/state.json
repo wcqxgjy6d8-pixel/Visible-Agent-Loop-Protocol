@@ -5,7 +5,20 @@
   "status": "done",
   "runtime_adapter": {
     "class": "pane_controller",
-    "name": "example-full-mode-runtime"
+    "name": "example-full-mode-runtime",
+    "preflight": {
+      "status": "pass",
+      "agents": {
+        "codex": {
+          "status": "pass",
+          "terminal_size_status": "pass"
+        },
+        "claude": {
+          "status": "pass",
+          "terminal_size_status": "pass"
+        }
+      }
+    }
   },
   "local_overlay": {
     "used": true,
@@ -42,7 +55,9 @@
     }
   },
   "skill_recommendations": {
-    "status": "not_run"
+    "status": "complete",
+    "backend": "task-skill-router",
+    "ref": "skill-recommendations.json"
   },
   "routing_confidence": {
     "overall": "high",

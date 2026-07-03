@@ -36,6 +36,8 @@ python3 -m json.tool schemas/routing-feedback.schema.json >/dev/null
 python3 -m json.tool schemas/state.schema.json >/dev/null
 python3 -m json.tool schemas/routing.schema.json >/dev/null
 python3 -m json.tool schemas/receipts.schema.json >/dev/null
+python3 -m json.tool schemas/evidence-status.schema.json >/dev/null
+python3 -m json.tool schemas/skill-recommendations.schema.json >/dev/null
 bin/valp audit examples/full-mode-task >/dev/null
 python3 -m unittest tests/test_valp_audit.py tests/test_valp_workflow.py
 ```

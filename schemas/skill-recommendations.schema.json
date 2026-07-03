@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Skill Recommendations",
+  "type": "object",
+  "required": ["schema_version", "task_id", "profile", "status", "backend", "execution_tasks"],
+  "properties": {
+    "schema_version": {
+      "const": "valp-skill-recommendations.v1"
+    },
+    "task_id": {"type": "string"},
+    "profile": {"type": "string"},
+    "status": {
+      "enum": ["complete", "no_matches", "unavailable", "failed", "not_run"]
+    },
+    "backend": {"type": "string"},
+    "generated_at": {"type": "string"},
+    "execution_tasks": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "routing": {"type": "object"},
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "task": {"type": "string"},
+          "routing": {"type": "object"},
+          "matches": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "skill": {"type": "string"},
+                "installed": {"type": "boolean"},
+                "path": {"type": "string"},
+                "confidence": {"type": "number"},
+                "mode": {"type": "string"},
+                "reason": {"type": "string"},
+                "install_hint": {"type": "string"}
+              }
+            }
+          },
+          "missing_skills": {
+            "type": "array",
+            "items": {"type": "object"}
+          }
+        }
+      }
+    },
+    "missing_skills": {
+      "type": "array",
+      "items": {"type": "object"}
+    }
+  }
+}

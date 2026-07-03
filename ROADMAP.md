@@ -30,11 +30,16 @@
   `dispatch_written` receipts.
 - `valp dispatch` for HERDR adapter submit command generation and optional
   `--submit`.
+- `valp preflight` for runtime pane/CLI readiness checks before dispatch.
 - `valp audit` for task evidence folders.
 - Map Done Criteria to executable audit items.
 - Validate dispatch receipts.
 - Validate context policy presence.
 - Validate approval gates.
+- Validate runtime preflight gates.
+- Validate skill recommendation evidence and dispatch surfacing.
+- Validate invalid/superseded evidence status.
+- Validate runtime/build/test claims have concrete evidence.
 - Produce text and JSON task audit reports.
 - Generate workspace scaffold.
 - Validate schemas.

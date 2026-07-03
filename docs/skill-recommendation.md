@@ -15,6 +15,8 @@ understand request
   -> rank likely skills for each task
   -> surface missing useful skills
   -> write recommendation evidence
+  -> surface relevant installed skills in each dispatch prompt
+  -> record whether the agent used or skipped the recommendation
 ```
 
 ## Minimal Contract
@@ -62,6 +64,8 @@ understand request
 - Do not let recommendation bypass agent role boundaries.
 - Do not let recommendation bypass context compression gates.
 - Do not treat recommendation as proof of completion.
+- Do not hide recommendations from the agent that is expected to use them.
+- Do not pretend a missing skill is installed.
 
 ## Optional Backends
 
@@ -69,6 +73,38 @@ Any local backend may implement the minimal contract.
 
 `task-skill-router` is one possible backend adapter. The protocol does not
 depend on it.
+
+## Full Mode Behavior
+
+When `task-skill-router` or another backend is available, the reference CLI runs
+it during routing and writes:
+
+```text
+.herdr-loop/tasks/<task-id>/skill-recommendations.json
+```
+
+Each dispatch prompt should include a `Recommended Skills` section with:
+
+```text
+execution task
+skill name
+installed/missing status
+confidence
+mode/decision
+path or install hint
+```
+
+The target agent must treat this as execution guidance. If the skill exists in
+that agent's reachable library and fits the assigned role, it should load or use
+the skill. If it does not use the skill, it should state why in its evidence.
+
+Dispatch generation should filter recommendations by the target agent's
+reachable skill libraries when that information is known. For example, a Codex
+dispatch should not ask Codex to load a Hermes-only skill path unless the runtime
+explicitly marks that path as shared.
+
+This is where installed skills become operational. Without this step, multi-agent
+automation degrades into ordinary prompt delegation.
 
 ## Relationship To Local Overlays
 

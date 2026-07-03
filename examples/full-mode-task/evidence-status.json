@@ -1,0 +1,21 @@
+{
+  "schema_version": "valp-evidence-status.v1",
+  "evidence": {
+    "agents/codex/evidence.md": {
+      "status": "valid",
+      "reason": "Implementation evidence includes command output."
+    },
+    "agents/claude/review.md": {
+      "status": "valid",
+      "reason": "Review evidence contains no unresolved high findings."
+    },
+    "evidence/verification.md": {
+      "status": "valid",
+      "reason": "Verification evidence includes the test command and result."
+    },
+    "evidence/final-synthesis.md": {
+      "status": "valid",
+      "reason": "Final synthesis records result, decision, disagreements, and evidence gaps."
+    }
+  }
+}

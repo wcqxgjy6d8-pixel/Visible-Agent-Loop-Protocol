@@ -6,7 +6,52 @@
     "class": "pane_controller",
     "name": "example-full-mode-runtime",
     "full_mode_capable": true,
-    "state_mapping_ref": "docs/task-state-machine.md"
+    "state_mapping_ref": "docs/task-state-machine.md",
+    "preflight": {
+      "status": "pass",
+      "checks": {
+        "pane_list": {
+          "status": "pass",
+          "count": 2
+        }
+      },
+      "agents": {
+        "codex": {
+          "status": "pass",
+          "pane_id": "example:p1",
+          "terminal_size": {
+            "width": 100,
+            "height": 32
+          },
+          "min_terminal_size": {
+            "width": 60,
+            "height": 20
+          },
+          "terminal_size_status": "pass",
+          "cli": {
+            "status": "pass",
+            "version_output": "example-codex"
+          }
+        },
+        "claude": {
+          "status": "pass",
+          "pane_id": "example:p2",
+          "terminal_size": {
+            "width": 100,
+            "height": 32
+          },
+          "min_terminal_size": {
+            "width": 60,
+            "height": 20
+          },
+          "terminal_size_status": "pass",
+          "cli": {
+            "status": "pass",
+            "version_output": "example-claude"
+          }
+        }
+      }
+    }
   },
   "local_overlay": {
     "used": true,
@@ -89,29 +134,75 @@
   },
   "provider_matrix": {
     "generated_at": "2026-07-03T00:00:00Z",
+    "runtime_preflight": {
+      "status": "pass",
+      "agents": {
+        "codex": {
+          "status": "pass",
+          "terminal_size_status": "pass"
+        },
+        "claude": {
+          "status": "pass",
+          "terminal_size_status": "pass"
+        }
+      }
+    },
     "providers": {
       "codex": {
+        "provider_name": "codex",
+        "provider_version_or_runtime_report": "example-codex",
         "cli_available": true,
         "mcp_support": "supported",
         "skill_discovery_path": "$CODEX_HOME/skills",
         "session_resume_support": "supported",
         "approval_behavior": "manual_or_policy",
+        "model_selection": "runtime_default",
+        "max_concurrency": 1,
+        "context_policy": {
+          "soft_warning_pct": 55,
+          "hard_compression_pct": 65,
+          "emergency_stop_pct": 80
+        },
+        "runtime_preflight": {
+          "status": "pass",
+          "terminal_size_status": "pass"
+        },
         "known_limitations": []
       },
       "claude": {
+        "provider_name": "claude",
+        "provider_version_or_runtime_report": "example-claude",
         "cli_available": true,
         "mcp_support": "supported",
         "skill_discovery_path": ".claude/skills/",
         "session_resume_support": "supported",
         "approval_behavior": "provider_policy",
+        "model_selection": "runtime_default",
+        "max_concurrency": 1,
+        "context_policy": {
+          "soft_warning_pct": 60,
+          "hard_compression_pct": 70,
+          "emergency_stop_pct": 80
+        },
+        "runtime_preflight": {
+          "status": "pass",
+          "terminal_size_status": "pass"
+        },
         "known_limitations": []
       }
     }
   },
   "skill_recommendations": {
     "schema_version": "valp-skill-recommendations.v1",
-    "status": "not_run",
-    "reason": "sample task keeps skills out of scope"
+    "status": "complete",
+    "backend": "task-skill-router",
+    "ref": "skill-recommendations.json",
+    "routing": {
+      "priority": "P1",
+      "decision": "auto-load",
+      "reason": "Strong installed workflow match."
+    },
+    "missing_skills": []
   },
   "runtime_task_state_mapping": {
     "queued": "accepted_by_runtime_not_delivery",

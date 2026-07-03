@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from .audit import FAIL, TaskAudit, print_text_report, report_to_dict, resolve_task_dir
-from .workflow import dispatch_task, publish_task, route_task, scan_workspace
+from .workflow import collect_runtime_preflight, dispatch_task, publish_task, route_task, scan_workspace
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,6 +36,10 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--workspace", default=".", help="Workspace root")
     dispatch.add_argument("--agent", default="all", help="Agent name or all")
     dispatch.add_argument("--submit", action="store_true", help="Actually call herdr-loop submit-dispatch")
+
+    preflight = sub.add_parser("preflight", help="Check runtime panes, CLI probes, and terminal sizing")
+    preflight.add_argument("--agent", action="append", help="Agent name to check; may be repeated")
+    preflight.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     audit = sub.add_parser("audit", help="Audit a VALP task evidence folder")
     audit.add_argument("path", nargs="?", default=".", help="Task folder or workspace root")
@@ -100,6 +104,21 @@ def main(argv: list[str] | None = None) -> int:
             for command in commands:
                 print(command)
         return 0
+
+    if args.command == "preflight":
+        report = collect_runtime_preflight(args.agent)
+        if args.json:
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+        else:
+            print(f"VALP runtime preflight: {str(report.get('status', 'unknown')).upper()}")
+            for agent, record in (report.get("agents") or {}).items():
+                size = record.get("terminal_size") or {}
+                print(
+                    f"- {agent}: {record.get('status', 'unknown')} "
+                    f"pane={record.get('pane_id')} "
+                    f"size={size.get('width', '?')}x{size.get('height', '?')}"
+                )
+        return 1 if report.get("status") == "fail" else 0
 
     if args.command == "audit":
         directory = resolve_task_dir(Path(args.path), args.task_id)

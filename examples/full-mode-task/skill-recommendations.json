@@ -1,0 +1,65 @@
+{
+  "schema_version": "valp-skill-recommendations.v1",
+  "task_id": "TASK-EXAMPLE-001",
+  "profile": "software-code",
+  "status": "complete",
+  "backend": "task-skill-router",
+  "generated_at": "2026-07-03T00:00:00Z",
+  "execution_tasks": [
+    "Fix a synthetic failing unit test in a sample project and verify the result.",
+    "inspect the requested code change and identify implementation risks",
+    "implement the scoped code change",
+    "run build, lint, or tests and write verification evidence"
+  ],
+  "routing": {
+    "priority": "P1",
+    "decision": "auto-load",
+    "reason": "Highest-priority routing decision across batch tasks.",
+    "report_policy": "silent"
+  },
+  "results": [
+    {
+      "task": "inspect the requested code change and identify implementation risks",
+      "routing": {
+        "priority": "P1",
+        "decision": "auto-load",
+        "reason": "Strong installed workflow match.",
+        "load_limit": 3,
+        "report_policy": "silent"
+      },
+      "matches": [
+        {
+          "skill": "systematic-debugging",
+          "installed": true,
+          "path": "$CODEX_HOME/skills/systematic-debugging/SKILL.md",
+          "confidence": 0.42,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata"
+        }
+      ],
+      "missing_skills": []
+    },
+    {
+      "task": "run build, lint, or tests and write verification evidence",
+      "routing": {
+        "priority": "P1",
+        "decision": "auto-load",
+        "reason": "Strong installed workflow match.",
+        "load_limit": 3,
+        "report_policy": "silent"
+      },
+      "matches": [
+        {
+          "skill": "verification-before-completion",
+          "installed": true,
+          "path": "$CODEX_HOME/skills/verification-before-completion/SKILL.md",
+          "confidence": 0.39,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata"
+        }
+      ],
+      "missing_skills": []
+    }
+  ],
+  "missing_skills": []
+}

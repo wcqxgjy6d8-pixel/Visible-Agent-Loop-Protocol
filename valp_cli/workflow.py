@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -59,6 +60,11 @@ RUNTIME_TASK_STATE_MAPPING = {
     "cancelled": "cancelled",
 }
 
+DEFAULT_MIN_TERMINAL_SIZE = {"width": 60, "height": 20}
+AGENT_MIN_TERMINAL_SIZE = {
+    "agy": {"width": 70, "height": 24},
+}
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -74,6 +80,55 @@ def read_json(path: Path) -> dict[str, Any]:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def run_command(
+    command: list[str],
+    timeout: float = 8.0,
+    input_text: str | None = None,
+    stdout_limit: int = 4000,
+    stderr_limit: int = 4000,
+) -> dict[str, Any]:
+    try:
+        completed = subprocess.run(
+            command,
+            input=input_text,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {
+            "command": command,
+            "ok": False,
+            "exit_code": 127,
+            "stdout": "",
+            "stderr": "command not found",
+        }
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "command": command,
+            "ok": False,
+            "exit_code": None,
+            "stdout": (exc.stdout or "")[:2000] if isinstance(exc.stdout, str) else "",
+            "stderr": "command timed out",
+        }
+    return {
+        "command": command,
+        "ok": completed.returncode == 0,
+        "exit_code": completed.returncode,
+        "stdout": completed.stdout[:stdout_limit],
+        "stderr": completed.stderr[:stderr_limit],
+    }
+
+
+def parse_json_stdout(result: dict[str, Any]) -> dict[str, Any]:
+    try:
+        data = json.loads(str(result.get("stdout") or ""))
     except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}
@@ -135,6 +190,7 @@ def scan_workspace(root: Path, task_id: str | None = None) -> dict[str, Any]:
     root = workspace_root(root)
     capabilities = load_local_capabilities()
     overlay = load_local_overlay()
+    capabilities["runtime_preflight"] = collect_runtime_preflight(list((capabilities.get("agents") or {}).keys()))
     capabilities["last_valp_scan_at"] = now_iso()
     capabilities["local_overlay_ref"] = str(local_overlay_path()) if overlay else None
     write_json(root / ".herdr-loop" / "agents" / "capabilities.json", capabilities)
@@ -153,6 +209,142 @@ def scan_workspace(root: Path, task_id: str | None = None) -> dict[str, Any]:
             state["updated_at"] = now_iso()
             write_json(state_path, state)
     return capabilities
+
+
+def extract_goal_text(task_text: str) -> str:
+    lines = task_text.splitlines()
+    collecting = False
+    collected: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.lower() == "## goal":
+            collecting = True
+            continue
+        if collecting and stripped.startswith("## "):
+            break
+        if collecting:
+            collected.append(line)
+    goal = "\n".join(collected).strip()
+    return goal or task_text.strip()
+
+
+def decompose_execution_tasks(prompt: str, profile: str) -> list[str]:
+    cleaned = extract_goal_text(prompt)
+    candidates: list[str] = []
+    for raw_line in cleaned.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = line.lstrip("-*").strip()
+        if line and not line.startswith("#"):
+            candidates.append(line)
+    if not candidates:
+        candidates = [cleaned]
+
+    profile_tasks = {
+        "software-code": [
+            "inspect the requested code change and identify implementation risks",
+            "implement the scoped code change",
+            "run build, lint, or tests and write verification evidence",
+        ],
+        "apple-app": [
+            "inspect Swift or Apple app implementation risks",
+            "implement the scoped Apple app change when approved",
+            "run build and UI verification evidence for the Apple app",
+        ],
+        "web-frontend": [
+            "inspect frontend UI and responsive behavior",
+            "implement the scoped frontend change",
+            "run browser or Playwright verification evidence",
+        ],
+        "research": [
+            "research sources and capture citations",
+            "compare evidence and write synthesis",
+        ],
+        "agent-runtime": [
+            "inspect agent runtime, routing, or connector behavior",
+            "verify runtime preflight, dispatch, receipts, and evidence",
+        ],
+    }
+    candidates.extend(profile_tasks.get(profile, ["analyze the task and write evidence"]))
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        compact = " ".join(item.split())
+        key = compact.lower()
+        if compact and key not in seen:
+            seen.add(key)
+            deduped.append(compact)
+    return deduped[:8]
+
+
+def skill_router_command() -> list[str] | None:
+    configured = os.environ.get("VALP_SKILL_ROUTER")
+    if configured:
+        return configured.split()
+    found = shutil.which("task-skill-router")
+    if found:
+        return [found]
+    local = Path.home() / ".local" / "bin" / "task-skill-router"
+    if local.exists():
+        return [str(local)]
+    return None
+
+
+def run_skill_recommendations(root: Path, task_id: str, profile: str, prompt: str) -> dict[str, Any]:
+    tasks = decompose_execution_tasks(prompt, profile)
+    command = skill_router_command()
+    base = {
+        "schema_version": "valp-skill-recommendations.v1",
+        "task_id": task_id,
+        "profile": profile,
+        "execution_tasks": tasks,
+        "generated_at": now_iso(),
+    }
+    if not command:
+        return {
+            **base,
+            "status": "unavailable",
+            "backend": "task-skill-router",
+            "reason": "task-skill-router command was not found on PATH.",
+            "results": [],
+            "missing_skills": [],
+        }
+
+    result = run_command(
+        command + ["--batch"],
+        timeout=30.0,
+        input_text="\n".join(tasks) + "\n",
+        stdout_limit=250000,
+        stderr_limit=8000,
+    )
+    parsed = parse_json_stdout(result)
+    if not parsed:
+        return {
+            **base,
+            "status": "failed",
+            "backend": "task-skill-router",
+            "command": result.get("command"),
+            "exit_code": result.get("exit_code"),
+            "reason": "task-skill-router did not return parseable JSON.",
+            "stderr": result.get("stderr", ""),
+            "results": [],
+            "missing_skills": [],
+        }
+
+    status = "complete" if parsed.get("results") else "no_matches"
+    return {
+        **base,
+        "status": status,
+        "backend": "task-skill-router",
+        "command": result.get("command"),
+        "exit_code": result.get("exit_code"),
+        "routing": parsed.get("routing") or {},
+        "results": parsed.get("results") or [],
+        "missing_skills": parsed.get("missing_skills") or [],
+        "raw": parsed,
+    }
 
 
 def publish_task(root: Path, task_id: str, prompt: str, profile: str | None = None, route: bool = True) -> Path:
@@ -218,6 +410,9 @@ def route_task(root: Path, task_id: str) -> dict[str, Any]:
     agents = capabilities.get("agents") or {}
     candidate_scores = score_candidates(profile, agents)
     selected_agents = select_agents(profile, agents, candidate_scores)
+    preflight = collect_runtime_preflight(selected_agents)
+    skill_recommendations = run_skill_recommendations(root, task_id, profile, prompt)
+    write_json(directory / "skill-recommendations.json", skill_recommendations)
     context_policies = {
         agent: context_policy_for(agent, agents.get(agent, {}), overlay)
         for agent in selected_agents
@@ -227,7 +422,7 @@ def route_task(root: Path, task_id: str) -> dict[str, Any]:
         "schema_version": "valp-capability-routing.v1",
         "task_id": task_id,
         "profile": profile,
-        "runtime_adapter": runtime_adapter_record(),
+        "runtime_adapter": runtime_adapter_record(preflight),
         "local_overlay": {
             "used": bool(overlay),
             "ref": ".herdr-loop/local-overlay.json" if overlay else None,
@@ -245,17 +440,20 @@ def route_task(root: Path, task_id: str) -> dict[str, Any]:
         "selected_agent_context_policies": context_policies,
         "skill_recommendations": {
             "schema_version": "valp-skill-recommendations.v1",
-            "status": "not_run",
-            "reason": "Local VALP coordinator route did not run a skill recommender backend.",
+            "status": skill_recommendations.get("status"),
+            "backend": skill_recommendations.get("backend"),
+            "ref": "skill-recommendations.json",
+            "routing": skill_recommendations.get("routing") or {},
+            "missing_skills": skill_recommendations.get("missing_skills") or [],
         },
-        "provider_matrix": provider_matrix_for(selected_agents, agents, overlay),
+        "provider_matrix": provider_matrix_for(selected_agents, agents, overlay, preflight),
         "runtime_task_state_mapping": RUNTIME_TASK_STATE_MAPPING,
         "squad_routing": {"used": False},
         "routing_feedback_ref": "routing-feedback.json",
         "capabilities_missing": [],
     }
     write_json(directory / "routing.json", routing)
-    write_dispatches(directory, task_id, profile, prompt, selected_agents, expected_by_agent, routing)
+    write_dispatches(directory, task_id, profile, prompt, selected_agents, expected_by_agent, routing, skill_recommendations)
     append_dispatch_written_receipts(directory, selected_agents, expected_by_agent)
     state.update(
         {
@@ -270,7 +468,11 @@ def route_task(root: Path, task_id: str) -> dict[str, Any]:
             "capabilities_needed": routing["capabilities_needed"],
             "capabilities_missing": [],
             "context_policies": context_policies,
-            "skill_recommendations": {"status": "not_run"},
+            "skill_recommendations": {
+                "status": skill_recommendations.get("status"),
+                "backend": skill_recommendations.get("backend"),
+                "ref": "skill-recommendations.json",
+            },
             "routing_confidence": routing["routing_confidence"],
             "routing_feedback": {"status": "expected", "ref": "routing-feedback.json"},
             "updated_at": now_iso(),
@@ -378,34 +580,160 @@ def rejected_candidates(scores: dict[str, dict[str, Any]], selected_agents: list
     return rejected
 
 
-def runtime_adapter_record() -> dict[str, Any]:
+def runtime_adapter_record(preflight: dict[str, Any] | None = None) -> dict[str, Any]:
     herdr = shutil.which("herdr")
     return {
         "class": "pane_controller" if herdr else "manual",
         "name": "HERDR" if herdr else "manual",
         "full_mode_capable": bool(herdr),
         "state_mapping_ref": "docs/task-state-machine.md",
+        "preflight": preflight or {},
     }
 
 
-def provider_matrix_for(selected_agents: list[str], agents: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+def collect_runtime_preflight(agent_names: list[str] | None = None) -> dict[str, Any]:
+    herdr = shutil.which("herdr")
+    preflight: dict[str, Any] = {
+        "generated_at": now_iso(),
+        "runtime": "HERDR" if herdr else "manual",
+        "status": "pass" if herdr else "warn",
+        "checks": {},
+        "agents": {},
+    }
+    if not herdr:
+        preflight["checks"]["herdr_cli"] = {"status": "warn", "message": "herdr command not found; Manual Mode only."}
+        return preflight
+
+    status_result = run_command([herdr, "status", "--json"], timeout=5.0)
+    status_json = parse_json_stdout(status_result)
+    restart_needed = bool(((status_json.get("server") or {}).get("restart_needed")) or ((status_json.get("update") or {}).get("restart_needed")))
+    preflight["checks"]["herdr_status"] = {
+        "status": "fail" if not status_result.get("ok") or restart_needed else "pass",
+        "exit_code": status_result.get("exit_code"),
+        "restart_needed": restart_needed,
+        "client_version": (status_json.get("client") or {}).get("version"),
+        "server_version": (status_json.get("server") or {}).get("version"),
+    }
+
+    pane_result = run_command([herdr, "pane", "list"], timeout=5.0)
+    pane_json = parse_json_stdout(pane_result)
+    panes = (((pane_json.get("result") or {}).get("panes")) or []) if pane_json else []
+    preflight["checks"]["pane_list"] = {
+        "status": "pass" if pane_result.get("ok") else "fail",
+        "count": len(panes),
+    }
+
+    panes_by_agent = {
+        str(pane.get("agent")): pane
+        for pane in panes
+        if pane.get("agent")
+    }
+    for agent in agent_names or sorted(panes_by_agent):
+        pane = panes_by_agent.get(agent)
+        agent_record = {
+            "status": "warn",
+            "agent_status": None,
+            "pane_id": None,
+            "terminal_size": None,
+            "min_terminal_size": AGENT_MIN_TERMINAL_SIZE.get(agent, DEFAULT_MIN_TERMINAL_SIZE),
+            "terminal_size_status": "unknown",
+            "cli": cli_preflight_for_agent(agent),
+            "notes": [],
+        }
+        if not pane:
+            agent_record["status"] = "warn"
+            agent_record["notes"].append("No current pane was reported for this agent.")
+            preflight["agents"][agent] = agent_record
+            continue
+
+        pane_id = str(pane.get("pane_id"))
+        agent_record["pane_id"] = pane_id
+        agent_record["agent_status"] = pane.get("agent_status")
+        layout_result = run_command([herdr, "pane", "layout", "--pane", pane_id], timeout=5.0)
+        layout_json = parse_json_stdout(layout_result)
+        rect = pane_rect_from_layout(layout_json, pane_id)
+        if rect:
+            size = {"width": int(rect.get("width", 0)), "height": int(rect.get("height", 0))}
+            agent_record["terminal_size"] = size
+            minimum = agent_record["min_terminal_size"]
+            ok_size = size["width"] >= minimum["width"] and size["height"] >= minimum["height"]
+            agent_record["terminal_size_status"] = "pass" if ok_size else "fail"
+            if not ok_size:
+                agent_record["notes"].append("Pane is smaller than the minimum terminal size for reliable TUI rendering.")
+        else:
+            agent_record["notes"].append("Pane size could not be read from runtime layout output.")
+
+        cli_status = (agent_record.get("cli") or {}).get("status")
+        terminal_status = agent_record.get("terminal_size_status")
+        if terminal_status == "fail" or cli_status == "fail":
+            agent_record["status"] = "fail"
+        elif terminal_status == "unknown" or cli_status == "warn":
+            agent_record["status"] = "warn"
+        else:
+            agent_record["status"] = "pass"
+        preflight["agents"][agent] = agent_record
+
+    if any(isinstance(check, dict) and check.get("status") == "fail" for check in preflight["checks"].values()):
+        preflight["status"] = "fail"
+    elif any(record.get("status") == "fail" for record in preflight["agents"].values()):
+        preflight["status"] = "fail"
+    elif any(record.get("status") == "warn" for record in preflight["agents"].values()):
+        preflight["status"] = "warn"
+    return preflight
+
+
+def pane_rect_from_layout(layout_json: dict[str, Any], pane_id: str) -> dict[str, Any]:
+    layout = (layout_json.get("result") or {}).get("layout") or {}
+    for pane in layout.get("panes") or []:
+        if pane.get("pane_id") == pane_id and isinstance(pane.get("rect"), dict):
+            return pane["rect"]
+    return {}
+
+
+def cli_preflight_for_agent(agent: str) -> dict[str, Any]:
+    command_by_agent = {
+        "agy": ["agy", "--version"],
+        "claude": ["claude", "--version"],
+        "codex": ["codex", "--version"],
+        "hermes": ["hermes", "--version"],
+    }
+    command = command_by_agent.get(agent)
+    if not command:
+        return {"status": "warn", "message": "No CLI version probe is defined for this agent."}
+    if not shutil.which(command[0]):
+        return {"status": "warn", "command": command, "message": "CLI command was not found on PATH."}
+    result = run_command(command, timeout=5.0)
+    return {
+        "status": "pass" if result.get("ok") else "fail",
+        "command": command,
+        "exit_code": result.get("exit_code"),
+        "version_output": (result.get("stdout") or result.get("stderr") or "").strip()[:500],
+    }
+
+
+def provider_matrix_for(selected_agents: list[str], agents: dict[str, Any], overlay: dict[str, Any], preflight: dict[str, Any]) -> dict[str, Any]:
     overlay_profiles = overlay.get("agent_capability_profiles") or {}
     providers = {}
     for agent in selected_agents:
         info = agents.get(agent, {})
         overlay_profile = overlay_profiles.get(agent) or {}
+        agent_preflight = (preflight.get("agents") or {}).get(agent, {})
         providers[agent] = {
             "provider_name": agent,
-            "cli_available": True,
+            "provider_version_or_runtime_report": ((agent_preflight.get("cli") or {}).get("version_output")) or "unknown",
+            "cli_available": (agent_preflight.get("cli") or {}).get("status") in {"pass", "warn"},
             "mcp_support": "supported" if info.get("mcp_servers") else "unknown",
             "skill_discovery_path": overlay_profile.get("skill_library_paths") or "unknown",
             "session_resume_support": "unknown",
             "approval_behavior": overlay_profile.get("approval_behavior") or "unknown",
+            "model_selection": "runtime_default",
+            "max_concurrency": 1,
             "context_policy": context_policy_for(agent, info, overlay),
             "known_limitations": info.get("must_not_do") or [],
+            "runtime_preflight": agent_preflight,
             "last_verified_at": now_iso(),
         }
-    return {"generated_at": now_iso(), "providers": providers}
+    return {"generated_at": now_iso(), "runtime_preflight": preflight, "providers": providers}
 
 
 def expected_refs_for_agents(selected_agents: list[str]) -> dict[str, list[str]]:
@@ -432,12 +760,14 @@ def write_dispatches(
     selected_agents: list[str],
     expected_by_agent: dict[str, list[str]],
     routing: dict[str, Any],
+    skill_recommendations: dict[str, Any],
 ) -> None:
     for agent in selected_agents:
         agent_dir = directory / "agents" / agent
         agent_dir.mkdir(parents=True, exist_ok=True)
         expected = "\n".join(f"- `{ref}`" for ref in expected_by_agent.get(agent, []))
         reasons = "\n".join(f"- {reason}" for reason in routing["agent_match_reasons"].get(agent, []))
+        skills = format_skill_recommendations_for_dispatch(agent, skill_recommendations)
         dispatch = f"""# Dispatch: {agent}
 
 Task: {task_id}
@@ -465,11 +795,81 @@ Use your routed capability profile for this task. Local profiles are hints, not 
 
 {expected}
 
+## Recommended Skills
+
+{skills}
+
+## Evidence Claim Rule
+
+- Any build, test, lint, runtime, UI, or verification claim must cite a concrete command log, screenshot, receipt, or evidence file path.
+- Do not write "verified", "tests passed", "build passed", or equivalent claims unless the evidence path exists or the blocker is explicit.
+
 ## Required Response
 
 Write concise evidence to the expected path. Include blockers, confidence limits, and any handoff needed for the next agent.
 """
         (agent_dir / "dispatch.md").write_text(dispatch, encoding="utf-8")
+
+
+def format_skill_recommendations_for_dispatch(agent: str, skill_recommendations: dict[str, Any]) -> str:
+    if skill_recommendations.get("status") not in {"complete", "no_matches"}:
+        return f"- Skill router status: `{skill_recommendations.get('status', 'unknown')}`. Proceed without assuming hidden skill recommendations."
+    lines = [
+        "- Skill recommendations are routing aids, not permission grants.",
+        "- Load or invoke an installed skill only when it matches your role and materially improves this task.",
+    ]
+    count = 0
+    for result in skill_recommendations.get("results") or []:
+        task = str(result.get("task") or "").strip()
+        routing = result.get("routing") or {}
+        for match in result.get("matches") or []:
+            if not match.get("installed"):
+                continue
+            if not skill_visible_to_agent(agent, str(match.get("path") or "")):
+                continue
+            count += 1
+            lines.append(
+                "- Task `{}` -> skill `{}` ({}, confidence {}, mode {}, path `{}`).".format(
+                    task,
+                    match.get("skill", "unknown"),
+                    routing.get("decision", "unknown"),
+                    match.get("confidence", "unknown"),
+                    match.get("mode", "unknown"),
+                    match.get("path", "unknown"),
+                )
+            )
+            if count >= 5:
+                break
+        if count >= 5:
+            break
+    if count == 0:
+        lines.append("- No installed skill matched strongly enough for this dispatch.")
+    missing = skill_recommendations.get("missing_skills") or []
+    for missing_skill in missing[:3]:
+        lines.append(
+            "- Missing useful skill `{}`: {}".format(
+                missing_skill.get("skill", "unknown"),
+                missing_skill.get("install_hint", "no install hint"),
+            )
+        )
+    return "\n".join(lines)
+
+
+def skill_visible_to_agent(agent: str, path: str) -> bool:
+    if not path or path == "unknown":
+        return True
+    normalized = path.replace("\\", "/")
+    shared = ["/.agents/skills/"]
+    agent_paths = {
+        "codex": ["/.codex/skills/", *shared],
+        "claude": ["/.claude/skills/", *shared],
+        "hermes": ["/.hermes/skills/"],
+        "agy": ["/.gemini/", "/.antigravity/", *shared],
+    }
+    allowed = agent_paths.get(agent)
+    if not allowed:
+        return True
+    return any(marker in normalized for marker in allowed)
 
 
 def append_dispatch_written_receipts(directory: Path, selected_agents: list[str], expected_by_agent: dict[str, list[str]]) -> None:
@@ -506,6 +906,17 @@ def dispatch_task(root: Path, task_id: str, agent: str = "all", submit: bool = F
         raise SystemExit(f"Missing routing.json for task {task_id}")
     selected_agents = routing.get("selected_agents") or []
     targets = selected_agents if agent == "all" else [agent]
+    preflight = collect_runtime_preflight(targets)
+    failed = [
+        name
+        for name, record in (preflight.get("agents") or {}).items()
+        if record.get("status") == "fail"
+    ]
+    if preflight.get("status") == "fail" or failed:
+        write_json(directory / "runtime-preflight.json", preflight)
+        target_summary = ", ".join(failed) if failed else "runtime checks"
+        raise SystemExit("Runtime preflight failed for: " + target_summary)
+    write_json(directory / "runtime-preflight.json", preflight)
     commands = []
     for target in targets:
         dispatch_ref = directory / "agents" / target / "dispatch.md"

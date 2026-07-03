@@ -92,6 +92,7 @@ INTAKE
   -> DECOMPOSE EXECUTION TASKS
   -> RECOMMEND SKILLS, IF BACKEND EXISTS
   -> BUILD PROVIDER MATRIX
+  -> PREFLIGHT RUNTIME AND AGENT PANES
   -> SCORE AND ROUTE AGENTS
   -> ROUTE SQUAD, IF USED
   -> WRITE VISIBLE DISPATCH
@@ -122,6 +123,7 @@ new
   -> decomposing_tasks
   -> recommending_skills
   -> building_provider_matrix
+  -> preflighting_runtime
   -> scoring_routes
   -> routing_capabilities
   -> routing_squad
@@ -186,6 +188,7 @@ agent list
 agent metadata/status
 provider matrix
 context policy
+runtime preflight
 dispatch submission proof
 runtime task state mapping
 expected evidence refs
@@ -196,6 +199,25 @@ approval gate status
 
 An adapter may use its own internal state names, but it must publish the mapping
 to VALP receipt states.
+
+For pane-based runtimes, preflight must record enough display/runtime facts to
+avoid invisible failures:
+
+```text
+pane id
+agent status
+foreground cwd, when available
+terminal size, when available
+minimum terminal size expected by the agent
+CLI availability/version probe, when available
+restart/update-needed status, when available
+known TUI/display caveats
+```
+
+If terminal dimensions cannot be read, the adapter must record `unknown` instead
+of pretending the pane is safe. If dimensions are below the agent minimum, Full
+Mode dispatch must stop or require an explicit operator repair before sending
+the task.
 
 ## 6. Local Overlays
 
@@ -280,6 +302,7 @@ decompose the task into execution tasks
 identify required capabilities and evidence gates
 load local overlay profiles, if present
 scan current runtime/tool/skill/context state
+run runtime preflight for selected or high-relevance agents
 rank candidate agents for each execution task
 record confidence and risk for selected agents
 record missing capability or uncertainty
@@ -311,6 +334,8 @@ Low confidence rules:
 - If implementation confidence is medium but risk is high, require review before
   mutation.
 - If context policy is near the hard threshold, compress before dispatch.
+- If pane or CLI preflight fails, repair the runtime before dispatch or route a
+  different adapter.
 - If a prior feedback record says an agent failed this task type recently,
   require fresh evidence before routing similar work again.
 
@@ -397,6 +422,12 @@ compression_target_pct_max: 25
 
 User or project policy may override defaults.
 
+Routing must treat these thresholds as a pre-dispatch gate. If current context
+is at or above `hard_compression_pct`, or if the runtime marks
+`compression_required`, no new implementation/review/prototype dispatch should
+be sent until the agent writes a compression handoff and the task state is
+revalidated.
+
 ## 12. Provider Matrix
 
 Every routed agent should have a current provider capability record before work
@@ -415,6 +446,7 @@ approval_behavior
 model_selection
 max_concurrency
 context_policy
+runtime_preflight
 known_limitations
 last_verified_at
 ```
@@ -423,6 +455,22 @@ The provider matrix is evidence, not marketing. It must be generated from
 current runtime status, installed tools, official documentation, or explicit
 operator configuration. Missing values must be recorded as unknown instead of
 guessed.
+
+Provider matrix scanning should use real local/runtime probes where possible:
+
+```text
+runtime status command
+pane list and pane layout
+agent CLI version command
+installed skill library paths
+MCP/tool availability
+context policy and current context signal
+recent task-local feedback
+```
+
+For TUI agents that are sensitive to small panes, such as prototype or design
+agents, `runtime_preflight` should include the pane size and the minimum size
+used by the adapter.
 
 ## 13. Skill Recommendation
 
@@ -441,6 +489,31 @@ understand request
 
 Recommendation output is evidence, not authority. It cannot bypass role
 boundaries, approval gates, receipt gates, or context gates.
+
+When a recommendation backend is available, Full Mode routing should execute it
+after decomposition and before dispatch. The result must be written to task
+evidence, normally:
+
+```text
+<task>/skill-recommendations.json
+```
+
+Dispatch prompts must surface relevant installed skills to the target agent.
+They should include:
+
+```text
+execution task
+recommended skill name
+installed or missing status
+confidence/mode/decision
+skill path or install hint
+instruction that recommendations are aids, not permission grants
+```
+
+An agent should use or load a recommended skill only when it matches the agent's
+role and materially improves the execution task. If a useful skill is missing,
+the task should record the gap instead of silently proceeding as if the skill
+were available.
 
 ## 14. Squad Routing
 
@@ -518,6 +591,30 @@ The `.herdr-loop` folder name is the reference runtime-compatible default. Other
 implementations may use a different internal folder if they export the same
 VALP evidence contract.
 
+Evidence may have an explicit validity state:
+
+```text
+valid
+superseded
+invalid
+rejected
+blocked
+```
+
+The reference task-local file is:
+
+```text
+<task>/evidence-status.json
+```
+
+Only `valid` evidence can satisfy expected evidence gates. A file that exists but
+is marked `superseded`, `invalid`, `rejected`, or `blocked` does not count as
+completion evidence.
+
+Agents must not make runtime/build/test/lint/UI verification claims without
+concrete evidence. Claims such as "build passed", "tests passed", "UI verified",
+or equivalent must cite a command log, screenshot, receipt, or evidence path.
+
 ## 17. Approval Gates
 
 The following require explicit user approval:
@@ -555,11 +652,17 @@ A task is done only when:
 - local overlay inputs are recorded when used;
 - selected agents and context policies are recorded;
 - provider matrix fields needed for the task are recorded;
+- runtime preflight is recorded for Full Mode adapters and has no failing
+  selected agent checks;
 - routing confidence, missing capabilities, and rejected high-relevance
   candidates are recorded when they affect the decision;
+- skill recommendation backend result is recorded when a backend is available,
+  and relevant recommendations are surfaced in dispatch prompts;
 - squad routing evidence is recorded when a squad is used;
 - dispatch receipts satisfy the required gates;
-- expected evidence exists;
+- expected evidence exists and is not marked invalid, superseded, rejected, or
+  blocked;
+- runtime/build/test/lint/UI claims cite concrete evidence;
 - verification passed or has a scoped blocker;
 - review findings have no unresolved critical/high blockers;
 - approvals are resolved;

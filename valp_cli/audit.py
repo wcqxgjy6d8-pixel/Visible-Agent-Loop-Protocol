@@ -40,6 +40,8 @@ class TaskAudit:
         self.state = self._load_json("state.json")
         self.routing = self._load_json("routing.json")
         self.feedback = self._load_json("routing-feedback.json")
+        self.evidence_status = self._load_json("evidence-status.json")
+        self.skill_recommendations = self._load_json("skill-recommendations.json")
         self.receipts = self._load_jsonl("dispatch-receipts.jsonl")
         self.task_text = self._read_text("task.md")
         self.final_synthesis_text = self._read_first_existing(
@@ -53,10 +55,13 @@ class TaskAudit:
             self.check_local_overlay(),
             self.check_selected_agents_and_context(),
             self.check_provider_matrix(),
+            self.check_runtime_preflight(),
             self.check_routing_confidence(),
+            self.check_skill_recommendations(),
             self.check_squad_routing(),
             self.check_dispatch_receipts(),
             self.check_expected_evidence(),
+            self.check_claim_evidence(),
             self.check_verification(),
             self.check_review_findings(),
             self.check_approvals(),
@@ -125,10 +130,40 @@ class TaskAudit:
             return self._fail("selected_agents_context", "Selected agents and context policies are recorded", "No selected_agents recorded", evidence)
         missing = [agent for agent in agents if agent not in policies]
         if missing:
-            return self._warn(
+            return self._fail(
                 "selected_agents_context",
                 "Selected agents and context policies are recorded",
                 f"Selected agents recorded, but context policy missing for: {', '.join(missing)}",
+                evidence,
+            )
+        required = {"soft_warning_pct", "hard_compression_pct", "emergency_stop_pct"}
+        incomplete = [
+            agent
+            for agent in agents
+            if not required.issubset(set((policies.get(agent) or {}).keys()))
+        ]
+        if incomplete:
+            return self._fail(
+                "selected_agents_context",
+                "Selected agents and context policies are recorded",
+                "Context policy missing threshold fields for: " + ", ".join(incomplete),
+                evidence,
+            )
+        compressed_needed = []
+        for agent in agents:
+            policy = policies.get(agent) or {}
+            current = policy.get("current_context_pct")
+            hard = policy.get("hard_compression_pct")
+            if policy.get("compression_required"):
+                compressed_needed.append(f"{agent}=compression_required")
+                continue
+            if isinstance(current, (int, float)) and isinstance(hard, (int, float)) and current >= hard:
+                compressed_needed.append(f"{agent}=context {current}% >= hard {hard}%")
+        if compressed_needed:
+            return self._fail(
+                "selected_agents_context",
+                "Selected agents and context policies are recorded",
+                "Compression required before dispatch: " + ", ".join(compressed_needed),
                 evidence,
             )
         return self._pass("selected_agents_context", "Selected agents and context policies are recorded", "Selected agents and context policies found", evidence)
@@ -146,6 +181,25 @@ class TaskAudit:
         if matrix.get("status") == "scanned":
             return self._warn("provider_matrix", "Provider matrix fields needed for the task are recorded", "Provider matrix is referenced as scanned but no provider details are local", evidence)
         return self._fail("provider_matrix", "Provider matrix fields needed for the task are recorded", "provider_matrix has no provider records", evidence)
+
+    def check_runtime_preflight(self) -> AuditItem:
+        evidence = self._existing(["routing.json", "runtime-preflight.json", "state.json"])
+        runtime = self.routing.get("runtime_adapter") or self.state.get("runtime_adapter") or {}
+        if runtime.get("class") == "manual":
+            return self._skip("runtime_preflight", "Runtime preflight is recorded for Full Mode adapters", "Manual Mode has no runtime preflight", evidence)
+        matrix = self.routing.get("provider_matrix") or {}
+        preflight = matrix.get("runtime_preflight") or runtime.get("preflight") or self._load_json("runtime-preflight.json")
+        if not preflight:
+            return self._fail("runtime_preflight", "Runtime preflight is recorded for Full Mode adapters", "Missing runtime preflight record", evidence)
+        agents = preflight.get("agents") or {}
+        failed = [name for name, record in agents.items() if isinstance(record, dict) and record.get("status") == "fail"]
+        if preflight.get("status") == "fail":
+            return self._fail("runtime_preflight", "Runtime preflight is recorded for Full Mode adapters", "Runtime preflight status is fail", evidence)
+        if failed:
+            return self._fail("runtime_preflight", "Runtime preflight is recorded for Full Mode adapters", "Runtime preflight failed for: " + ", ".join(failed), evidence)
+        if preflight.get("status") == "warn" or any(isinstance(record, dict) and record.get("status") == "warn" for record in agents.values()):
+            return self._warn("runtime_preflight", "Runtime preflight is recorded for Full Mode adapters", "Runtime preflight has warnings", evidence)
+        return self._pass("runtime_preflight", "Runtime preflight is recorded for Full Mode adapters", "Runtime preflight recorded with no failures", evidence)
 
     def check_routing_confidence(self) -> AuditItem:
         evidence = self._existing(["routing.json", "state.json"])
@@ -173,6 +227,28 @@ class TaskAudit:
             "Missing advisory routing fields: " + ", ".join(details),
             evidence,
         )
+
+    def check_skill_recommendations(self) -> AuditItem:
+        evidence = self._existing(["routing.json", "skill-recommendations.json", "state.json"])
+        record = self.routing.get("skill_recommendations") or self.state.get("skill_recommendations") or {}
+        if not record:
+            return self._warn("skill_recommendations", "Skill recommendation backend result is recorded", "No skill recommendation record found", evidence)
+        status = record.get("status")
+        if status == "not_run":
+            return self._fail("skill_recommendations", "Skill recommendation backend result is recorded", "Skill router was not executed", evidence)
+        if status == "unavailable":
+            return self._warn("skill_recommendations", "Skill recommendation backend result is recorded", "No skill recommendation backend was available", evidence)
+        if status == "failed":
+            return self._fail("skill_recommendations", "Skill recommendation backend result is recorded", "Skill recommendation backend failed", evidence)
+        ref = record.get("ref") or "skill-recommendations.json"
+        if status in {"complete", "no_matches"}:
+            data = self.skill_recommendations if ref == "skill-recommendations.json" else self._load_json(str(ref))
+            if not data:
+                return self._fail("skill_recommendations", "Skill recommendation backend result is recorded", f"Missing skill recommendation evidence: {ref}", evidence)
+            if data.get("status") != status:
+                return self._fail("skill_recommendations", "Skill recommendation backend result is recorded", "Routing status does not match skill recommendation evidence", evidence)
+            return self._pass("skill_recommendations", "Skill recommendation backend result is recorded", f"Skill recommendation status: {status}", evidence)
+        return self._warn("skill_recommendations", "Skill recommendation backend result is recorded", f"Unknown skill recommendation status: {status}", evidence)
 
     def check_squad_routing(self) -> AuditItem:
         evidence = self._existing(["routing.json", "state.json"])
@@ -212,9 +288,28 @@ class TaskAudit:
         if not refs:
             return self._warn("expected_evidence", "Expected evidence exists", "No expected evidence refs found", evidence)
         missing = [ref for ref in refs if not (self.task_dir / ref).exists()]
+        invalid = [
+            f"{ref}={status}"
+            for ref in refs
+            if (status := self._evidence_status(ref)) in {"invalid", "superseded", "rejected", "blocked"}
+        ]
         if missing:
             return self._fail("expected_evidence", "Expected evidence exists", "Missing expected evidence: " + ", ".join(missing), evidence)
+        if invalid:
+            return self._fail("expected_evidence", "Expected evidence exists", "Expected evidence is not valid: " + ", ".join(invalid), evidence)
         return self._pass("expected_evidence", "Expected evidence exists", "All expected evidence refs exist", refs)
+
+    def check_claim_evidence(self) -> AuditItem:
+        evidence = self._existing(["agents", "evidence", "dispatch-receipts.jsonl"])
+        unsupported = self._unsupported_runtime_claims()
+        if unsupported:
+            return self._fail(
+                "claim_evidence",
+                "Runtime/build/test claims cite concrete evidence",
+                "Unsupported runtime claims: " + "; ".join(unsupported[:5]),
+                evidence,
+            )
+        return self._pass("claim_evidence", "Runtime/build/test claims cite concrete evidence", "No unsupported runtime claims found", evidence)
 
     def check_verification(self) -> AuditItem:
         evidence = self._existing(["evidence/verification.md", "gates/verification.json", "state.json"])
@@ -286,7 +381,8 @@ class TaskAudit:
 
     def _expected_evidence_refs(self) -> list[str]:
         refs: set[str] = set()
-        for receipt in self.receipts:
+        latest = self._latest_receipts_by_agent()
+        for receipt in latest.values():
             for ref in receipt.get("expected_refs") or []:
                 refs.add(str(ref))
         in_section = False
@@ -302,6 +398,66 @@ class TaskAudit:
                 if match:
                     refs.add(match.group(1))
         return sorted(refs)
+
+    def _evidence_status(self, ref: str) -> str:
+        if not self.evidence_status:
+            return "valid"
+        evidence = self.evidence_status.get("evidence") or self.evidence_status.get("items") or {}
+        if isinstance(evidence, dict):
+            item = evidence.get(ref)
+            if isinstance(item, dict):
+                return str(item.get("status") or "valid").lower()
+            if isinstance(item, str):
+                return item.lower()
+        if isinstance(evidence, list):
+            for item in evidence:
+                if isinstance(item, dict) and item.get("ref") == ref:
+                    return str(item.get("status") or "valid").lower()
+        return "valid"
+
+    def _unsupported_runtime_claims(self) -> list[str]:
+        claim_patterns = [
+            r"\b(build|compile|compiled|test|tests|lint|runtime|ui|browser|screenshot|launch|launched)\b.{0,80}\b(pass|passed|ok|succeed|succeeded|verified|fixed)\b",
+            r"\bverified\b",
+            r"\bverification passed\b",
+        ]
+        evidence_markers = [
+            "```",
+            "`",
+            ".log",
+            ".json",
+            ".png",
+            ".txt",
+            "command",
+            "exit code",
+            "exit_code",
+            "stdout",
+            "stderr",
+            "evidence/",
+            "agents/",
+            "$ ",
+        ]
+        unsupported: list[str] = []
+        roots = [self.task_dir / "agents", self.task_dir / "evidence"]
+        for root in roots:
+            if not root.exists():
+                continue
+            for path in root.rglob("*.md"):
+                if path.name in {"dispatch.md", "context-compression.md", "final-synthesis.md"}:
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+                lowered = text.lower()
+                claim_found = any(
+                    re.search(pattern, line, re.IGNORECASE)
+                    for line in lowered.splitlines()
+                    for pattern in claim_patterns
+                )
+                if not claim_found:
+                    continue
+                if any(marker in lowered for marker in evidence_markers):
+                    continue
+                unsupported.append(f"{path.relative_to(self.task_dir)}")
+        return unsupported
 
     def _latest_receipts_by_agent(self) -> dict[str, dict[str, Any]]:
         latest: dict[str, dict[str, Any]] = {}

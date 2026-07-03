@@ -46,6 +46,50 @@ class ValpAuditTests(unittest.TestCase):
             self.assertEqual(report.status, FAIL)
             self.assertTrue(any(item.id == "dispatch_receipts" and item.status == FAIL for item in report.items))
 
+    def test_invalid_expected_evidence_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            status = {
+                "schema_version": "valp-evidence-status.v1",
+                "evidence": {
+                    "agents/codex/evidence.md": {
+                        "status": "superseded",
+                        "reason": "A later retry replaced this evidence.",
+                    }
+                },
+            }
+            (task / "evidence-status.json").write_text(json.dumps(status), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "expected_evidence" and item.status == FAIL for item in report.items))
+
+    def test_unsupported_runtime_claim_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            (task / "agents" / "codex" / "evidence.md").write_text(
+                "# Codex Evidence\n\nBuild passed and tests passed.\n",
+                encoding="utf-8",
+            )
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "claim_evidence" and item.status == FAIL for item in report.items))
+
+    def test_skill_router_not_run_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            routing = json.loads((task / "routing.json").read_text(encoding="utf-8"))
+            routing["skill_recommendations"] = {"status": "not_run"}
+            (task / "routing.json").write_text(json.dumps(routing), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "skill_recommendations" and item.status == FAIL for item in report.items))
+
 
 if __name__ == "__main__":
     unittest.main()

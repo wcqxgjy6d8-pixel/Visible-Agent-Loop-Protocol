@@ -22,6 +22,8 @@ ExampleProject/
         routing.json
         routing-feedback.json
         skill-recommendations.json
+        runtime-preflight.json
+        evidence-status.json
         timeline.jsonl
         dispatch-receipts.jsonl
         final-synthesis.md

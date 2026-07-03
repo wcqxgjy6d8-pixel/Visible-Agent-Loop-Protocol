@@ -49,6 +49,21 @@ Emergency stop:
 : Do not run commands, edit files, send dispatches, or issue final verdicts
 until compression is complete and state is revalidated.
 
+## Dispatch Gate
+
+Context policy is not passive metadata. Before dispatch, the router or runtime
+adapter must check whether the selected agent is already at or above
+`hard_compression_pct` or explicitly marked `compression_required`.
+
+If so:
+
+```text
+do not send the dispatch
+request/write context compression handoff
+re-read task state and evidence
+rerun routing if the task, project, or tools changed
+```
+
 ## Required Handoff
 
 ```markdown
@@ -76,4 +91,3 @@ If exact context percentage is not available, force compression after:
 - starting a new roadmap task after a long task;
 - inability to state project root, task id, phase, and next safe action without
   rereading files.
-

@@ -49,11 +49,35 @@ Routing writes:
 
 ```text
 <workspace>/.herdr-loop/tasks/<task-id>/routing.json
+<workspace>/.herdr-loop/tasks/<task-id>/skill-recommendations.json
 <workspace>/.herdr-loop/tasks/<task-id>/agents/<agent>/dispatch.md
 <workspace>/.herdr-loop/tasks/<task-id>/dispatch-receipts.jsonl
 ```
 
 At this point the receipt state is `dispatch_written`; the work is not complete.
+
+## Preflight
+
+Check runtime readiness before dispatch:
+
+```bash
+bin/valp preflight --agent agy
+bin/valp preflight --agent codex --agent claude --json
+```
+
+Pane-based adapters should record:
+
+```text
+pane id
+agent status
+terminal size
+minimum terminal size
+CLI version probe
+restart/update-needed status
+```
+
+`valp dispatch --submit` writes `runtime-preflight.json` and stops when a
+selected agent has a failing preflight check.
 
 ## Dispatch
 
@@ -151,10 +175,13 @@ The command maps the Done Criteria into these audit items:
 | `local_overlay` | local overlay inputs are recorded when used |
 | `selected_agents_context` | selected agents and context policies are recorded |
 | `provider_matrix` | provider matrix fields needed for the task are recorded |
+| `runtime_preflight` | Full Mode runtime preflight is recorded and selected agents have no failing checks |
 | `routing_confidence` | routing confidence, missing capabilities, and relevant rejected candidates are recorded |
+| `skill_recommendations` | skill recommendation backend result is recorded when available |
 | `squad_routing` | squad routing evidence is recorded when a squad is used |
 | `dispatch_receipts` | dispatch receipts satisfy the required gates |
-| `expected_evidence` | expected evidence exists |
+| `expected_evidence` | expected evidence exists and is not invalid/superseded/rejected/blocked |
+| `claim_evidence` | runtime/build/test/lint/UI claims cite command logs, screenshots, receipts, or evidence paths |
 | `verification` | verification passed or has a scoped blocker |
 | `review_findings` | review findings have no unresolved critical/high blockers |
 | `approvals` | approvals are resolved |
@@ -166,7 +193,7 @@ The command maps the Done Criteria into these audit items:
 ```text
 VALP audit: PASS
 Task: /path/to/Visible-Agent-Loop-Protocol/examples/full-mode-task
-Summary: pass=13 warn=0 fail=0 skip=1
+Summary: pass=16 warn=0 fail=0 skip=1
 ```
 
 The example has one skip because it does not use squad routing.

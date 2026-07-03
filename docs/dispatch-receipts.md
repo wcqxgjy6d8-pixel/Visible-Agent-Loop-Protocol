@@ -48,6 +48,10 @@ gate if a later receipt for the same agent is `dispatch_blocked`,
 after a timeout, the runtime must append a newer `dispatch_completed` receipt
 that points to the recovered evidence.
 
+If an evidence file exists but is marked `invalid`, `superseded`, `rejected`, or
+`blocked` in `evidence-status.json`, it does not satisfy `dispatch_completed` or
+the expected evidence gate.
+
 ## Receipt Ledger
 
 Receipts are appended to:

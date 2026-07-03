@@ -1,9 +1,81 @@
-# VALP Audit CLI
+# VALP Reference CLI
 
-`valp audit` is the first reference CLI command for VALP 0.2.
+The reference CLI provides the first local VALP coordinator workflow:
 
-It turns the `SPEC.md` Done Criteria checklist into an executable quality gate
-for a task evidence folder.
+```text
+publish -> scan -> route -> dispatch -> audit
+```
+
+It is intentionally small. It creates task evidence, reads local capability
+profiles, writes routing and dispatch files, prints HERDR submit commands, and
+audits completion evidence.
+
+## Publish / Scan / Route
+
+Publish a task and auto-route it:
+
+```bash
+bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it"
+```
+
+Publish without routing:
+
+```bash
+bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "..." --no-route
+```
+
+Run scan and route explicitly:
+
+```bash
+bin/valp scan --workspace /path/to/workspace --task TASK-001
+bin/valp route TASK-001 --workspace /path/to/workspace
+```
+
+The local scan reads:
+
+```text
+~/.herdr/agent-capabilities.json
+~/.herdr/valp-local-overlay.json
+```
+
+and writes:
+
+```text
+<workspace>/.herdr-loop/agents/capabilities.json
+<workspace>/.herdr-loop/local-overlay.json
+```
+
+Routing writes:
+
+```text
+<workspace>/.herdr-loop/tasks/<task-id>/routing.json
+<workspace>/.herdr-loop/tasks/<task-id>/agents/<agent>/dispatch.md
+<workspace>/.herdr-loop/tasks/<task-id>/dispatch-receipts.jsonl
+```
+
+At this point the receipt state is `dispatch_written`; the work is not complete.
+
+## Dispatch
+
+Print the HERDR adapter submit commands:
+
+```bash
+bin/valp dispatch TASK-001 --workspace /path/to/workspace
+```
+
+Submit through the local HERDR adapter:
+
+```bash
+bin/valp dispatch TASK-001 --workspace /path/to/workspace --submit
+```
+
+`dispatch --submit` calls `herdr-loop submit-dispatch` for each routed agent.
+It should only be used when the local HERDR panes/runtime are ready.
+
+## Audit
+
+`valp audit` turns the `SPEC.md` Done Criteria checklist into an executable
+quality gate for a task evidence folder.
 
 ## What It Audits
 

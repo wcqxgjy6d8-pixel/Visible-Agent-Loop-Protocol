@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import argparse
 import json
 import re
-import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
@@ -427,36 +425,3 @@ def print_text_report(report: AuditReport) -> None:
         print(f"  {item.message}")
         if item.evidence:
             print(f"  evidence: {', '.join(item.evidence)}")
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="valp", description="VALP reference CLI")
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    audit = sub.add_parser("audit", help="Audit a VALP task evidence folder")
-    audit.add_argument("path", nargs="?", default=".", help="Task folder or workspace root")
-    audit.add_argument("--task", dest="task_id", help="Task id under <workspace>/.herdr-loop/tasks/")
-    audit.add_argument("--json", action="store_true", help="Print machine-readable JSON")
-    audit.add_argument("--strict", action="store_true", help="Treat warnings as failures")
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-
-    if args.command == "audit":
-        task_dir = resolve_task_dir(Path(args.path), args.task_id)
-        report = TaskAudit(task_dir, strict=args.strict).run()
-        if args.json:
-            print(json.dumps(report_to_dict(report), indent=2, ensure_ascii=False))
-        else:
-            print_text_report(report)
-        return 1 if report.status == FAIL else 0
-
-    parser.print_help()
-    return 2
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

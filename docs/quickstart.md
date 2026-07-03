@@ -101,6 +101,22 @@ Expected evidence:
 Approval risks:
 ```
 
+With the reference CLI:
+
+```bash
+bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it"
+```
+
+`publish` runs local `scan` and `route` by default. It writes:
+
+```text
+.herdr-loop/tasks/TASK-001/task.md
+.herdr-loop/tasks/TASK-001/state.json
+.herdr-loop/tasks/TASK-001/routing.json
+.herdr-loop/tasks/TASK-001/dispatch-receipts.jsonl
+.herdr-loop/tasks/TASK-001/agents/<agent>/dispatch.md
+```
+
 ## 6. Scan And Route
 
 Record:
@@ -122,6 +138,13 @@ missing capabilities
 Do not route by habit. Local capability profiles are hints, not fixed
 assignments.
 
+To rerun routing explicitly:
+
+```bash
+bin/valp scan --workspace /path/to/workspace --task TASK-001
+bin/valp route TASK-001 --workspace /path/to/workspace
+```
+
 ## 7. Dispatch And Require Receipts
 
 Valid dispatch receipt states:
@@ -137,6 +160,18 @@ dispatch_blocked
 Text in an input box is only `dispatch_inserted`. It is not delivery.
 
 If expected evidence is declared, the gate requires `dispatch_completed`.
+
+To see the HERDR adapter submit commands:
+
+```bash
+bin/valp dispatch TASK-001 --workspace /path/to/workspace
+```
+
+To actually submit through the local HERDR adapter:
+
+```bash
+bin/valp dispatch TASK-001 --workspace /path/to/workspace --submit
+```
 
 ## 8. Verify, Review, Record
 

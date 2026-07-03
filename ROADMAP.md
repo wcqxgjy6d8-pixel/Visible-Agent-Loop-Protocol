@@ -24,6 +24,12 @@
 
 ## 0.2 Reference CLI
 
+- `valp publish` for local task creation and default auto-route.
+- `valp scan` for local capability and overlay snapshots.
+- `valp route` for candidate scoring, selected agents, dispatch files, and
+  `dispatch_written` receipts.
+- `valp dispatch` for HERDR adapter submit command generation and optional
+  `--submit`.
 - `valp audit` for task evidence folders.
 - Map Done Criteria to executable audit items.
 - Validate dispatch receipts.

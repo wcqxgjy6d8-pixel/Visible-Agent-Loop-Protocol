@@ -35,18 +35,25 @@ paths.
 
 New users should start with [docs/quickstart.md](docs/quickstart.md).
 
-## First Reference CLI
+## Reference CLI
 
-VALP 0.2 starts with an executable quality gate:
+VALP 0.2 starts with a local coordinator workflow plus an executable quality
+gate:
 
 ```bash
+bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it"
+bin/valp dispatch TASK-001 --workspace /path/to/workspace
 bin/valp audit examples/full-mode-task
 ```
 
+`valp publish` creates the task, scans local capabilities, routes selected
+agents, writes dispatch files, and records `dispatch_written` receipts.
+
+`valp dispatch` prints HERDR adapter submit commands by default. Use
+`--submit` to call `herdr-loop submit-dispatch`.
+
 `valp audit` scans a task evidence folder and checks the Done Criteria from
-`SPEC.md`: routing, runtime adapter, context policies, provider matrix,
-receipts, expected evidence, verification, review, approvals, final synthesis,
-and routing feedback.
+`SPEC.md`.
 
 See [docs/cli-audit.md](docs/cli-audit.md).
 

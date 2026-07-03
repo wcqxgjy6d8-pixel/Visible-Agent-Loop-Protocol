@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Adds local coordinator commands: `valp publish`, `valp scan`, `valp route`,
+  and `valp dispatch`.
+- `valp publish` now creates a task, scans local capability/overlay files, routes
+  selected agents, writes dispatch files, and records `dispatch_written`
+  receipts by default.
 - Adds the first reference CLI command: `valp audit`.
 - Maps `SPEC.md` Done Criteria into executable PASS/WARN/FAIL/SKIP audit items.
 - Adds text and JSON audit output for VALP task evidence folders.

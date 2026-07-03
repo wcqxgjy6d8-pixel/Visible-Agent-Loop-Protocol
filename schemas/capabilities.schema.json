@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Agent Capabilities",
+  "type": "object",
+  "required": ["schema_version", "updated_at", "agents"],
+  "properties": {
+    "schema_version": {
+      "const": "valp-agent-capabilities.v1"
+    },
+    "updated_at": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "skill_recommendation_backends": {
+      "type": "object"
+    },
+    "provider_matrix": {
+      "type": "object"
+    },
+    "agents": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "active": {"type": "boolean"},
+          "role": {"type": "array", "items": {"type": "string"}},
+          "mcp_servers": {"type": "array", "items": {"type": "string"}},
+          "skills": {"type": "array", "items": {"type": "string"}},
+          "strengths": {"type": "array", "items": {"type": "string"}},
+          "must_not_do": {"type": "array", "items": {"type": "string"}},
+          "context_policy": {"type": "object"},
+          "provider": {"type": "object"},
+          "runtime": {"type": "object"}
+        }
+      }
+    }
+  }
+}

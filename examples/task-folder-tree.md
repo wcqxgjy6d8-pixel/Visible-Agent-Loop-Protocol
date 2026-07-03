@@ -1,0 +1,42 @@
+# Example Task Folder
+
+```text
+ExampleProject/
+  agents/
+    codex/
+      worklog.md
+    claude/
+      worklog.md
+    hermes/
+      worklog.md
+  .herdr-loop/
+    agents/
+      capabilities.json
+      context-policy.json
+    tasks/
+      TASK-001/
+        task.md
+        state.json
+        routing.json
+        skill-recommendations.json
+        timeline.jsonl
+        dispatch-receipts.jsonl
+        final-synthesis.md
+        agents/
+          codex/
+            dispatch.md
+            plan.md
+            verification.md
+          claude/
+            dispatch.md
+            visible-review.md
+          hermes/
+            dispatch.md
+            self-review.md
+        gates/
+          verification.json
+          review.json
+        findings/
+          findings.json
+```
+

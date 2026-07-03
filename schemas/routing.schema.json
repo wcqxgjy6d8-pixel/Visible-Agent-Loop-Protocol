@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Routing",
+  "type": "object",
+  "required": ["schema_version", "task_id", "profile", "selected_agents"],
+  "properties": {
+    "schema_version": {
+      "const": "valp-capability-routing.v1"
+    },
+    "task_id": {"type": "string"},
+    "profile": {"type": "string"},
+    "runtime_adapter": {"type": "object"},
+    "routing_reason": {"type": "string"},
+    "capabilities_needed": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "selected_agents": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "agent_match_reasons": {"type": "object"},
+    "selected_agent_context_policies": {"type": "object"},
+    "skill_recommendations": {"type": "object"},
+    "provider_matrix": {"type": "object"},
+    "runtime_task_state_mapping": {"type": "object"},
+    "squad_routing": {"type": "object"},
+    "capabilities_missing": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "defaults": {
+    "soft_warning_pct": 60,
+    "hard_compression_pct": 70,
+    "emergency_stop_pct": 80,
+    "checkpoint_interval_minutes": 45,
+    "checkpoint_after_phase": true,
+    "checkpoint_after_fix_review_rounds": 2,
+    "compression_target_pct_min": 15,
+    "compression_target_pct_max": 25,
+    "fallback_triggers": [
+      "user_interruption_resume",
+      "wrong_project_or_tool_target_confusion",
+      "two_fix_review_rounds"
+    ]
+  },
+  "agents": {
+    "codex": {
+      "soft_warning_pct": 55,
+      "hard_compression_pct": 65,
+      "emergency_stop_pct": 80
+    },
+    "hermes": {
+      "soft_warning_pct": 50,
+      "hard_compression_pct": 60,
+      "emergency_stop_pct": 80
+    }
+  }
+}
+

@@ -1,0 +1,79 @@
+# Context Compression
+
+Long context is a reliability risk.
+
+Context policy must be scanned before dispatch, not discovered after a task is
+already deep into execution.
+
+## Context Policy Fields
+
+```json
+{
+  "soft_warning_pct": 55,
+  "hard_compression_pct": 65,
+  "emergency_stop_pct": 80,
+  "checkpoint_interval_minutes": 45,
+  "checkpoint_after_phase": true,
+  "checkpoint_after_fix_review_rounds": 2,
+  "compression_target_pct_min": 15,
+  "compression_target_pct_max": 25,
+  "fallback_triggers": [
+    "user_interruption_resume",
+    "wrong_project_or_tool_target_confusion",
+    "two_fix_review_rounds",
+    "before_new_roadmap_task_after_long_task"
+  ]
+}
+```
+
+## Default Thresholds
+
+| Role | Soft warning | Hard compression | Emergency stop |
+|---|---:|---:|---:|
+| coordinator | 50% | 60% | 80% |
+| implementer | 55% | 65% | 80% |
+| reviewer | 60% | 70% | 80% |
+| prototype | 60% | 70% | 80% |
+| other | 60% | 70% | 80% |
+
+## Meaning
+
+Soft warning:
+: Finish the current small operation and prepare compression notes.
+
+Hard compression:
+: Stop new implementation, routing, review, or voting. Write a handoff before
+continuing.
+
+Emergency stop:
+: Do not run commands, edit files, send dispatches, or issue final verdicts
+until compression is complete and state is revalidated.
+
+## Required Handoff
+
+```markdown
+## Context Compression
+
+Active project:
+Active task:
+My role:
+Current phase:
+Completed:
+Not completed:
+Evidence paths:
+Known blockers:
+Next safe action:
+Do not use / stale context:
+```
+
+## Fallback Triggers
+
+If exact context percentage is not available, force compression after:
+
+- user interruption followed by resume;
+- two visible implementation/review/fix loops;
+- wrong project, tool target, tab, path, or phase confusion;
+- starting a new roadmap task after a long task;
+- inability to state project root, task id, phase, and next safe action without
+  rereading files.
+

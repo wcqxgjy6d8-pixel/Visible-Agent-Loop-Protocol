@@ -1,0 +1,70 @@
+{
+  "schema_version": "valp-capability-routing.v1",
+  "task_id": "TASK-001",
+  "profile": "software-code",
+  "runtime_adapter": {
+    "class": "daemon_queue",
+    "name": "example-runtime",
+    "full_mode_capable": true,
+    "state_mapping_ref": "docs/task-state-machine.md"
+  },
+  "capabilities_needed": [
+    "implementation",
+    "verification",
+    "code_review"
+  ],
+  "selected_agents": [
+    "hermes",
+    "codex",
+    "claude"
+  ],
+  "agent_match_reasons": {
+    "hermes": [
+      "coordination",
+      "gates"
+    ],
+    "codex": [
+      "implementation",
+      "verification"
+    ],
+    "claude": [
+      "read_only_review"
+    ]
+  },
+  "selected_agent_context_policies": {
+    "codex": {
+      "hard_compression_pct": 65,
+      "emergency_stop_pct": 80
+    }
+  },
+  "skill_recommendations": {
+    "schema_version": "valp-skill-recommendations.v1",
+    "status": "not_run",
+    "reason": "requires decomposed execution tasks"
+  },
+  "provider_matrix": {
+    "generated_at": "2026-07-03T00:00:00Z",
+    "providers": {
+      "codex": {
+        "cli_available": true,
+        "mcp_support": "unknown",
+        "skill_discovery_path": "unknown",
+        "session_resume_support": "unknown",
+        "approval_behavior": "unknown",
+        "known_limitations": []
+      }
+    }
+  },
+  "runtime_task_state_mapping": {
+    "queued": "accepted_by_runtime_not_delivery",
+    "dispatched": "dispatch_submitted_only_with_proof",
+    "running": "executing",
+    "completed": "dispatch_completed_only_with_expected_evidence",
+    "failed": "failed_or_blocked_with_reason",
+    "cancelled": "cancelled"
+  },
+  "squad_routing": {
+    "used": false
+  },
+  "capabilities_missing": []
+}

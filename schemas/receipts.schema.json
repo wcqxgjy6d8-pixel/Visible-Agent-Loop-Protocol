@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Dispatch Receipt",
+  "type": "object",
+  "required": ["ts", "agent", "event", "dispatch_ref"],
+  "properties": {
+    "ts": {"type": "string"},
+    "agent": {"type": "string"},
+    "event": {
+      "enum": [
+        "dispatch_written",
+        "dispatch_inserted",
+        "dispatch_submitted",
+        "dispatch_completed",
+        "dispatch_blocked"
+      ]
+    },
+    "exit_code": {"type": "integer"},
+    "summary": {"type": "string"},
+    "dispatch_ref": {"type": "string"},
+    "expected_refs": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "proof": {"type": "object"},
+    "runtime": {"type": "object"}
+  }
+}
+

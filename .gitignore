@@ -1,0 +1,9 @@
+.DS_Store
+.herdr-loop/
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+*.log
+

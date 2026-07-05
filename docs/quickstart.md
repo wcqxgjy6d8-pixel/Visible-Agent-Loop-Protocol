@@ -1,5 +1,13 @@
 # Quickstart
 
+Prerequisites for the repository smoke check:
+
+```text
+Git clone of this repository
+Bash shell for scripts/verify-examples.sh
+Python 3.11 or another supported Python 3
+```
+
 VALP has two practical entry paths:
 
 - understand the protocol without installing a runtime;
@@ -14,8 +22,26 @@ checks.
 Clone the repository and audit the minimal example:
 
 ```bash
+git clone https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol.git
+cd Visible-Agent-Loop-Protocol
 bin/valp audit examples/minimal-task
 ```
+
+Expected result:
+
+```text
+VALP audit: PASS
+Summary: pass=13 warn=0 fail=0 skip=5
+```
+
+To verify all bundled examples and CLI tests in one command:
+
+```bash
+scripts/verify-examples.sh
+```
+
+This is the same smoke check used by the repository GitHub Actions workflow on
+Linux, macOS, and Windows runners.
 
 This shows the smallest useful VALP evidence shape:
 
@@ -32,6 +58,10 @@ final-synthesis.md
 Manual or no-runtime examples can teach the evidence discipline, but they do not
 prove automatic dispatch submission, agent status waits, or runtime-backed
 completion.
+
+The smoke check proves the public examples and reference CLI pass their audit
+gates. It does not prove Full Mode support on every operating system; Full Mode
+still requires a compatible runtime adapter on the user's local or remote host.
 
 If you run `bin/valp publish ...` without a compatible runtime, the CLI can
 still create a routed task folder using a generic Manual Mode operator. That
@@ -137,6 +167,21 @@ bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug a
 This is the start of the loop, not the end. The task should fail audit until the
 selected agents or manual operator produce the expected evidence and the receipt
 ledger is advanced to a completion state.
+
+That first failure is expected. A newly published task has dispatch files, but
+not completed receipts, expected evidence, or final synthesis yet. Typical
+output looks like:
+
+```text
+VALP audit: FAIL
+Summary: pass=8 warn=2 fail=5 skip=3
+[FAIL] dispatch_receipts: latest receipt is not dispatch_completed
+[FAIL] expected_evidence: Missing expected evidence
+[FAIL] final_synthesis: Missing final synthesis
+```
+
+The exact counts can vary by runtime adapter and task profile. Treat this as a
+normal "work has not finished" state, not as a broken installation.
 
 ### 5. Scan And Route
 

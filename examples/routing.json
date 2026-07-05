@@ -12,11 +12,15 @@
       "agents": {
         "build-agent": {
           "status": "pass",
-          "terminal_size_status": "pass"
+          "queue_id": "example-queue",
+          "worker_id": "build-worker-1",
+          "session_status": "ready"
         },
         "review-agent": {
           "status": "pass",
-          "terminal_size_status": "pass"
+          "queue_id": "example-queue",
+          "worker_id": "review-worker-1",
+          "session_status": "ready"
         }
       }
     }

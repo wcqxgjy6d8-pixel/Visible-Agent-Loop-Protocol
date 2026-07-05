@@ -2,6 +2,8 @@
 
 Open protocol for visible, evidence-backed, multi-agent automation.
 
+[![Verify VALP Examples](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/actions/workflows/verify.yml/badge.svg)](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/actions/workflows/verify.yml)
+
 The protocol is designed for terminal-based AI coding agents, review agents,
 research agents, prototype agents, and coordinator agents. It is not tied to a
 single project, operating system, terminal emulator, or model provider.
@@ -33,8 +35,27 @@ Choose the path that matches why you are here:
 No-runtime first look:
 
 ```bash
+git clone https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol.git
+cd Visible-Agent-Loop-Protocol
 bin/valp audit examples/minimal-task
 ```
+
+Expected result:
+
+```text
+VALP audit: PASS
+Summary: pass=13 warn=0 fail=0 skip=5
+```
+
+Proof check for this repository:
+
+```bash
+scripts/verify-examples.sh
+```
+
+That script requires Bash and Python. It validates JSON examples and schemas,
+runs the unit tests, then audits both bundled examples. The same check runs in
+GitHub Actions on Linux, macOS, and Windows runners for push and pull request.
 
 Reference-runtime trial:
 
@@ -147,6 +168,28 @@ HERDR-routed tasks, it prints HERDR adapter submit commands by default. Use
 evidence status, and unsupported runtime/build/test claims.
 
 See [docs/cli-audit.md](docs/cli-audit.md).
+
+## Proof It Works
+
+The repository includes two self-verifying task examples:
+
+| Example | What it proves | Expected audit |
+|---|---|---|
+| `examples/minimal-task/` | Manual Mode evidence can be audited without a runtime | `PASS`, `pass=13 warn=0 fail=0 skip=5` |
+| `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, review, and final synthesis audit gates | `PASS`, `pass=17 warn=0 fail=0 skip=1` |
+
+Run the complete smoke check:
+
+```bash
+scripts/verify-examples.sh
+```
+
+This is repository evidence, not a platform-support claim. It proves the CLI,
+schemas, unit tests, and bundled examples pass on the machine running the check.
+The GitHub workflow runs this proof on Linux, macOS, and Windows runners. It
+does not launch HERDR or prove live agent dispatch. Full Mode on a user machine
+still depends on a compatible runtime adapter such as HERDR or another adapter
+that exports VALP receipts and evidence.
 
 ## Platform Paths
 

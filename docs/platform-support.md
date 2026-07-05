@@ -137,3 +137,9 @@ automatic evidence gates
 Public VALP documentation should distinguish the automated Full Mode path from
 the no-runtime Manual Mode path, and must not imply Manual Mode provides runtime
 proof.
+
+Repository CI and `scripts/verify-examples.sh` prove the reference CLI, schemas,
+unit tests, and bundled examples pass their audit gates. The public workflow
+runs that proof on Linux, macOS, and Windows runners. This does not prove native
+Full Mode support for every platform. Platform Full Mode claims still require
+runtime-adapter evidence on that specific local or remote host.

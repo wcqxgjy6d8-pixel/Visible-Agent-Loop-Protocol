@@ -115,6 +115,21 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertTrue((task_dir / "routing.json").exists())
 
     def test_skill_recommendations_are_written_into_dispatch(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-05T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "code_review"],
+                    "skills": ["tdd"],
+                    "mcp_servers": [],
+                    "strengths": ["edits files", "runs tests", "writes verification evidence"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
         router_payload = {
             "batch": True,
             "num_tasks": 1,
@@ -213,9 +228,10 @@ class ValpWorkflowTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch("valp_cli.workflow.skill_router_command", return_value=["task-skill-router"]):
-                with patch("valp_cli.workflow.run_command", side_effect=fake_run_command):
-                    task_dir = publish_task(root, "TASK-SKILL", "Fix a bug and run tests")
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=["task-skill-router"]):
+                    with patch("valp_cli.workflow.run_command", side_effect=fake_run_command):
+                        task_dir = publish_task(root, "TASK-SKILL", "Fix a bug and run tests")
 
             recommendations = read_json(task_dir / "skill-recommendations.json")
             self.assertEqual(recommendations["status"], "complete")

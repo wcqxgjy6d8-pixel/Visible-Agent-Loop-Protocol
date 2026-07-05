@@ -484,7 +484,7 @@ def classify_loop_layer(prompt: str, profile: str) -> str:
 
 def relative_ref(path: Path, root: Path) -> str:
     try:
-        return str(path.resolve().relative_to(root.resolve()))
+        return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
         return str(path)
 

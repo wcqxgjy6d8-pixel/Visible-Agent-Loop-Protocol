@@ -6,6 +6,7 @@ from pathlib import Path
 
 from . import __version__
 from .audit import FAIL, TaskAudit, print_text_report, report_to_dict, resolve_task_dir
+from .doctor import collect_doctor_report, render_text_summary, report_to_dict as doctor_report_to_dict, write_markdown_report
 from .workflow import RUNTIME_CHOICES, collect_runtime_preflight, dispatch_task, publish_task, route_task, scan_workspace
 
 
@@ -16,6 +17,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   valp audit examples/minimal-task
+  valp doctor --workspace .
   valp publish TASK-001 --workspace . --prompt "Fix the bug and verify it"
   valp dispatch TASK-001 --workspace .
 
@@ -67,6 +69,12 @@ notes:
     audit.add_argument("--task", dest="task_id", help="Task id under <workspace>/.herdr-loop/tasks/")
     audit.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     audit.add_argument("--strict", action="store_true", help="Treat warnings as failures")
+
+    doctor = sub.add_parser("doctor", help="Diagnose VALP workspace health without mutating by default")
+    doctor.add_argument("--workspace", default=".", help="Workspace root")
+    doctor.add_argument("--task", dest="task_id", help="Optional task id to audit under <workspace>/.herdr-loop/tasks/")
+    doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    doctor.add_argument("--report", help="Write a Markdown report to a path, or use 'desktop'")
     return parser
 
 
@@ -163,6 +171,21 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(report_to_dict(report), indent=2, ensure_ascii=False))
         else:
             print_text_report(report)
+        return 1 if report.status == FAIL else 0
+
+    if args.command == "doctor":
+        report = collect_doctor_report(Path(args.workspace), task_id=args.task_id)
+        report_path = write_markdown_report(report, args.report) if args.report else None
+        if args.json:
+            data = doctor_report_to_dict(report)
+            if report_path:
+                data["report_path"] = str(report_path)
+            print(json.dumps(data, indent=2, ensure_ascii=False))
+        else:
+            print(render_text_summary(report))
+            if report_path:
+                print()
+                print(f"Report written: {report_path}")
         return 1 if report.status == FAIL else 0
 
     parser.print_help()

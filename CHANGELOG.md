@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Adds `valp doctor` for non-mutating workspace health checks, JSON output, and
+  optional Markdown reports.
 - Future adapter work may add first-class non-HERDR `valp dispatch --adapter`
   support.
 

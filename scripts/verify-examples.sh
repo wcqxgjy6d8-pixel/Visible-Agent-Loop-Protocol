@@ -40,7 +40,7 @@ for path in sorted(Path("examples").rglob("*.jsonl")):
 PY
 
 echo "==> Running unit tests"
-"$PYTHON_BIN" -m unittest tests/test_valp_audit.py tests/test_valp_workflow.py
+"$PYTHON_BIN" -m unittest tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py
 
 echo "==> Auditing minimal example"
 "$PYTHON_BIN" -m valp_cli audit examples/minimal-task

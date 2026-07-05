@@ -42,6 +42,8 @@
 - [shipped] Validate invalid/superseded evidence status.
 - [shipped] Validate runtime/build/test claims have concrete evidence.
 - [shipped] Produce text and JSON task audit reports.
+- [shipped] `valp doctor` workspace health diagnostics and optional Markdown
+  reports.
 - [planned] `valp init` workspace scaffold.
 - [planned] Standalone schema validation command.
 

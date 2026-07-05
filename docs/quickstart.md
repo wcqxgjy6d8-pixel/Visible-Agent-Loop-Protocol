@@ -215,6 +215,17 @@ bin/valp route TASK-001 --workspace /path/to/workspace
 
 ### 6. Preflight
 
+You can diagnose the workspace at any time:
+
+```bash
+bin/valp doctor --workspace /path/to/Visible-Agent-Loop-Protocol
+bin/valp doctor --workspace /path/to/Visible-Agent-Loop-Protocol --report ./valp-doctor-report.md
+```
+
+Doctor checks local git tracking status, local residue, example audits, JSON
+syntax, and reference adapter probes for the protocol checkout. It does not
+replace task audit and does not mutate files by default.
+
 Before sending work, check the runtime:
 
 ```bash

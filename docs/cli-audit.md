@@ -209,6 +209,28 @@ The module entrypoint is also supported:
 python3 -m valp_cli audit examples/full-mode-task
 ```
 
+## Doctor
+
+`valp doctor` diagnoses a VALP protocol checkout without changing files by
+default:
+
+```bash
+bin/valp doctor --workspace .
+bin/valp doctor --workspace . --json
+bin/valp doctor --workspace . --report ./valp-doctor-report.md
+bin/valp doctor --workspace . --report desktop
+```
+
+Doctor checks local git tracking status and cleanliness, ignored residue, the
+`bin/valp` entrypoint, Python availability, JSON/JSONL syntax, bundled example
+audits, and reference adapter probes. `--task <task-id>` also runs an audit for
+one task folder.
+
+Doctor is diagnostic. It does not submit dispatches, rewrite receipts, delete
+task evidence, fetch from the network, or replace `valp audit`. Markdown reports
+are written only when `--report` is passed, and the target file is overwritten
+if it already exists.
+
 ## Statuses
 
 | Status | Meaning |

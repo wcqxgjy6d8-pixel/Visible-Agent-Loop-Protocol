@@ -144,6 +144,7 @@ gate:
 
 ```bash
 bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it"
+bin/valp doctor --workspace /path/to/Visible-Agent-Loop-Protocol
 bin/valp preflight --runtime herdr --agent agy
 bin/valp dispatch TASK-001 --workspace /path/to/workspace
 bin/valp audit examples/full-mode-task
@@ -169,6 +170,12 @@ runtime is ready.
 `valp audit` scans a task evidence folder and checks the Done Criteria from
 `SPEC.md`, including runtime preflight, skill recommendation evidence, invalid
 evidence status, and unsupported runtime/build/test claims.
+
+`valp doctor` diagnoses a VALP protocol checkout without mutating by default. It
+checks local git tracking status, working tree cleanliness, ignored local
+residue, JSON/JSONL syntax, bundled example audits, and reference adapter
+probes. Use
+`--report <path>` or `--report desktop` to write a Markdown report.
 
 See [docs/cli-audit.md](docs/cli-audit.md).
 
@@ -321,6 +328,7 @@ Visible-Agent-Loop-Protocol/
   docs/
     runtime.md
     cli-audit.md
+    doctor.md
     runtime-preflight.md
     platform-support.md
     quickstart.md

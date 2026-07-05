@@ -10,7 +10,8 @@ adaptive, auditable, and easy to correct.
 ## Routing Flow
 
 ```text
-understand task
+evaluate trigger policy, when Auto Visible Mode is enabled
+  -> understand task
   -> decompose runtime work items
   -> identify evidence gates
   -> load local overlay, if present
@@ -24,6 +25,12 @@ understand task
   -> record rejected high-relevance candidates
   -> require receipts and evidence
 ```
+
+If Auto Visible Mode is enabled, the trigger decision happens before routing.
+The routing layer should read the trigger evidence but must not treat it as a
+permission grant. Low-confidence or high-risk trigger decisions should publish a
+draft task, route review/setup work, or stop for approval instead of dispatching
+mutating work.
 
 ## Candidate Score
 
@@ -96,6 +103,7 @@ coordinator selection reason
 visible attention refs
 loop layer
 expected evidence refs
+trigger policy ref, when used
 ```
 
 This keeps the system honest: when a route is wrong, the next agent can see

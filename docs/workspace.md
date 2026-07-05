@@ -29,6 +29,7 @@ It must not hard-code Desktop, macOS paths, or one user's folder names.
     tasks/
       <task-id>/
         task.md
+        trigger-policy.json
         state.json
         routing.json
         routing-feedback.json

@@ -30,6 +30,7 @@ Before considering protocol edits complete:
 ```bash
 python3 -m json.tool examples/context-policy.json >/dev/null
 python3 -m json.tool examples/routing.json >/dev/null
+python3 -m json.tool examples/trigger-policy.json >/dev/null
 python3 -m json.tool schemas/capabilities.schema.json >/dev/null
 python3 -m json.tool schemas/local-overlay.schema.json >/dev/null
 python3 -m json.tool schemas/routing-feedback.schema.json >/dev/null
@@ -38,6 +39,7 @@ python3 -m json.tool schemas/routing.schema.json >/dev/null
 python3 -m json.tool schemas/receipts.schema.json >/dev/null
 python3 -m json.tool schemas/evidence-status.schema.json >/dev/null
 python3 -m json.tool schemas/skill-recommendations.schema.json >/dev/null
+python3 -m json.tool schemas/trigger-policy.schema.json >/dev/null
 bin/valp audit examples/full-mode-task >/dev/null
 python3 -m unittest tests/test_valp_audit.py tests/test_valp_workflow.py
 ```

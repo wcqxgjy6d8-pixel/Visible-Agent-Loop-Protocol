@@ -18,6 +18,7 @@ ExampleProject/
     tasks/
       TASK-001/
         task.md
+        trigger-policy.json
         state.json
         routing.json
         routing-feedback.json

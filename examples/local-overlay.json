@@ -10,6 +10,17 @@
     "preferred_full_mode_runtime": "herdr-or-compatible-runtime",
     "remote_mode_allowed": true
   },
+  "trigger_policy": {
+    "default_mode": "manual",
+    "auto_visible_mode": "policy_auto",
+    "signals": [
+      "task mentions VALP",
+      "task asks for multi-agent collaboration",
+      "task asks for visible evidence or audit"
+    ],
+    "default_action": "publish_and_route",
+    "high_risk_action": "block_for_approval"
+  },
   "agent_capability_profiles": {
     "codex": {
       "routing_hint_only": true,

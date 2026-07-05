@@ -11,6 +11,7 @@
     "operator": {"type": "string"},
     "workspace_defaults": {"type": "object"},
     "runtime_preferences": {"type": "object"},
+    "trigger_policy": {"type": "object"},
     "agent_capability_profiles": {
       "type": "object",
       "additionalProperties": {

@@ -31,6 +31,7 @@ context policy overrides
 project folder conventions
 approval preferences
 routing feedback refs
+trigger policy preferences
 ```
 
 ## What Must Not Belong In A Local Overlay
@@ -44,6 +45,7 @@ unverified claims of completion
 rules that bypass approval gates
 rules that treat dispatch insertion as delivery
 rules that make agent roles fixed forever
+rules that turn automatic trigger into silent high-risk execution
 ```
 
 ## Capability Profiles Are Hints
@@ -87,6 +89,13 @@ recent routing feedback
   "runtime_preferences": {
     "preferred_full_mode_runtime": "herdr",
     "manual_mode_allowed": "learning_and_audit"
+  },
+  "trigger_policy": {
+    "default_mode": "manual",
+    "auto_visible_mode": "policy_auto",
+    "signals": ["task mentions VALP", "task asks for multi-agent collaboration"],
+    "default_action": "publish_and_route",
+    "high_risk_action": "block_for_approval"
   },
   "agent_capability_profiles": {
     "codex": {

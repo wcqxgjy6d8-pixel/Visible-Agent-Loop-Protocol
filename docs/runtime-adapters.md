@@ -44,6 +44,37 @@ Examples:
 A terminal pane is only one session type. Non-pane runtimes should export
 equivalent job/session identifiers instead of fake pane fields.
 
+## Auto Visible Trigger Adapters
+
+Some runtimes can start VALP from a policy rule, issue label, queue item,
+schedule, file event, or platform API. That trigger layer is allowed, but it is
+not completion evidence.
+
+An Auto Visible trigger adapter must export:
+
+```text
+trigger id or source event
+matched rule or policy reference
+deduplication key, when a watcher is used
+risk classification
+selected action
+approval requirement and approval ref, when needed
+created VALP task id
+visible refs for routing, skills, receipts, report, and audit
+```
+
+If the trigger selects a high-risk action, the adapter may publish and route the
+task, but it must stop before execution and record `block_for_approval`.
+
+Trigger adapters should write:
+
+```text
+<task>/trigger-policy.json
+```
+
+Watcher support is optional. A runtime that cannot export trigger evidence is
+not implementing Auto Visible Mode, even if it starts agents automatically.
+
 ## Full Mode Requirements
 
 A Full Mode adapter must export:

@@ -14,6 +14,16 @@ The following require explicit user approval:
 - changing pricing, privacy, or metadata;
 - sending private data to a new external service.
 
+## Auto Visible Mode
+
+Auto Visible Mode is automatic intake, not automatic permission. A trigger
+policy or watcher may publish and route a task, but it must stop before
+high-risk work unless explicit approval has been recorded.
+
+For high-risk signals, the task evidence should record `block_for_approval` and
+the exact scope that was not executed. Silence, background watcher state, or a
+previous broad approval is not enough.
+
 ## Secrets
 
 Capability registries must not store:
@@ -33,4 +43,3 @@ Open an issue with:
 - risk scenario;
 - expected safer behavior;
 - proposed wording or schema change.
-

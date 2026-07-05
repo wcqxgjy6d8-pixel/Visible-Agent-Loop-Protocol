@@ -102,6 +102,18 @@ agent's reachable provider or skill library filter. Provider-filtered results
 are preferred in dispatch prompts because task-level aggregate results can
 contain skills owned by other providers.
 
+`trigger policy`
+: A local, workspace, or runtime rule that decides whether a user request,
+issue, queue item, scheduled run, or other signal should publish a VALP task.
+Trigger policy is intake evidence. It cannot weaken dispatch, evidence, review,
+or approval gates.
+
+`Auto Visible Mode`
+: An opt-in intake behavior where a coordinator or runtime automatically decides
+that a request should enter VALP, publishes the task, and immediately surfaces
+the trigger reason, routing, skill recommendations, dispatches, evidence gates,
+and final report path. It is automatic entry, not silent execution.
+
 ## 3. Lifecycle
 
 VALP defines a small set of phases, with finer sub-steps inside each phase. A
@@ -218,6 +230,68 @@ VALP completion still requires receipt and evidence gates:
 
 If a runtime marks work `completed` without expected evidence, VALP must record
 the adapter state but keep the evidence gate open.
+
+### 4.2 Trigger Policy And Auto Visible Mode
+
+VALP can start from an explicit command, from project policy, or from a runtime
+watcher. The trigger decision must remain visible.
+
+Recommended trigger levels:
+
+| Trigger mode | Source | Default for new installs | Requirement |
+|---|---|---:|---|
+| `manual` | user explicitly publishes or asks to use VALP | yes | publish only after explicit user intent |
+| `policy_auto` | project instructions, local overlay, or chat policy matches the task | no | record the matched policy and show the task id before dispatch |
+| `watcher` | issue label, queue item, schedule, file event, or runtime API | no | opt-in runtime policy plus trigger source evidence |
+| `disabled` | VALP is not used for this request | allowed | record only if a runtime evaluated and declined |
+
+Auto Visible Mode is layered over Full Mode, Remote Mode, or Manual Mode. It
+decides whether to publish a task and how much of the loop can proceed
+automatically; it does not change what counts as completion.
+
+An Auto Visible task must record trigger evidence, normally:
+
+```text
+<task>/trigger-policy.json
+```
+
+The trigger evidence should include:
+
+```text
+trigger_mode
+trigger_source
+matched_signal
+rule_ref
+risk_classification
+selected_action
+approval_required
+visible_refs
+```
+
+Allowed selected actions:
+
+```text
+no_valp
+publish_only
+publish_and_route
+publish_route_and_dispatch
+block_for_approval
+```
+
+Auto Visible Mode may automatically continue through low-risk publish, scan,
+route, skill recommendation, preflight, visible dispatch, verification, review,
+and report generation when the configured runtime can prove each step. It must
+stop at `block_for_approval` before high-risk work.
+
+High-risk trigger signals include destructive changes, release or upload,
+auth/secrets, memory or agent configuration, migrations, signing, privacy, and
+private-data export. A local overlay or runtime may add stricter rules, but it
+must not remove the protocol approval requirements.
+
+No background watcher is required by the protocol. A runtime that implements a
+watcher must export the source event, rule, task id, and approval state into
+VALP evidence before dispatching work. A watcher that cannot export this proof
+is not an Auto Visible Mode implementation.
 
 ## 5. Runtime Adapters
 

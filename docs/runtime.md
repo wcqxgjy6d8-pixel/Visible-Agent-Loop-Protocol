@@ -55,6 +55,27 @@ task evidence persistence
 dispatch receipt ledger
 ```
 
+## Auto Visible Intake
+
+A runtime may also implement Auto Visible Mode by watching project policy,
+issues, queues, schedules, file events, or platform APIs. This is an intake
+layer, not a weaker execution mode.
+
+The runtime must write trigger evidence before dispatch:
+
+```text
+trigger source
+matched rule
+risk classification
+selected action
+approval requirement
+task id and visible refs
+```
+
+Watcher support is optional. Full Mode proof still comes from runtime
+preflight, dispatch receipts, expected evidence, review, approval resolution,
+and final synthesis.
+
 ## Runtime Adapters
 
 A runtime adapter maps a concrete execution system into VALP evidence.

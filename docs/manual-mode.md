@@ -8,6 +8,11 @@ tracker workflows, and temporary audit trails. It is not Full Mode: it cannot
 prove automatic dispatch submission, runtime status waits, pane submit proof, or
 runtime-backed receipts.
 
+Auto Visible Mode can be layered over Manual Mode only for intake. For example,
+a project rule may automatically create a task folder and dispatch files, but a
+human still has to copy work, attest delivery/results, and provide evidence.
+That task must not claim Full Mode proof.
+
 ## When To Use It
 
 Use Manual Mode when:

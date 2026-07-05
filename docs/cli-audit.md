@@ -31,6 +31,10 @@ Publish a task and auto-route it:
 bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it" --runtime auto
 ```
 
+`--runtime auto` selects a runtime adapter. It is not the same as Auto Visible
+Mode. Auto Visible Mode is a trigger policy that decides whether a user request
+or runtime signal should publish a VALP task before routing starts.
+
 Publish without routing:
 
 ```bash
@@ -72,6 +76,7 @@ Routing writes:
 
 ```text
 <workspace>/.herdr-loop/tasks/<task-id>/routing.json
+<workspace>/.herdr-loop/tasks/<task-id>/trigger-policy.json, when Auto Visible Mode is used
 <workspace>/.herdr-loop/tasks/<task-id>/skill-recommendations.json
 <workspace>/.herdr-loop/tasks/<task-id>/agents/<agent>/dispatch.md
 <workspace>/.herdr-loop/tasks/<task-id>/dispatch-receipts.jsonl
@@ -146,6 +151,11 @@ evidence.
 
 `valp audit` turns the `SPEC.md` Done Criteria checklist into an executable
 quality gate for a task evidence folder.
+
+When a task was started by Auto Visible Mode, the trigger record is part of the
+human explanation for why the task exists. It does not replace runtime
+preflight, dispatch receipts, expected evidence, approval resolution, review, or
+final synthesis.
 
 ## What It Audits
 

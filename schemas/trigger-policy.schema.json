@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Trigger Policy",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "trigger_mode",
+    "trigger_source",
+    "risk_classification",
+    "selected_action",
+    "approval_required"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "valp-trigger-policy.v1"
+    },
+    "trigger_mode": {
+      "type": "string",
+      "enum": ["manual", "policy_auto", "watcher", "disabled"]
+    },
+    "trigger_source": {
+      "type": "string",
+      "enum": [
+        "user_request",
+        "project_policy",
+        "local_overlay",
+        "issue_watcher",
+        "queue_watcher",
+        "schedule",
+        "file_watcher",
+        "runtime_api",
+        "not_applicable"
+      ]
+    },
+    "matched_signal": {"type": "string"},
+    "rule_ref": {"type": "string"},
+    "risk_classification": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "unknown"]
+    },
+    "selected_action": {
+      "type": "string",
+      "enum": [
+        "no_valp",
+        "publish_only",
+        "publish_and_route",
+        "publish_route_and_dispatch",
+        "block_for_approval"
+      ]
+    },
+    "approval_required": {"type": "boolean"},
+    "approval_ref": {"type": "string"},
+    "visible_refs": {
+      "type": "object",
+      "properties": {
+        "task": {"type": "string"},
+        "routing": {"type": "string"},
+        "skills": {"type": "string"},
+        "dispatch_receipts": {"type": "string"},
+        "report": {"type": "string"},
+        "audit": {"type": "string"}
+      },
+      "additionalProperties": {"type": "string"}
+    },
+    "notes": {"type": "array", "items": {"type": "string"}}
+  }
+}

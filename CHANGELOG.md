@@ -4,6 +4,9 @@
 
 - Adds `valp doctor` for non-mutating workspace health checks, JSON output, and
   optional Markdown reports.
+- Defines Auto Visible Mode as opt-in automatic, visible task intake with
+  trigger evidence, skill recommendation visibility, approval boundaries, and
+  final report expectations.
 - Future adapter work may add first-class non-HERDR `valp dispatch --adapter`
   support.
 

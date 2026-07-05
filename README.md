@@ -30,6 +30,7 @@ Choose the path that matches why you are here:
 |---|---|---|
 | Understand the protocol | Read [SPEC.md](SPEC.md) and audit `examples/minimal-task/` | No |
 | Try automated multi-agent work | Install HERDR, the current reference runtime | Yes |
+| Enable automatic visible task intake | Read [docs/auto-visible-mode.md](docs/auto-visible-mode.md) | For dispatch, yes |
 | Inspect a headless runtime shape | Audit `examples/headless-queue-task/` | No |
 | Implement a new runtime | Read [docs/runtime-adapters.md](docs/runtime-adapters.md) | Depends on your adapter |
 
@@ -68,6 +69,13 @@ bin/valp dispatch TASK-001 --workspace /path/to/workspace
 `publish` only creates and routes the task. It is not a completion signal. A
 new task will not pass `valp audit` until dispatch receipts, expected evidence,
 verification/review status, and final synthesis are recorded.
+
+Auto Visible Mode is the opt-in version of this entry path: a local policy or
+runtime watcher can decide that a user request should publish a VALP task
+without requiring the user to type the exact command. It must still show the
+trigger reason, task id, routing, skill recommendations, dispatches, evidence
+gates, and final report. Automatic trigger is not permission for silent
+high-risk execution.
 
 ## Architecture
 
@@ -276,6 +284,7 @@ receipts and expected evidence.
 
 | Mode | Runtime requirement | Guarantees |
 |---|---|---|
+| Auto Visible Mode | opt-in trigger policy plus Full/Remote/Manual execution path | automatic visible intake, trigger evidence, routing, skill recommendation, report refs |
 | Full Mode | HERDR reference runtime or compatible runtime | agent scan, visible dispatch, submission proof, status waits, receipt ledger, evidence gates |
 | Remote Mode | SSH to a VALP-compatible runtime | same as Full Mode, with remote runtime caveats |
 | Manual Mode | no runtime automation | task folders, manual attestations, and evidence files; no automatic dispatch proof |
@@ -329,6 +338,7 @@ Visible-Agent-Loop-Protocol/
     runtime.md
     cli-audit.md
     doctor.md
+    auto-visible-mode.md
     runtime-preflight.md
     platform-support.md
     quickstart.md
@@ -359,6 +369,7 @@ Visible-Agent-Loop-Protocol/
     receipts.schema.json
     evidence-status.schema.json
     skill-recommendations.schema.json
+    trigger-policy.schema.json
     attention-map.schema.json
     context-selection.schema.json
     mask-list.schema.json
@@ -367,6 +378,7 @@ Visible-Agent-Loop-Protocol/
     task-folder-tree.md
     context-policy.json
     routing.json
+    trigger-policy.json
     dispatch.md
     minimal-task/
     full-mode-task/
@@ -380,6 +392,7 @@ Visible-Agent-Loop-Protocol/
 - Text inserted into an input box is not delivery.
 - Dispatch completion requires receipts and expected evidence.
 - High-risk actions require explicit user approval.
+- Auto Visible Mode is automatic visible intake, not silent execution.
 - Long context is a reliability risk and must be scanned before dispatch.
 - Skill recommendation is evidence, not authority.
 - Local overlays are hints, not protocol overrides.

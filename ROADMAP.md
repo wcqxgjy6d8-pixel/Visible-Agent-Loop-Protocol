@@ -3,6 +3,7 @@
 ## 0.1 Protocol Draft
 
 - [shipped] Generic lifecycle.
+- [shipped] Auto Visible Mode semantics for automatic visible task intake.
 - [shipped] Full/Remote/Manual runtime modes.
 - [shipped] Capability routing.
 - [shipped] Context policy scanning.
@@ -44,6 +45,8 @@
 - [shipped] Produce text and JSON task audit reports.
 - [shipped] `valp doctor` workspace health diagnostics and optional Markdown
   reports.
+- [planned] CLI helper for writing task-local `trigger-policy.json` from
+  project/local overlay policy.
 - [planned] `valp init` workspace scaffold.
 - [planned] Standalone schema validation command.
 

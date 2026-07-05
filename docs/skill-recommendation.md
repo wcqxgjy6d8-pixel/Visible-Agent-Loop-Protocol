@@ -67,6 +67,10 @@ understand request
 - Do not hide recommendations from the agent that is expected to use them.
 - Do not pretend a missing skill is installed.
 
+`auto-load` and `auto-run` in this table describe how a selected agent may use a
+skill after routing. They do not mean the whole VALP task should auto-trigger.
+Task triggering is controlled separately by Auto Visible Mode trigger policy.
+
 ## Optional Backends
 
 Any local backend may implement the minimal contract.

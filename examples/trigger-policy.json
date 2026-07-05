@@ -1,0 +1,22 @@
+{
+  "schema_version": "valp-trigger-policy.v1",
+  "trigger_mode": "policy_auto",
+  "trigger_source": "project_policy",
+  "matched_signal": "task mentions VALP, HERDR, multi-agent collaboration, or visible agent work",
+  "rule_ref": "AGENTS.md#visible-agent-loop",
+  "risk_classification": "low",
+  "selected_action": "publish_route_and_dispatch",
+  "approval_required": false,
+  "visible_refs": {
+    "task": ".herdr-loop/tasks/TASK-001/task.md",
+    "routing": ".herdr-loop/tasks/TASK-001/visible-routing.md",
+    "skills": ".herdr-loop/tasks/TASK-001/skill-recommendations.json",
+    "dispatch_receipts": ".herdr-loop/tasks/TASK-001/dispatch-receipts.jsonl",
+    "report": ".herdr-loop/tasks/TASK-001/final-synthesis.md",
+    "audit": ".herdr-loop/tasks/TASK-001/evidence/verification.md"
+  },
+  "notes": [
+    "Auto Visible Mode is automatic intake, not silent execution.",
+    "High-risk actions still require explicit approval."
+  ]
+}

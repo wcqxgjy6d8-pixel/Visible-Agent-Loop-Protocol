@@ -12,10 +12,13 @@ VALP has two practical entry paths:
 
 - understand the protocol without installing a runtime;
 - try Full Mode automation with HERDR, the current reference runtime.
+- enable Auto Visible Mode when a local policy or runtime should decide that a
+  user request belongs in VALP.
 
 Use the first path if you are evaluating VALP as an open protocol. Use the
 second path when you want automated dispatch receipts and runtime-backed status
-checks.
+checks. Use the third path after you already understand the gates and want
+intelligent automatic task intake.
 
 ## Path A: Understand VALP Without A Runtime
 
@@ -316,3 +319,49 @@ The minimum adapter question is not "can the runtime run an agent?" It is:
 Can the runtime export visible dispatches, submission proof, state mapping,
 expected evidence refs, receipts, approval status, and final synthesis evidence?
 ```
+
+## Path C: Enable Auto Visible Mode
+
+Auto Visible Mode is for users who want to state a task naturally and let local
+policy decide whether VALP should run.
+
+Start conservatively:
+
+```text
+1. Keep the new install default as manual.
+2. Add a project or local overlay trigger policy.
+3. Let matching requests publish and route visibly.
+4. Dispatch only when runtime preflight and approval gates allow it.
+5. Require a final report and `valp audit` before Done.
+```
+
+Example local overlay fragment:
+
+```json
+{
+  "trigger_policy": {
+    "default_mode": "manual",
+    "auto_visible_mode": "policy_auto",
+    "signals": [
+      "task mentions VALP",
+      "task asks for multi-agent collaboration",
+      "task asks for visible evidence or audit"
+    ],
+    "default_action": "publish_and_route",
+    "high_risk_action": "block_for_approval"
+  }
+}
+```
+
+Auto Visible Mode should write:
+
+```text
+.herdr-loop/tasks/<task-id>/trigger-policy.json
+```
+
+That file records why VALP started, which rule matched, risk classification,
+whether approval is required, and where the user can inspect routing, skill
+recommendations, dispatch receipts, final report, and audit evidence.
+
+Do not use Auto Visible Mode as a hidden autopilot. High-risk actions still
+require explicit user approval before execution.

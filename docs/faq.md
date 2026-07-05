@@ -42,6 +42,18 @@ Full Mode is the intended automated workflow. It requires a compatible runtime
 that can scan agents, dispatch visibly, prove submission, wait for status, write
 receipts, and store evidence.
 
+## What is Auto Visible Mode?
+
+Auto Visible Mode is opt-in automatic task intake. A project policy or runtime
+watcher may decide that a user request should publish a VALP task, then show the
+trigger reason, routing, skill recommendations, dispatches, evidence gates, and
+final report path. It does not bypass approval gates or completion evidence.
+
+## Does Auto Visible Mode mean VALP runs silently in the background?
+
+No. The trigger can be automatic, but the decision and evidence must be visible.
+High-risk work still requires explicit approval before execution.
+
 ## What is Remote Mode?
 
 Remote Mode means the compatible runtime runs on a remote machine. The remote

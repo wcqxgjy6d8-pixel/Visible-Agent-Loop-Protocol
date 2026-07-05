@@ -63,6 +63,20 @@
     "verification",
     "code_review"
   ],
+  "role_requirements": [
+    "coordinator",
+    "implementer",
+    "reviewer"
+  ],
+  "role_assignments": {
+    "coordinator": "codex",
+    "implementer": "codex",
+    "reviewer": "claude"
+  },
+  "coordinator_selection": {
+    "selected_agent": "codex",
+    "selection_rule": "Selected from current capability evidence; the open protocol does not name a universal leader."
+  },
   "selected_agents": [
     "codex",
     "claude"
@@ -89,7 +103,13 @@
       "availability": 0.9,
       "risk_fit": 0.85,
       "overall": 0.89,
-      "confidence": "high"
+      "confidence": "high",
+      "role_fit": {
+        "coordinator": 0.5,
+        "implementer": 0.95,
+        "reviewer": 0.5
+      },
+      "routing_basis": "capability_roles"
     },
     "claude": {
       "profile_fit": 0.85,
@@ -101,12 +121,24 @@
       "availability": 0.9,
       "risk_fit": 0.9,
       "overall": 0.84,
-      "confidence": "high"
+      "confidence": "high",
+      "role_fit": {
+        "coordinator": 0.35,
+        "implementer": 0.25,
+        "reviewer": 0.95
+      },
+      "routing_basis": "capability_roles"
     },
     "agy": {
       "overall": 0.35,
       "confidence": "low",
-      "reason": "No prototype task was required."
+      "reason": "No prototype task was required.",
+      "role_fit": {
+        "coordinator": 0.25,
+        "implementer": 0.25,
+        "reviewer": 0.25
+      },
+      "routing_basis": "capability_roles"
     }
   },
   "routing_confidence": {
@@ -203,6 +235,20 @@
       "reason": "Strong installed workflow match."
     },
     "missing_skills": []
+  },
+  "visible_attention": {
+    "schema_version": "valp-visible-attention.v1",
+    "status": "recorded",
+    "loop_layer": "agentic_coding_loop",
+    "design_contract": {
+      "status": "not_applicable",
+      "path": null
+    },
+    "attention_map": "attention-map.json",
+    "context_selection": "context-selection.json",
+    "mask_list": "mask-list.json",
+    "evidence_board": "evidence-board.json",
+    "visible_routing": "visible-routing.md"
   },
   "runtime_task_state_mapping": {
     "queued": "accepted_by_runtime_not_delivery",

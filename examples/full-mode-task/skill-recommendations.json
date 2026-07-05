@@ -61,5 +61,74 @@
       "missing_skills": []
     }
   ],
-  "missing_skills": []
+  "missing_skills": [],
+  "agent_filtering": {
+    "status": "complete",
+    "backend": "task-skill-router",
+    "agents": [
+      "codex",
+      "claude"
+    ],
+    "note": "Per-agent recommendations are generated with task-skill-router --agent and should be preferred in dispatch prompts."
+  },
+  "per_agent": {
+    "codex": {
+      "status": "complete",
+      "backend": "task-skill-router",
+      "agent": "codex",
+      "command": [
+        "task-skill-router",
+        "--agent",
+        "codex",
+        "--batch"
+      ],
+      "exit_code": 0,
+      "routing": {
+        "priority": "P1",
+        "decision": "auto-load",
+        "reason": "Strong installed workflow match."
+      },
+      "results": [
+        {
+          "task": "run build, lint, or tests and write verification evidence",
+          "routing": {
+            "priority": "P1",
+            "decision": "auto-load",
+            "reason": "Strong installed workflow match."
+          },
+          "matches": [
+            {
+              "skill": "verification-before-completion",
+              "installed": true,
+              "path": "$CODEX_HOME/skills/verification-before-completion/SKILL.md",
+              "confidence": 0.39,
+              "mode": "auto-load",
+              "reason": "Provider-filtered match for Codex verification work."
+            }
+          ],
+          "missing_skills": []
+        }
+      ],
+      "missing_skills": []
+    },
+    "claude": {
+      "status": "no_matches",
+      "backend": "task-skill-router",
+      "agent": "claude",
+      "command": [
+        "task-skill-router",
+        "--agent",
+        "claude",
+        "--batch"
+      ],
+      "exit_code": 0,
+      "routing": {
+        "priority": "P3",
+        "decision": "bypass",
+        "reason": "No provider-filtered installed skill matched strongly enough."
+      },
+      "results": [],
+      "missing_skills": []
+    }
+  }
 }

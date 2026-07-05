@@ -1,0 +1,35 @@
+{
+  "schema_version": "valp-evidence-board.v1",
+  "generated_at": "2026-07-03T00:00:00Z",
+  "profile": "software-code",
+  "loop_layer": "agentic_coding_loop",
+  "selected_agents": [
+    "codex",
+    "claude"
+  ],
+  "claims": [
+    {
+      "claim": "routing decision is visible",
+      "status": "recorded",
+      "required_evidence": [
+        "attention-map.json",
+        "visible-routing.md"
+      ]
+    },
+    {
+      "claim": "selected agents have visible dispatches",
+      "status": "recorded",
+      "required_evidence": [
+        "agents/<agent>/dispatch.md",
+        "dispatch-receipts.jsonl"
+      ]
+    },
+    {
+      "claim": "runtime or build success",
+      "status": "verified",
+      "required_evidence": [
+        "evidence/verification.md"
+      ]
+    }
+  ]
+}

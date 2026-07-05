@@ -42,6 +42,10 @@ class TaskAudit:
         self.feedback = self._load_json("routing-feedback.json")
         self.evidence_status = self._load_json("evidence-status.json")
         self.skill_recommendations = self._load_json("skill-recommendations.json")
+        self.attention_map = self._load_json("attention-map.json")
+        self.context_selection = self._load_json("context-selection.json")
+        self.mask_list = self._load_json("mask-list.json")
+        self.evidence_board = self._load_json("evidence-board.json")
         self.receipts = self._load_jsonl("dispatch-receipts.jsonl")
         self.task_text = self._read_text("task.md")
         self.final_synthesis_text = self._read_first_existing(
@@ -57,6 +61,7 @@ class TaskAudit:
             self.check_provider_matrix(),
             self.check_runtime_preflight(),
             self.check_routing_confidence(),
+            self.check_visible_attention(),
             self.check_skill_recommendations(),
             self.check_squad_routing(),
             self.check_dispatch_receipts(),
@@ -225,6 +230,48 @@ class TaskAudit:
             "routing_confidence",
             "Routing confidence, missing capabilities, and relevant rejected candidates are recorded",
             "Missing advisory routing fields: " + ", ".join(details),
+            evidence,
+        )
+
+    def check_visible_attention(self) -> AuditItem:
+        required_refs = [
+            "attention-map.json",
+            "context-selection.json",
+            "mask-list.json",
+            "evidence-board.json",
+            "visible-routing.md",
+        ]
+        evidence = self._existing(required_refs + ["routing.json", "state.json"])
+        profile = str(self.routing.get("profile") or self.state.get("profile") or "")
+        agents = self._selected_agents()
+        non_trivial = len(agents) > 1 or profile in {"software-code", "apple-app", "web-frontend", "agent-runtime", "ops-release", "prototype"}
+        if not non_trivial and not (self.routing.get("visible_attention") or self.state.get("visible_attention")):
+            return self._skip("visible_attention", "Visible attention routing evidence is recorded", "Simple task without visible attention requirement", evidence)
+        missing = [ref for ref in required_refs if not (self.task_dir / ref).exists()]
+        if missing:
+            return self._fail(
+                "visible_attention",
+                "Visible attention routing evidence is recorded",
+                "Missing visible attention evidence: " + ", ".join(missing),
+                evidence,
+            )
+        if self.attention_map.get("schema_version") != "valp-visible-attention-map.v1":
+            return self._fail("visible_attention", "Visible attention routing evidence is recorded", "attention-map.json has wrong or missing schema_version", evidence)
+        if not self.attention_map.get("loop_layer"):
+            return self._fail("visible_attention", "Visible attention routing evidence is recorded", "attention-map.json has no loop_layer", evidence)
+        heads = self.attention_map.get("heads")
+        if not isinstance(heads, dict) or not heads:
+            return self._fail("visible_attention", "Visible attention routing evidence is recorded", "attention-map.json has no attention heads", evidence)
+        if not self.context_selection.get("selected"):
+            return self._fail("visible_attention", "Visible attention routing evidence is recorded", "context-selection.json has no selected context", evidence)
+        if not self.mask_list.get("masked"):
+            return self._fail("visible_attention", "Visible attention routing evidence is recorded", "mask-list.json has no masked inputs", evidence)
+        if not self.evidence_board.get("claims"):
+            return self._fail("visible_attention", "Visible attention routing evidence is recorded", "evidence-board.json has no claims", evidence)
+        return self._pass(
+            "visible_attention",
+            "Visible attention routing evidence is recorded",
+            f"Loop layer: {self.attention_map.get('loop_layer')}",
             evidence,
         )
 

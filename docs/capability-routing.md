@@ -55,9 +55,15 @@ map each execution task to required capabilities and evidence
 load local overlay profiles, if present
 scan runtime, tools, MCP, skills, and context policy
 score candidate agents
+select coordinator/implementer/reviewer/prototype roles from current evidence
+build a visible attention map from candidate scores and selected context
 record selected agents and rejected high-relevance candidates
 route discovery/review first when confidence is low
 ```
+
+VALP does not define a universal leader. The coordinator is whichever local
+agent or human the runtime selects from current capability evidence. Local
+overlays can provide hints, but they cannot force a fixed leader across tasks.
 
 Recommended score fields:
 
@@ -100,25 +106,36 @@ should require review before mutation or ask for explicit approval.
     "name": "example-runtime",
     "full_mode_capable": true
   },
-  "selected_agents": ["hermes", "codex", "claude"],
+  "role_requirements": ["coordinator", "implementer", "reviewer"],
+  "role_assignments": {
+    "coordinator": "local-coordinator",
+    "implementer": "build-agent",
+    "reviewer": "review-agent"
+  },
+  "coordinator_selection": {
+    "selected_agent": "local-coordinator",
+    "selection_rule": "Selected from current capability evidence, not from a protocol-wide leader default."
+  },
+  "selected_agents": ["local-coordinator", "build-agent", "review-agent"],
   "local_overlay": {
     "used": true,
     "ref": ".herdr/valp-local-overlay.json",
     "note": "Agent profiles used as routing hints only."
   },
   "agent_match_reasons": {
-    "codex": ["implementation", "verification"],
-    "claude": ["read_only_review"],
-    "hermes": ["coordination", "gates"]
+    "local-coordinator": ["coordination", "gates"],
+    "build-agent": ["implementation", "verification"],
+    "review-agent": ["read_only_review"]
   },
   "candidate_scores": {
-    "codex": {"overall": 0.86, "confidence": "high"},
-    "claude": {"overall": 0.78, "confidence": "medium"},
-    "agy": {"overall": 0.42, "confidence": "low"}
+    "local-coordinator": {"overall": 0.84, "confidence": "high"},
+    "build-agent": {"overall": 0.86, "confidence": "high"},
+    "review-agent": {"overall": 0.78, "confidence": "medium"},
+    "prototype-agent": {"overall": 0.42, "confidence": "low"}
   },
   "rejected_candidates": [
     {
-      "agent": "agy",
+      "agent": "prototype-agent",
       "reason": "prototype profile does not match source-edit evidence gate",
       "confidence": "low"
     }
@@ -127,6 +144,15 @@ should require review before mutation or ask for explicit approval.
   "skill_recommendations": {
     "status": "not_run",
     "reason": "requires decomposed execution tasks"
+  },
+  "visible_attention": {
+    "status": "recorded",
+    "loop_layer": "agentic_coding_loop",
+    "attention_map": "attention-map.json",
+    "context_selection": "context-selection.json",
+    "mask_list": "mask-list.json",
+    "evidence_board": "evidence-board.json",
+    "visible_routing": "visible-routing.md"
   },
   "provider_matrix": {
     "status": "scanned",
@@ -146,6 +172,7 @@ should require review before mutation or ask for explicit approval.
 - Do not route more work to an agent beyond its hard context threshold.
 - Do not allow skill recommendation to bypass role boundaries.
 - Do not allow provider matrix claims to bypass proof or approval gates.
+- Do not hide attention/routing decisions; record selected context and masked inputs.
 - Do not let local overlay profiles become fixed assignments.
 - Do not let historical feedback replace current scans.
 - Do not treat squad leader judgment as worker completion evidence.

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Evidence Board",
+  "type": "object",
+  "required": ["schema_version", "profile", "loop_layer", "claims"],
+  "properties": {
+    "schema_version": {
+      "const": "valp-evidence-board.v1"
+    },
+    "generated_at": {"type": "string"},
+    "profile": {"type": "string"},
+    "loop_layer": {"type": "string"},
+    "selected_agents": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["claim", "status", "required_evidence"],
+        "properties": {
+          "claim": {"type": "string"},
+          "status": {"type": "string"},
+          "required_evidence": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

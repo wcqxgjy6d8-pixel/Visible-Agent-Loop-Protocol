@@ -1,0 +1,51 @@
+{
+  "schema_version": "valp-visible-attention-map.v1",
+  "task_id": "TASK-EXAMPLE-001",
+  "profile": "software-code",
+  "loop_layer": "agentic_coding_loop",
+  "generated_at": "2026-07-03T00:00:00Z",
+  "heads": {
+    "state_gate": {
+      "selected": "codex",
+      "candidate": "role:coordinator",
+      "score": 0.89,
+      "status": "selected"
+    },
+    "implementation": {
+      "selected": "codex",
+      "candidate": "role:implementer",
+      "score": 0.89,
+      "status": "selected"
+    },
+    "ux_review": {
+      "selected": "claude",
+      "candidate": "role:reviewer",
+      "score": 0.84,
+      "status": "selected"
+    },
+    "prototype": {
+      "selected": null,
+      "candidate": "role:prototype",
+      "score": null,
+      "status": "not_selected"
+    }
+  },
+  "selected_agents": [
+    "codex",
+    "claude"
+  ],
+  "role_assignments": {
+    "coordinator": "codex",
+    "implementer": "codex",
+    "reviewer": "claude"
+  },
+  "candidate_scores_ref": "routing.json#candidate_scores",
+  "skill_recommendations": {
+    "status": "complete",
+    "ref": "skill-recommendations.json"
+  },
+  "context_selection_ref": "context-selection.json",
+  "mask_list_ref": "mask-list.json",
+  "evidence_board_ref": "evidence-board.json",
+  "visible_summary_ref": "visible-routing.md"
+}

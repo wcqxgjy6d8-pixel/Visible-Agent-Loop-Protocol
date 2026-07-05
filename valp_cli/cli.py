@@ -76,6 +76,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Published VALP task: {args.task_id}")
             print(f"Task dir: {directory}")
             print("Routed: " + ("yes" if not args.no_route else "no"))
+            visible = directory / "visible-routing.md"
+            if visible.exists():
+                print()
+                print(visible.read_text(encoding="utf-8").strip())
         return 0
 
     if args.command == "scan":
@@ -93,6 +97,11 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"Routed VALP task: {args.task_id}")
             print("Selected agents: " + ", ".join(routing.get("selected_agents") or []))
+            visible_ref = ((routing.get("visible_attention") or {}).get("visible_routing")) or "visible-routing.md"
+            visible = Path(args.workspace).resolve() / ".herdr-loop" / "tasks" / args.task_id / visible_ref
+            if visible.exists():
+                print()
+                print(visible.read_text(encoding="utf-8").strip())
         return 0
 
     if args.command == "dispatch":

@@ -32,23 +32,41 @@ PROFILE_CAPABILITIES = {
     "prototype": ["prototype", "alternatives", "mock"],
 }
 
-PROFILE_DEFAULT_AGENTS = {
-    "generic-analysis": ["hermes", "codex", "claude"],
-    "software-code": ["hermes", "codex", "claude"],
-    "apple-app": ["hermes", "codex", "claude", "agy"],
-    "web-frontend": ["hermes", "codex", "claude"],
-    "research": ["hermes", "codex", "claude"],
-    "document-artifact": ["hermes", "codex", "claude"],
-    "agent-runtime": ["hermes", "codex", "claude"],
-    "ops-release": ["hermes", "codex", "claude"],
-    "prototype": ["hermes", "agy", "codex"],
+PROFILE_ROLE_REQUIREMENTS = {
+    "generic-analysis": ["coordinator", "reviewer"],
+    "software-code": ["coordinator", "implementer", "reviewer"],
+    "apple-app": ["coordinator", "implementer", "reviewer", "prototype"],
+    "web-frontend": ["coordinator", "implementer", "reviewer"],
+    "research": ["coordinator", "researcher", "reviewer"],
+    "document-artifact": ["coordinator", "implementer", "reviewer"],
+    "agent-runtime": ["coordinator", "implementer", "reviewer"],
+    "ops-release": ["coordinator", "implementer", "reviewer"],
+    "prototype": ["coordinator", "prototype", "implementer"],
+}
+
+UI_ATTENTION_PROFILES = {"apple-app", "web-frontend", "prototype"}
+
+ATTENTION_HEAD_ROLES = {
+    "state_gate": "coordinator",
+    "implementation": "implementer",
+    "ux_review": "reviewer",
+    "prototype": "prototype",
 }
 
 DEFAULT_CONTEXT_POLICIES = {
-    "hermes": {"soft_warning_pct": 50, "hard_compression_pct": 60, "emergency_stop_pct": 80},
-    "codex": {"soft_warning_pct": 55, "hard_compression_pct": 65, "emergency_stop_pct": 80},
-    "claude": {"soft_warning_pct": 60, "hard_compression_pct": 70, "emergency_stop_pct": 80},
-    "agy": {"soft_warning_pct": 60, "hard_compression_pct": 70, "emergency_stop_pct": 80},
+    "coordinator": {"soft_warning_pct": 50, "hard_compression_pct": 60, "emergency_stop_pct": 80},
+    "implementer": {"soft_warning_pct": 55, "hard_compression_pct": 65, "emergency_stop_pct": 80},
+    "reviewer": {"soft_warning_pct": 60, "hard_compression_pct": 70, "emergency_stop_pct": 80},
+    "prototype": {"soft_warning_pct": 60, "hard_compression_pct": 70, "emergency_stop_pct": 80},
+    "other": {"soft_warning_pct": 60, "hard_compression_pct": 70, "emergency_stop_pct": 80},
+}
+
+ROLE_MATCH_TERMS = {
+    "coordinator": ["coordination", "coordinator", "state", "gate", "approval", "routing", "synthesis", "final record"],
+    "implementer": ["implementation", "implementer", "verification", "tool_execution", "edit", "build", "test", "code"],
+    "reviewer": ["review", "reviewer", "risk_review", "code_review", "source_review", "ux_review", "read-only", "read_only"],
+    "prototype": ["prototype", "alternatives", "mock", "spike", "experiment"],
+    "researcher": ["research", "web_search", "source", "retrieval", "compare"],
 }
 
 RUNTIME_TASK_STATE_MAPPING = {
@@ -313,7 +331,7 @@ def run_skill_recommendations(root: Path, task_id: str, profile: str, prompt: st
         }
 
     result = run_command(
-        command + ["--batch"],
+        skill_router_batch_command(command),
         timeout=30.0,
         input_text="\n".join(tasks) + "\n",
         stdout_limit=250000,
@@ -345,6 +363,456 @@ def run_skill_recommendations(root: Path, task_id: str, profile: str, prompt: st
         "missing_skills": parsed.get("missing_skills") or [],
         "raw": parsed,
     }
+
+
+def skill_router_batch_command(command: list[str], agent: str | None = None) -> list[str]:
+    if agent:
+        return command + ["--agent", agent, "--batch"]
+    return command + ["--batch"]
+
+
+def add_per_agent_skill_recommendations(
+    skill_recommendations: dict[str, Any],
+    selected_agents: list[str],
+) -> dict[str, Any]:
+    if skill_recommendations.get("status") not in {"complete", "no_matches"}:
+        return skill_recommendations
+    command = skill_router_command()
+    tasks = skill_recommendations.get("execution_tasks") or []
+    if not command or not tasks:
+        return skill_recommendations
+
+    per_agent: dict[str, Any] = {}
+    for agent in selected_agents:
+        result = run_command(
+            skill_router_batch_command(command, agent=agent),
+            timeout=30.0,
+            input_text="\n".join(str(task) for task in tasks) + "\n",
+            stdout_limit=250000,
+            stderr_limit=8000,
+        )
+        parsed = parse_json_stdout(result)
+        if not parsed:
+            per_agent[agent] = {
+                "status": "failed",
+                "backend": "task-skill-router",
+                "agent": agent,
+                "command": result.get("command"),
+                "exit_code": result.get("exit_code"),
+                "reason": "task-skill-router did not return parseable JSON for this agent.",
+                "stderr": result.get("stderr", ""),
+                "results": [],
+                "missing_skills": [],
+            }
+            continue
+        per_agent[agent] = {
+            "status": "complete" if parsed.get("results") else "no_matches",
+            "backend": "task-skill-router",
+            "agent": agent,
+            "command": result.get("command"),
+            "exit_code": result.get("exit_code"),
+            "routing": parsed.get("routing") or {},
+            "results": parsed.get("results") or [],
+            "missing_skills": parsed.get("missing_skills") or [],
+            "raw": parsed,
+        }
+
+    statuses = {record.get("status") for record in per_agent.values()}
+    skill_recommendations["per_agent"] = per_agent
+    skill_recommendations["agent_filtering"] = {
+        "status": "complete" if statuses <= {"complete", "no_matches"} else "partial",
+        "backend": "task-skill-router",
+        "agents": selected_agents,
+        "note": "Per-agent recommendations are generated with task-skill-router --agent and should be preferred in dispatch prompts.",
+    }
+    return skill_recommendations
+
+
+def classify_loop_layer(prompt: str, profile: str) -> str:
+    lowered = prompt.lower()
+    external_terms = [
+        "external feedback",
+        "user feedback",
+        "alpha",
+        "beta",
+        "a/b",
+        "ab test",
+        "analytics",
+        "production feedback",
+        "真实用户",
+        "外部反馈",
+        "用户反馈",
+        "上线反馈",
+    ]
+    developer_terms = [
+        "ui",
+        "ux",
+        "design",
+        "product",
+        "flow",
+        "visual",
+        "prototype",
+        "spec",
+        "用户流程",
+        "视觉",
+        "交互",
+        "产品",
+    ]
+    if any(term in lowered for term in external_terms):
+        return "external_feedback_loop"
+    if profile in UI_ATTENTION_PROFILES or any(term in lowered for term in developer_terms):
+        return "developer_feedback_loop"
+    return "agentic_coding_loop"
+
+
+def relative_ref(path: Path, root: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        return str(path)
+
+
+def find_design_contract(root: Path) -> dict[str, Any]:
+    for relative in ["DESIGN.md", ".stitch/DESIGN.md"]:
+        candidate = root / relative
+        if candidate.exists():
+            return {
+                "status": "present",
+                "path": relative,
+                "recommended_lint": f"npx @google/design.md lint {relative}",
+            }
+    return {
+        "status": "missing",
+        "path": None,
+        "reason": "No DESIGN.md or .stitch/DESIGN.md found in the workspace.",
+    }
+
+
+def context_selection_for(root: Path, directory: Path, profile: str, loop_layer: str) -> dict[str, Any]:
+    selected: list[dict[str, Any]] = []
+    not_selected: list[dict[str, Any]] = []
+
+    def add_if_exists(relative: str, reason: str) -> None:
+        path = root / relative
+        if path.exists():
+            selected.append({"path": relative, "reason": reason})
+
+    selected.append({"path": relative_ref(directory / "task.md", root), "reason": "active task brief"})
+    add_if_exists("AGENTS.md", "project operating rules")
+    add_if_exists("DESIGN.md", "project visual contract")
+    add_if_exists(".stitch/DESIGN.md", "project visual contract")
+    add_if_exists("Package.swift", "SwiftPM build surface")
+    add_if_exists("package.json", "frontend or JavaScript build surface")
+    add_if_exists("pyproject.toml", "Python build/test surface")
+    add_if_exists(".herdr-loop/local-overlay.json", "workspace-local routing overlay")
+    add_if_exists(".herdr-loop/agents/capabilities.json", "workspace agent capability scan")
+
+    tasks_root = root / ".herdr-loop" / "tasks"
+    if tasks_root.exists():
+        for task_path in sorted((p for p in tasks_root.iterdir() if p.is_dir()), key=lambda p: p.name)[-8:]:
+            if task_path.resolve() == directory.resolve():
+                continue
+            not_selected.append(
+                {
+                    "path": relative_ref(task_path, root),
+                    "reason": "prior task context is excluded unless explicitly cited by the active task",
+                }
+            )
+
+    return {
+        "schema_version": "valp-context-selection.v1",
+        "generated_at": now_iso(),
+        "profile": profile,
+        "loop_layer": loop_layer,
+        "selected": selected,
+        "not_selected": not_selected,
+    }
+
+
+def mask_list_for(profile: str, loop_layer: str, design_contract: dict[str, Any]) -> dict[str, Any]:
+    masked = [
+        {
+            "item": "old chat memory without file-backed evidence",
+            "reason": "stale context is not valid routing or completion evidence",
+        },
+        {
+            "item": "hidden votes, hidden reviews, or hidden routing decisions",
+            "reason": "VALP requires visible decision input",
+        },
+        {
+            "item": "Agy prototype output as production proof",
+            "reason": "prototype evidence can inform implementation but cannot satisfy build/test/release gates",
+        },
+        {
+            "item": "release, signing, upload, deploy, auth, secrets, or destructive changes",
+            "reason": "high-risk operations require explicit user approval",
+        },
+        {
+            "item": "invalid, superseded, rejected, or blocked evidence",
+            "reason": "these evidence statuses do not satisfy done criteria",
+        },
+    ]
+    if profile in UI_ATTENTION_PROFILES and design_contract.get("status") == "missing":
+        masked.append(
+            {
+                "item": "silent full visual-identity invention",
+                "reason": "UI work without DESIGN.md must rely on existing project context or create a separate design-contract task",
+            }
+        )
+    if loop_layer == "external_feedback_loop":
+        masked.append(
+            {
+                "item": "agent-only product judgment as user feedback",
+                "reason": "external feedback must come from users, analytics, beta testing, or explicitly supplied market evidence",
+            }
+        )
+    return {
+        "schema_version": "valp-mask-list.v1",
+        "generated_at": now_iso(),
+        "profile": profile,
+        "loop_layer": loop_layer,
+        "masked": masked,
+    }
+
+
+def evidence_board_for(profile: str, loop_layer: str, selected_agents: list[str], design_contract: dict[str, Any]) -> dict[str, Any]:
+    claims: list[dict[str, Any]] = [
+        {
+            "claim": "routing decision is visible",
+            "status": "recorded",
+            "required_evidence": ["attention-map.json", "visible-routing.md"],
+        },
+        {
+            "claim": "selected agents have visible dispatches",
+            "status": "needs_dispatch_completion",
+            "required_evidence": ["agents/<agent>/dispatch.md", "dispatch-receipts.jsonl"],
+        },
+        {
+            "claim": "runtime or build success",
+            "status": "not_yet_claimed",
+            "required_evidence": ["command log", "gate JSON", "task evidence path"],
+        },
+    ]
+    if profile in UI_ATTENTION_PROFILES:
+        claims.append(
+            {
+                "claim": "UI behavior matches the requested interaction",
+                "status": "needs_preview_evidence",
+                "required_evidence": ["real app/browser screenshot", "build/test log", "review evidence"],
+            }
+        )
+        claims.append(
+            {
+                "claim": "design contract was followed",
+                "status": "needs_design_review" if design_contract.get("status") == "present" else "design_contract_missing",
+                "required_evidence": ["DESIGN.md lint when present", "Claude UX review", "screenshot comparison"],
+            }
+        )
+    if loop_layer == "external_feedback_loop":
+        claims.append(
+            {
+                "claim": "external feedback was incorporated",
+                "status": "needs_external_source",
+                "required_evidence": ["user feedback record", "analytics extract", "beta/test report", "A/B result"],
+            }
+        )
+    return {
+        "schema_version": "valp-evidence-board.v1",
+        "generated_at": now_iso(),
+        "profile": profile,
+        "loop_layer": loop_layer,
+        "selected_agents": selected_agents,
+        "claims": claims,
+    }
+
+
+def attention_heads_for(
+    loop_layer: str,
+    profile: str,
+    selected_agents: list[str],
+    candidate_scores: dict[str, dict[str, Any]],
+    design_contract: dict[str, Any],
+    role_assignments: dict[str, str],
+) -> dict[str, Any]:
+    heads: dict[str, Any] = {}
+    for head, role in ATTENTION_HEAD_ROLES.items():
+        selected = role_assignments.get(role)
+        score = candidate_scores.get(selected or "", {}).get("overall")
+        heads[head] = {
+            "selected": selected,
+            "candidate": f"role:{role}",
+            "score": score,
+            "status": "selected" if selected in selected_agents else "not_selected",
+        }
+    if loop_layer == "external_feedback_loop":
+        heads["external_feedback"] = {
+            "selected": "human_or_external_source",
+            "candidate": "user_feedback_or_runtime_data",
+            "score": None,
+            "status": "required_source",
+        }
+    if profile in UI_ATTENTION_PROFILES:
+        heads["design_contract"] = {
+            "selected": design_contract.get("path"),
+            "candidate": "DESIGN.md or .stitch/DESIGN.md",
+            "score": 1.0 if design_contract.get("status") == "present" else 0.0,
+            "status": design_contract.get("status"),
+        }
+    return heads
+
+
+def write_visible_attention(
+    root: Path,
+    directory: Path,
+    task_id: str,
+    profile: str,
+    prompt: str,
+    selected_agents: list[str],
+    candidate_scores: dict[str, dict[str, Any]],
+    skill_recommendations: dict[str, Any],
+    role_assignments: dict[str, str],
+) -> dict[str, Any]:
+    loop_layer = classify_loop_layer(prompt, profile)
+    design_contract = find_design_contract(root)
+    context_selection = context_selection_for(root, directory, profile, loop_layer)
+    mask_list = mask_list_for(profile, loop_layer, design_contract)
+    evidence_board = evidence_board_for(profile, loop_layer, selected_agents, design_contract)
+    heads = attention_heads_for(loop_layer, profile, selected_agents, candidate_scores, design_contract, role_assignments)
+    attention_map = {
+        "schema_version": "valp-visible-attention-map.v1",
+        "task_id": task_id,
+        "profile": profile,
+        "loop_layer": loop_layer,
+        "generated_at": now_iso(),
+        "heads": heads,
+        "selected_agents": selected_agents,
+        "role_assignments": role_assignments,
+        "candidate_scores_ref": "routing.json#candidate_scores",
+        "skill_recommendations": {
+            "status": skill_recommendations.get("status"),
+            "ref": "skill-recommendations.json",
+        },
+        "context_selection_ref": "context-selection.json",
+        "mask_list_ref": "mask-list.json",
+        "evidence_board_ref": "evidence-board.json",
+        "visible_summary_ref": "visible-routing.md",
+    }
+    visible_routing = format_visible_routing(attention_map, context_selection, mask_list, evidence_board, design_contract)
+    write_json(directory / "attention-map.json", attention_map)
+    write_json(directory / "context-selection.json", context_selection)
+    write_json(directory / "mask-list.json", mask_list)
+    write_json(directory / "evidence-board.json", evidence_board)
+    (directory / "visible-routing.md").write_text(visible_routing, encoding="utf-8")
+    return {
+        "loop_layer": loop_layer,
+        "design_contract": design_contract,
+        "refs": {
+            "attention_map": "attention-map.json",
+            "context_selection": "context-selection.json",
+            "mask_list": "mask-list.json",
+            "evidence_board": "evidence-board.json",
+            "visible_routing": "visible-routing.md",
+        },
+        "attention_map": attention_map,
+        "context_selection": context_selection,
+        "mask_list": mask_list,
+    }
+
+
+def format_visible_routing(
+    attention_map: dict[str, Any],
+    context_selection: dict[str, Any],
+    mask_list: dict[str, Any],
+    evidence_board: dict[str, Any],
+    design_contract: dict[str, Any],
+) -> str:
+    head_lines = []
+    for head, record in (attention_map.get("heads") or {}).items():
+        selected = record.get("selected") or "none"
+        score = record.get("score")
+        score_text = "n/a" if score is None else str(score)
+        head_lines.append(f"- {head}: {selected} (score {score_text}, {record.get('status')})")
+    context_lines = [
+        f"- `{item.get('path')}`: {item.get('reason')}"
+        for item in (context_selection.get("selected") or [])[:10]
+    ]
+    mask_lines = [
+        f"- {item.get('item')}: {item.get('reason')}"
+        for item in (mask_list.get("masked") or [])[:8]
+    ]
+    claim_lines = [
+        f"- {item.get('claim')}: {item.get('status')}"
+        for item in (evidence_board.get("claims") or [])[:8]
+    ]
+    return """# Visible Routing
+
+Task: {task_id}
+Profile: {profile}
+Loop layer: {loop_layer}
+Design contract: {design_status}{design_path}
+
+## Attention Heads
+
+{heads}
+
+## Selected Context
+
+{context}
+
+## Masked Inputs
+
+{masks}
+
+## Evidence Board
+
+{claims}
+""".format(
+        task_id=attention_map.get("task_id"),
+        profile=attention_map.get("profile"),
+        loop_layer=attention_map.get("loop_layer"),
+        design_status=design_contract.get("status"),
+        design_path=f" ({design_contract.get('path')})" if design_contract.get("path") else "",
+        heads="\n".join(head_lines) or "- none",
+        context="\n".join(context_lines) or "- none",
+        masks="\n".join(mask_lines) or "- none",
+        claims="\n".join(claim_lines) or "- none",
+    )
+
+
+def attention_slice_for_agent(agent: str, visible_attention: dict[str, Any]) -> str:
+    attention_map = visible_attention.get("attention_map") or {}
+    context_selection = visible_attention.get("context_selection") or {}
+    mask_list = visible_attention.get("mask_list") or {}
+    heads = attention_map.get("heads") or {}
+    matching_heads = [
+        head
+        for head, record in heads.items()
+        if record.get("selected") == agent or record.get("candidate") == agent
+    ]
+    context_lines = [
+        f"- `{item.get('path')}`: {item.get('reason')}"
+        for item in (context_selection.get("selected") or [])[:8]
+    ]
+    mask_lines = [
+        f"- {item.get('item')}: {item.get('reason')}"
+        for item in (mask_list.get("masked") or [])[:6]
+    ]
+    design = visible_attention.get("design_contract") or {}
+    return """- Loop layer: `{loop_layer}`
+- Your attention head(s): {heads}
+- Design contract: `{design_status}`{design_path}
+- Context selected for this round:
+{context}
+- Inputs masked out:
+{masks}
+""".format(
+        loop_layer=visible_attention.get("loop_layer", "unknown"),
+        heads=", ".join(matching_heads) if matching_heads else "none",
+        design_status=design.get("status", "unknown"),
+        design_path=f" (`{design.get('path')}`)" if design.get("path") else "",
+        context="\n".join(context_lines) or "  - none",
+        masks="\n".join(mask_lines) or "  - none",
+    )
 
 
 def publish_task(root: Path, task_id: str, prompt: str, profile: str | None = None, route: bool = True) -> Path:
@@ -410,14 +878,27 @@ def route_task(root: Path, task_id: str) -> dict[str, Any]:
     agents = capabilities.get("agents") or {}
     candidate_scores = score_candidates(profile, agents)
     selected_agents = select_agents(profile, agents, candidate_scores)
+    role_assignments = role_assignments_for(profile, selected_agents, agents, candidate_scores)
     preflight = collect_runtime_preflight(selected_agents)
     skill_recommendations = run_skill_recommendations(root, task_id, profile, prompt)
+    skill_recommendations = add_per_agent_skill_recommendations(skill_recommendations, selected_agents)
     write_json(directory / "skill-recommendations.json", skill_recommendations)
+    visible_attention = write_visible_attention(
+        root,
+        directory,
+        task_id,
+        profile,
+        prompt,
+        selected_agents,
+        candidate_scores,
+        skill_recommendations,
+        role_assignments,
+    )
     context_policies = {
         agent: context_policy_for(agent, agents.get(agent, {}), overlay)
         for agent in selected_agents
     }
-    expected_by_agent = expected_refs_for_agents(selected_agents)
+    expected_by_agent = expected_refs_for_agents(selected_agents, role_assignments)
     routing = {
         "schema_version": "valp-capability-routing.v1",
         "task_id": task_id,
@@ -429,6 +910,12 @@ def route_task(root: Path, task_id: str) -> dict[str, Any]:
             "note": "Local capability profiles are routing hints, not fixed assignments.",
         },
         "capabilities_needed": PROFILE_CAPABILITIES.get(profile, PROFILE_CAPABILITIES["generic-analysis"]),
+        "role_requirements": PROFILE_ROLE_REQUIREMENTS.get(profile, PROFILE_ROLE_REQUIREMENTS["generic-analysis"]),
+        "role_assignments": role_assignments,
+        "coordinator_selection": {
+            "selected_agent": role_assignments.get("coordinator"),
+            "selection_rule": "Selected from current capability evidence, local overlay hints, runtime availability, context policy, and task profile. The open protocol does not name a universal leader.",
+        },
         "selected_agents": selected_agents,
         "agent_match_reasons": {
             agent: match_reasons_for(agent, profile, agents.get(agent, {}))
@@ -446,6 +933,13 @@ def route_task(root: Path, task_id: str) -> dict[str, Any]:
             "routing": skill_recommendations.get("routing") or {},
             "missing_skills": skill_recommendations.get("missing_skills") or [],
         },
+        "visible_attention": {
+            "schema_version": "valp-visible-attention.v1",
+            "status": "recorded",
+            "loop_layer": visible_attention["loop_layer"],
+            "design_contract": visible_attention["design_contract"],
+            **visible_attention["refs"],
+        },
         "provider_matrix": provider_matrix_for(selected_agents, agents, overlay, preflight),
         "runtime_task_state_mapping": RUNTIME_TASK_STATE_MAPPING,
         "squad_routing": {"used": False},
@@ -453,18 +947,20 @@ def route_task(root: Path, task_id: str) -> dict[str, Any]:
         "capabilities_missing": [],
     }
     write_json(directory / "routing.json", routing)
-    write_dispatches(directory, task_id, profile, prompt, selected_agents, expected_by_agent, routing, skill_recommendations)
+    write_dispatches(root, directory, task_id, profile, prompt, selected_agents, expected_by_agent, routing, skill_recommendations, visible_attention)
     append_dispatch_written_receipts(directory, selected_agents, expected_by_agent)
     state.update(
         {
             "profile": profile,
             "status": "dispatching",
+            "loop_layer": visible_attention["loop_layer"],
             "runtime_adapter": routing["runtime_adapter"],
             "local_overlay": routing["local_overlay"],
             "runtime_task_state_mapping": RUNTIME_TASK_STATE_MAPPING,
             "provider_matrix": {"status": "scanned", "ref": "routing.json"},
             "squad_routing": {"used": False},
             "selected_agents": selected_agents,
+            "role_assignments": role_assignments,
             "capabilities_needed": routing["capabilities_needed"],
             "capabilities_missing": [],
             "context_policies": context_policies,
@@ -472,6 +968,11 @@ def route_task(root: Path, task_id: str) -> dict[str, Any]:
                 "status": skill_recommendations.get("status"),
                 "backend": skill_recommendations.get("backend"),
                 "ref": "skill-recommendations.json",
+            },
+            "visible_attention": {
+                "status": "recorded",
+                "loop_layer": visible_attention["loop_layer"],
+                **visible_attention["refs"],
             },
             "routing_confidence": routing["routing_confidence"],
             "routing_feedback": {"status": "expected", "ref": "routing-feedback.json"},
@@ -483,13 +984,14 @@ def route_task(root: Path, task_id: str) -> dict[str, Any]:
 
 
 def score_candidates(profile: str, agents: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    defaults = set(PROFILE_DEFAULT_AGENTS.get(profile, PROFILE_DEFAULT_AGENTS["generic-analysis"]))
+    required_roles = PROFILE_ROLE_REQUIREMENTS.get(profile, PROFILE_ROLE_REQUIREMENTS["generic-analysis"])
     scores: dict[str, dict[str, Any]] = {}
     for agent, info in agents.items():
         active = bool(info.get("active", True))
         runtime = info.get("runtime") or {}
         runtime_status = str(runtime.get("status", "unknown"))
-        profile_fit = 0.9 if agent in defaults else 0.35
+        role_fit = {role: role_fit_score(info, role) for role in required_roles}
+        profile_fit = max(role_fit.values()) if role_fit else 0.45
         tool_fit = 0.85 if info.get("mcp_servers") or runtime else 0.55
         skill_count = len(info.get("skills") or [])
         skill_fit = min(0.95, 0.45 + skill_count / 80)
@@ -514,21 +1016,82 @@ def score_candidates(profile: str, agents: dict[str, Any]) -> dict[str, dict[str
             "risk_fit": round(risk_fit, 2),
             "overall": overall,
             "confidence": confidence,
+            "role_fit": role_fit,
+            "routing_basis": "capability_roles",
         }
     return scores
 
 
 def select_agents(profile: str, agents: dict[str, Any], scores: dict[str, dict[str, Any]]) -> list[str]:
-    defaults = PROFILE_DEFAULT_AGENTS.get(profile, PROFILE_DEFAULT_AGENTS["generic-analysis"])
-    selected = [
-        agent
-        for agent in defaults
-        if agent in agents and scores.get(agent, {}).get("overall", 0) >= 0.5
-    ]
+    required_roles = PROFILE_ROLE_REQUIREMENTS.get(profile, PROFILE_ROLE_REQUIREMENTS["generic-analysis"])
+    selected: list[str] = []
+    for role in required_roles:
+        ranked = sorted(
+            scores,
+            key=lambda name: (scores[name].get("role_fit", {}).get(role, 0), scores[name].get("overall", 0)),
+            reverse=True,
+        )
+        for agent in ranked:
+            role_score = scores[agent].get("role_fit", {}).get(role, 0)
+            if scores[agent].get("overall", 0) < 0.5 and selected:
+                continue
+            if role_score < 0.35 and len(agents) > 1:
+                continue
+            if agent not in selected:
+                selected.append(agent)
+            break
     if selected:
         return selected
     ranked = sorted(scores, key=lambda name: scores[name].get("overall", 0), reverse=True)
     return ranked[:1]
+
+
+def role_assignments_for(
+    profile: str,
+    selected_agents: list[str],
+    agents: dict[str, Any],
+    scores: dict[str, dict[str, Any]],
+) -> dict[str, str]:
+    assignments: dict[str, str] = {}
+    required_roles = PROFILE_ROLE_REQUIREMENTS.get(profile, PROFILE_ROLE_REQUIREMENTS["generic-analysis"])
+    for role in required_roles:
+        ranked = sorted(
+            selected_agents,
+            key=lambda name: (scores.get(name, {}).get("role_fit", {}).get(role, 0), scores.get(name, {}).get("overall", 0)),
+            reverse=True,
+        )
+        if ranked:
+            assignments[role] = ranked[0]
+    return assignments
+
+
+def agent_capability_text(info: dict[str, Any]) -> str:
+    values: list[str] = []
+    for key in ["role", "strengths"]:
+        raw = info.get(key) or []
+        if isinstance(raw, str):
+            values.append(raw)
+        elif isinstance(raw, list):
+            values.extend(str(item) for item in raw)
+    return " ".join(values).lower()
+
+
+def role_fit_score(info: dict[str, Any], role: str) -> float:
+    text = agent_capability_text(info)
+    terms = ROLE_MATCH_TERMS.get(role, [])
+    matches = sum(1 for term in terms if term in text)
+    if matches:
+        return round(min(0.95, 0.35 + matches * 0.15), 2)
+    return 0.25
+
+
+def inferred_primary_role(info: dict[str, Any]) -> str:
+    candidates = {
+        role: role_fit_score(info, role)
+        for role in ["coordinator", "implementer", "reviewer", "prototype", "researcher"]
+    }
+    role, score = max(candidates.items(), key=lambda item: item[1])
+    return role if score >= 0.35 else "other"
 
 
 def context_policy_for(agent: str, info: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
@@ -538,7 +1101,7 @@ def context_policy_for(agent: str, info: dict[str, Any], overlay: dict[str, Any]
         return overlay_policy
     if info.get("context_policy"):
         return info["context_policy"]
-    return DEFAULT_CONTEXT_POLICIES.get(agent, {"soft_warning_pct": 60, "hard_compression_pct": 70, "emergency_stop_pct": 80})
+    return DEFAULT_CONTEXT_POLICIES.get(inferred_primary_role(info), DEFAULT_CONTEXT_POLICIES["other"])
 
 
 def match_reasons_for(agent: str, profile: str, info: dict[str, Any]) -> list[str]:
@@ -574,7 +1137,7 @@ def rejected_candidates(scores: dict[str, dict[str, Any]], selected_agents: list
                     "agent": agent,
                     "confidence": score.get("confidence", "unknown"),
                     "score": score.get("overall"),
-                    "reason": "Not selected because default profile route had stronger fit.",
+                    "reason": "Not selected because selected role candidates had stronger current capability evidence.",
                 }
             )
     return rejected
@@ -736,23 +1299,30 @@ def provider_matrix_for(selected_agents: list[str], agents: dict[str, Any], over
     return {"generated_at": now_iso(), "runtime_preflight": preflight, "providers": providers}
 
 
-def expected_refs_for_agents(selected_agents: list[str]) -> dict[str, list[str]]:
+def expected_refs_for_agents(selected_agents: list[str], role_assignments: dict[str, str] | None = None) -> dict[str, list[str]]:
+    role_assignments = role_assignments or {}
     refs = {}
     for agent in selected_agents:
-        if agent == "codex":
-            refs[agent] = ["agents/codex/evidence.md", "evidence/verification.md"]
-        elif agent == "claude":
-            refs[agent] = ["agents/claude/review.md"]
-        elif agent == "hermes":
-            refs[agent] = ["agents/hermes/self-review.md"]
-        elif agent == "agy":
-            refs[agent] = ["agents/agy/prototype.md"]
-        else:
-            refs[agent] = [f"agents/{agent}/evidence.md"]
+        agent_roles = {role for role, selected in role_assignments.items() if selected == agent}
+        agent_refs: list[str] = []
+        if "coordinator" in agent_roles:
+            agent_refs.append(f"agents/{agent}/self-review.md")
+        if "implementer" in agent_roles or "researcher" in agent_roles:
+            agent_refs.append(f"agents/{agent}/evidence.md")
+        if "implementer" in agent_roles:
+            agent_refs.append("evidence/verification.md")
+        if "reviewer" in agent_roles:
+            agent_refs.append(f"agents/{agent}/review.md")
+        if "prototype" in agent_roles:
+            agent_refs.append(f"agents/{agent}/prototype.md")
+        if not agent_refs:
+            agent_refs.append(f"agents/{agent}/evidence.md")
+        refs[agent] = list(dict.fromkeys(agent_refs))
     return refs
 
 
 def write_dispatches(
+    root: Path,
     directory: Path,
     task_id: str,
     profile: str,
@@ -761,17 +1331,32 @@ def write_dispatches(
     expected_by_agent: dict[str, list[str]],
     routing: dict[str, Any],
     skill_recommendations: dict[str, Any],
+    visible_attention: dict[str, Any],
 ) -> None:
     for agent in selected_agents:
         agent_dir = directory / "agents" / agent
         agent_dir.mkdir(parents=True, exist_ok=True)
         expected = "\n".join(f"- `{ref}`" for ref in expected_by_agent.get(agent, []))
+        exact_evidence = "\n".join(f"- `{relative_ref(directory / ref, root)}`" for ref in expected_by_agent.get(agent, []))
         reasons = "\n".join(f"- {reason}" for reason in routing["agent_match_reasons"].get(agent, []))
         skills = format_skill_recommendations_for_dispatch(agent, skill_recommendations)
+        attention_slice = attention_slice_for_agent(agent, visible_attention)
         dispatch = f"""# Dispatch: {agent}
 
 Task: {task_id}
 Profile: {profile}
+
+## Project Root
+
+Before inspecting or writing evidence, run:
+
+```bash
+cd "{root}"
+```
+
+Write evidence exactly to:
+
+{exact_evidence}
 
 ## Role
 
@@ -784,6 +1369,10 @@ Use your routed capability profile for this task. Local profiles are hints, not 
 ## User Request
 
 {prompt}
+
+## Visible Attention Slice
+
+{attention_slice}
 
 ## Permission Boundary
 
@@ -812,14 +1401,22 @@ Write concise evidence to the expected path. Include blockers, confidence limits
 
 
 def format_skill_recommendations_for_dispatch(agent: str, skill_recommendations: dict[str, Any]) -> str:
-    if skill_recommendations.get("status") not in {"complete", "no_matches"}:
-        return f"- Skill router status: `{skill_recommendations.get('status', 'unknown')}`. Proceed without assuming hidden skill recommendations."
+    source = skill_recommendations
+    per_agent = skill_recommendations.get("per_agent") or {}
+    if isinstance(per_agent, dict) and agent in per_agent:
+        candidate = per_agent.get(agent) or {}
+        if candidate.get("status") in {"complete", "no_matches"}:
+            source = candidate
+    if source.get("status") not in {"complete", "no_matches"}:
+        return f"- Skill router status: `{source.get('status', 'unknown')}`. Proceed without assuming hidden skill recommendations."
     lines = [
         "- Skill recommendations are routing aids, not permission grants.",
         "- Load or invoke an installed skill only when it matches your role and materially improves this task.",
     ]
+    if source is not skill_recommendations:
+        lines.append(f"- These recommendations were filtered for `{agent}` with the recommender's provider filter.")
     count = 0
-    for result in skill_recommendations.get("results") or []:
+    for result in source.get("results") or []:
         task = str(result.get("task") or "").strip()
         routing = result.get("routing") or {}
         for match in result.get("matches") or []:
@@ -844,7 +1441,7 @@ def format_skill_recommendations_for_dispatch(agent: str, skill_recommendations:
             break
     if count == 0:
         lines.append("- No installed skill matched strongly enough for this dispatch.")
-    missing = skill_recommendations.get("missing_skills") or []
+    missing = source.get("missing_skills") or []
     for missing_skill in missing[:3]:
         lines.append(
             "- Missing useful skill `{}`: {}".format(
@@ -918,11 +1515,12 @@ def dispatch_task(root: Path, task_id: str, agent: str = "all", submit: bool = F
         raise SystemExit("Runtime preflight failed for: " + target_summary)
     write_json(directory / "runtime-preflight.json", preflight)
     commands = []
+    role_assignments = routing.get("role_assignments") or {}
     for target in targets:
         dispatch_ref = directory / "agents" / target / "dispatch.md"
         if not dispatch_ref.exists():
             raise SystemExit(f"Missing dispatch for agent {target}: {dispatch_ref}")
-        expected = expected_refs_for_agents([target]).get(target, [])
+        expected = expected_refs_for_agents([target], role_assignments).get(target, [])
         command = ["herdr-loop", "--project-root", str(root), "submit-dispatch", task_id, target]
         for ref in expected:
             command.extend(["--expect", ref])

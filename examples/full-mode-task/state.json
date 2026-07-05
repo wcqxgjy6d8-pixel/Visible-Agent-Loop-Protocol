@@ -2,6 +2,7 @@
   "schema_version": "valp-visible-loop-state.v1",
   "task_id": "TASK-EXAMPLE-001",
   "profile": "software-code",
+  "loop_layer": "agentic_coding_loop",
   "status": "done",
   "runtime_adapter": {
     "class": "pane_controller",
@@ -38,6 +39,11 @@
     "codex",
     "claude"
   ],
+  "role_assignments": {
+    "coordinator": "codex",
+    "implementer": "codex",
+    "reviewer": "claude"
+  },
   "capabilities_needed": [
     "implementation",
     "verification",
@@ -58,6 +64,15 @@
     "status": "complete",
     "backend": "task-skill-router",
     "ref": "skill-recommendations.json"
+  },
+  "visible_attention": {
+    "status": "recorded",
+    "loop_layer": "agentic_coding_loop",
+    "attention_map": "attention-map.json",
+    "context_selection": "context-selection.json",
+    "mask_list": "mask-list.json",
+    "evidence_board": "evidence-board.json",
+    "visible_routing": "visible-routing.md"
   },
   "routing_confidence": {
     "overall": "high",

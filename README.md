@@ -215,6 +215,10 @@ Visible-Agent-Loop-Protocol/
     receipts.schema.json
     evidence-status.schema.json
     skill-recommendations.schema.json
+    attention-map.schema.json
+    context-selection.schema.json
+    mask-list.schema.json
+    evidence-board.schema.json
   examples/
     task-folder-tree.md
     context-policy.json

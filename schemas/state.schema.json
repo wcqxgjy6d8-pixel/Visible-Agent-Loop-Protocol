@@ -9,12 +9,14 @@
     },
     "task_id": {"type": "string"},
     "profile": {"type": "string"},
+    "loop_layer": {"type": "string"},
     "status": {"type": "string"},
     "risk": {"type": "object"},
     "selected_agents": {
       "type": "array",
       "items": {"type": "string"}
     },
+    "role_assignments": {"type": "object"},
     "capabilities_needed": {
       "type": "array",
       "items": {"type": "string"}
@@ -30,6 +32,7 @@
     "squad_routing": {"type": "object"},
     "context_policies": {"type": "object"},
     "skill_recommendations": {"type": "object"},
+    "visible_attention": {"type": "object"},
     "routing_confidence": {"type": "object"},
     "routing_feedback": {"type": "object"},
     "gates": {"type": "object"},

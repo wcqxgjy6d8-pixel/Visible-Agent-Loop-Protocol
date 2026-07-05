@@ -75,10 +75,10 @@ Canonical reference layout:
   routing.json
   dispatch-receipts.jsonl
   agents/
-    codex/
+    build-agent/
       dispatch.md
       evidence.md
-    claude/
+    review-agent/
       dispatch.md
       review.md
 ```
@@ -114,6 +114,11 @@ bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug a
 .herdr-loop/tasks/TASK-001/state.json
 .herdr-loop/tasks/TASK-001/routing.json
 .herdr-loop/tasks/TASK-001/skill-recommendations.json
+.herdr-loop/tasks/TASK-001/attention-map.json
+.herdr-loop/tasks/TASK-001/context-selection.json
+.herdr-loop/tasks/TASK-001/mask-list.json
+.herdr-loop/tasks/TASK-001/evidence-board.json
+.herdr-loop/tasks/TASK-001/visible-routing.md
 .herdr-loop/tasks/TASK-001/dispatch-receipts.jsonl
 .herdr-loop/tasks/TASK-001/agents/<agent>/dispatch.md
 ```
@@ -128,6 +133,7 @@ provider matrix
 local overlay ref, if used
 context policies
 skills and MCP availability
+visible attention map, selected context, masks, and evidence board
 skill recommendations surfaced into dispatch prompts
 permission boundaries
 selected agents

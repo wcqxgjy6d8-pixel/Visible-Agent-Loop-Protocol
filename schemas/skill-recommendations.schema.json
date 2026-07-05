@@ -51,6 +51,48 @@
     "missing_skills": {
       "type": "array",
       "items": {"type": "object"}
+    },
+    "agent_filtering": {
+      "type": "object",
+      "properties": {
+        "status": {"type": "string"},
+        "backend": {"type": "string"},
+        "agents": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "note": {"type": "string"}
+      }
+    },
+    "per_agent": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "enum": ["complete", "no_matches", "unavailable", "failed", "not_run"]
+          },
+          "backend": {"type": "string"},
+          "agent": {"type": "string"},
+          "command": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "exit_code": {
+            "type": ["integer", "null"]
+          },
+          "reason": {"type": "string"},
+          "routing": {"type": "object"},
+          "results": {
+            "type": "array",
+            "items": {"type": "object"}
+          },
+          "missing_skills": {
+            "type": "array",
+            "items": {"type": "object"}
+          }
+        }
+      }
     }
   }
 }

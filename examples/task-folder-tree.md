@@ -3,11 +3,11 @@
 ```text
 ExampleProject/
   agents/
-    codex/
+    build-agent/
       worklog.md
-    claude/
+    review-agent/
       worklog.md
-    hermes/
+    coordinator-agent/
       worklog.md
   .herdr-loop/
     local-overlay.json
@@ -22,20 +22,25 @@ ExampleProject/
         routing.json
         routing-feedback.json
         skill-recommendations.json
+        attention-map.json
+        context-selection.json
+        mask-list.json
+        evidence-board.json
+        visible-routing.md
         runtime-preflight.json
         evidence-status.json
         timeline.jsonl
         dispatch-receipts.jsonl
         final-synthesis.md
         agents/
-          codex/
+          build-agent/
             dispatch.md
             plan.md
             verification.md
-          claude/
+          review-agent/
             dispatch.md
             visible-review.md
-          hermes/
+          coordinator-agent/
             dispatch.md
             self-review.md
         gates/

@@ -17,6 +17,9 @@ understand task
   -> scan runtime/tools/skills/context
   -> check approval risks
   -> score candidates
+  -> select coordinator and execution roles from current evidence
+  -> build visible attention map
+  -> record selected context, masked inputs, and evidence board
   -> route selected agents
   -> record rejected high-relevance candidates
   -> require receipts and evidence
@@ -88,9 +91,29 @@ local overlay ref, if used
 skill recommendation ref, if used
 provider matrix ref
 context policy snapshot
+role requirements and role assignments
+coordinator selection reason
+visible attention refs
+loop layer
 expected evidence refs
 ```
 
 This keeps the system honest: when a route is wrong, the next agent can see
 whether the failure came from bad scoring, stale capability data, missing tools,
 context pressure, or an evidence gap.
+
+## Visible Attention
+
+Routing must not become a black box. For non-trivial tasks, publish should write:
+
+```text
+attention-map.json
+context-selection.json
+mask-list.json
+evidence-board.json
+visible-routing.md
+```
+
+`visible-routing.md` is the human-readable summary that should be printed in the
+runtime frontend. It explains which attention heads were selected, which context
+was selected, which inputs were masked, and what evidence is required next.

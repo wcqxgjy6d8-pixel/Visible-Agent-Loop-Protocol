@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Context Selection",
+  "type": "object",
+  "required": ["schema_version", "profile", "loop_layer", "selected"],
+  "properties": {
+    "schema_version": {
+      "const": "valp-context-selection.v1"
+    },
+    "generated_at": {"type": "string"},
+    "profile": {"type": "string"},
+    "loop_layer": {"type": "string"},
+    "selected": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "reason"],
+        "properties": {
+          "path": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "not_selected": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    }
+  }
+}

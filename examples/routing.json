@@ -10,11 +10,11 @@
     "preflight": {
       "status": "pass",
       "agents": {
-        "codex": {
+        "build-agent": {
           "status": "pass",
           "terminal_size_status": "pass"
         },
-        "claude": {
+        "review-agent": {
           "status": "pass",
           "terminal_size_status": "pass"
         }
@@ -31,41 +31,55 @@
     "verification",
     "code_review"
   ],
+  "role_requirements": [
+    "coordinator",
+    "implementer",
+    "reviewer"
+  ],
+  "role_assignments": {
+    "coordinator": "local-coordinator",
+    "implementer": "build-agent",
+    "reviewer": "review-agent"
+  },
+  "coordinator_selection": {
+    "selected_agent": "local-coordinator",
+    "selection_rule": "Selected from current capability evidence; the open protocol does not name a universal leader."
+  },
   "selected_agents": [
-    "hermes",
-    "codex",
-    "claude"
+    "local-coordinator",
+    "build-agent",
+    "review-agent"
   ],
   "agent_match_reasons": {
-    "hermes": [
+    "local-coordinator": [
       "coordination",
       "gates"
     ],
-    "codex": [
+    "build-agent": [
       "implementation",
       "verification"
     ],
-    "claude": [
+    "review-agent": [
       "read_only_review"
     ]
   },
   "candidate_scores": {
-    "hermes": {
+    "local-coordinator": {
       "overall": 0.82,
       "confidence": "high",
       "reason": "coordination and gate ownership fit the task"
     },
-    "codex": {
+    "build-agent": {
       "overall": 0.88,
       "confidence": "high",
       "reason": "implementation tools and verification fit the task"
     },
-    "claude": {
+    "review-agent": {
       "overall": 0.76,
       "confidence": "medium",
       "reason": "review fit is strong but runtime facts still require evidence"
     },
-    "agy": {
+    "prototype-agent": {
       "overall": 0.38,
       "confidence": "low",
       "reason": "prototype capability does not match required production evidence"
@@ -77,23 +91,23 @@
   },
   "rejected_candidates": [
     {
-      "agent": "agy",
+      "agent": "prototype-agent",
       "reason": "No prototype or isolated exploration task was needed for this route.",
       "confidence": "low"
     }
   ],
   "selected_agent_context_policies": {
-    "hermes": {
+    "local-coordinator": {
       "soft_warning_pct": 50,
       "hard_compression_pct": 60,
       "emergency_stop_pct": 80
     },
-    "codex": {
+    "build-agent": {
       "soft_warning_pct": 55,
       "hard_compression_pct": 65,
       "emergency_stop_pct": 80
     },
-    "claude": {
+    "review-agent": {
       "soft_warning_pct": 60,
       "hard_compression_pct": 70,
       "emergency_stop_pct": 80
@@ -116,19 +130,19 @@
     "runtime_preflight": {
       "status": "pass",
       "agents": {
-        "codex": {
+        "build-agent": {
           "status": "pass",
           "terminal_size_status": "pass"
         },
-        "claude": {
+        "review-agent": {
           "status": "pass",
           "terminal_size_status": "pass"
         }
       }
     },
     "providers": {
-      "codex": {
-        "provider_name": "codex",
+      "build-agent": {
+        "provider_name": "build-agent",
         "provider_version_or_runtime_report": "example-codex",
         "cli_available": true,
         "mcp_support": "unknown",

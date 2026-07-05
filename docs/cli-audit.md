@@ -109,6 +109,11 @@ quality gate for a task evidence folder.
 task.md
 state.json
 routing.json
+attention-map.json
+context-selection.json
+mask-list.json
+evidence-board.json
+visible-routing.md
 dispatch-receipts.jsonl
 routing-feedback.json
 agents/<agent>/...

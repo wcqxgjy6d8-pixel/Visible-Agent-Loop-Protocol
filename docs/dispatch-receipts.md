@@ -31,6 +31,13 @@ dispatch_blocked
 `dispatch_blocked`
 : Submission or completion could not be proven.
 
+`dispatch_completed` for controlling-agent self-work
+: If the controlling agent is also the implementer, it must not paste its own
+dispatch prompt into its live context. The adapter may append
+`dispatch_completed` for that agent only after the expected task-local evidence
+exists, and the receipt should state that self-work was tracked through compact
+evidence files.
+
 ## Gate Rule
 
 If expected evidence is declared, the gate requires:

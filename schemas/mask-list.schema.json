@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Mask List",
+  "type": "object",
+  "required": ["schema_version", "profile", "loop_layer", "masked"],
+  "properties": {
+    "schema_version": {
+      "const": "valp-mask-list.v1"
+    },
+    "generated_at": {"type": "string"},
+    "profile": {"type": "string"},
+    "loop_layer": {"type": "string"},
+    "masked": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["item", "reason"],
+        "properties": {
+          "item": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    }
+  }
+}

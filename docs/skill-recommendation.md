@@ -83,6 +83,30 @@ it during routing and writes:
 .herdr-loop/tasks/<task-id>/skill-recommendations.json
 ```
 
+When the backend supports provider filtering, the reference CLI should also run
+per-agent recommendations and write them under:
+
+```json
+{
+  "per_agent": {
+    "codex": {
+      "status": "complete",
+      "results": []
+    }
+  },
+  "agent_filtering": {
+    "status": "complete",
+    "backend": "task-skill-router",
+    "agents": ["codex", "claude"]
+  }
+}
+```
+
+Dispatch prompts must prefer `per_agent.<agent>` recommendations. The aggregate
+result remains useful for task-level capability scanning, but broad prompts can
+surface irrelevant skills owned by other providers. Provider filtering prevents
+one agent from being asked to load another agent's private skill.
+
 Each dispatch prompt should include a `Recommended Skills` section with:
 
 ```text

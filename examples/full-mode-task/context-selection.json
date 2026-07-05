@@ -1,0 +1,26 @@
+{
+  "schema_version": "valp-context-selection.v1",
+  "generated_at": "2026-07-03T00:00:00Z",
+  "profile": "software-code",
+  "loop_layer": "agentic_coding_loop",
+  "selected": [
+    {
+      "path": "task.md",
+      "reason": "active task brief"
+    },
+    {
+      "path": "routing.json",
+      "reason": "candidate scores and selected agents"
+    },
+    {
+      "path": "skill-recommendations.json",
+      "reason": "recommended installed skills"
+    }
+  ],
+  "not_selected": [
+    {
+      "path": "prior task folders",
+      "reason": "prior task context is excluded unless explicitly cited by the active task"
+    }
+  ]
+}

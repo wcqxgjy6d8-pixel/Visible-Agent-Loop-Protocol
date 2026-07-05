@@ -90,6 +90,23 @@ class ValpAuditTests(unittest.TestCase):
             self.assertEqual(report.status, FAIL)
             self.assertTrue(any(item.id == "skill_recommendations" and item.status == FAIL for item in report.items))
 
+    def test_missing_visible_attention_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            for name in [
+                "attention-map.json",
+                "context-selection.json",
+                "mask-list.json",
+                "evidence-board.json",
+                "visible-routing.md",
+            ]:
+                (task / name).unlink()
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "visible_attention" and item.status == FAIL for item in report.items))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,13 +10,13 @@ It must not hard-code Desktop, macOS paths, or one user's folder names.
 <workspace>/
   AGENTS.md
   agents/
-    codex/
+    build-agent/
       worklog.md
-    claude/
+    review-agent/
       worklog.md
-    hermes/
+    coordinator-agent/
       worklog.md
-    agy/
+    prototype-agent/
       worklog.md
   .herdr-loop/
     index.json
@@ -33,6 +33,11 @@ It must not hard-code Desktop, macOS paths, or one user's folder names.
         routing.json
         routing-feedback.json
         skill-recommendations.json
+        attention-map.json
+        context-selection.json
+        mask-list.json
+        evidence-board.json
+        visible-routing.md
         runtime-preflight.json
         evidence-status.json
         timeline.jsonl

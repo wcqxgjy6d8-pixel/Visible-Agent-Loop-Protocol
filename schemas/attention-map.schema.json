@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Visible Attention Map",
+  "type": "object",
+  "required": ["schema_version", "task_id", "profile", "loop_layer", "heads"],
+  "properties": {
+    "schema_version": {
+      "const": "valp-visible-attention-map.v1"
+    },
+    "task_id": {"type": "string"},
+    "profile": {"type": "string"},
+    "loop_layer": {
+      "type": "string",
+      "enum": ["agentic_coding_loop", "developer_feedback_loop", "external_feedback_loop"]
+    },
+    "generated_at": {"type": "string"},
+    "heads": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "selected": {"type": ["string", "null"]},
+          "candidate": {"type": ["string", "null"]},
+          "score": {"type": ["number", "null"]},
+          "status": {"type": "string"}
+        }
+      }
+    },
+    "selected_agents": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "candidate_scores_ref": {"type": "string"},
+    "skill_recommendations": {"type": "object"},
+    "context_selection_ref": {"type": "string"},
+    "mask_list_ref": {"type": "string"},
+    "evidence_board_ref": {"type": "string"},
+    "visible_summary_ref": {"type": "string"}
+  }
+}

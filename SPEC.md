@@ -48,6 +48,12 @@ but it cannot override non-negotiable gates.
 boundaries, tools, and context policy. It is a routing hint, not a fixed role or
 assignment.
 
+`coordinator`
+: The selected agent or human responsible for visible state, receipts, gates,
+handoffs, and final synthesis for one task. The open protocol does not name a
+universal coordinator; the runtime or local overlay must select one from current
+capability evidence.
+
 `routing confidence`
 : A recorded estimate of how strong the routing evidence is for each selected
 agent and each rejected candidate. It helps decide whether to proceed, ask for
@@ -65,8 +71,9 @@ MCP support, skill discovery path, session resume support, approval behavior,
 context policy, and known limitations.
 
 `squad`
-: A named group of agents and optional humans, usually with a leader agent that
-routes work to members. Squad routing is optional and must remain visible.
+: A named group of agents and optional humans, optionally with a selected leader
+agent that routes work to members. Squad routing is optional and must remain
+visible.
 
 `dispatch`
 : A visible assignment sent to an agent.
@@ -77,6 +84,12 @@ routes work to members. Squad routing is optional and must remain visible.
 `evidence`
 : Files, logs, screenshots, command outputs, reviews, findings, and synthesis
 used to prove progress or completion.
+
+`provider-filtered skill recommendation`
+: A skill recommendation result generated for one target agent, using that
+agent's reachable provider or skill library filter. Provider-filtered results
+are preferred in dispatch prompts because task-level aggregate results can
+contain skills owned by other providers.
 
 ## 3. Lifecycle
 
@@ -304,10 +317,18 @@ load local overlay profiles, if present
 scan current runtime/tool/skill/context state
 run runtime preflight for selected or high-relevance agents
 rank candidate agents for each execution task
+select a coordinator from current capability evidence
 record confidence and risk for selected agents
 record missing capability or uncertainty
 route discovery/review before implementation when confidence is low
 ```
+
+Coordinator or leader selection is a routing output, not a protocol constant.
+VALP must not hard-code one vendor, product, local agent name, or runtime pane as
+the universal leader. A local overlay may express preferences, but the final
+selection must be justified by current capability, tool, context, permission,
+availability, profile, and evidence scans. If a user has a stronger coordinator
+agent, the open protocol should let that agent own state and gates.
 
 Recommended scoring factors:
 
@@ -341,8 +362,9 @@ Low confidence rules:
 
 ## 9. Runtime Modes
 
-Full Mode requires HERDR or a VALP-compatible runtime. Manual Mode is allowed
-only as a degraded workflow.
+Full Mode requires a VALP-compatible runtime. HERDR is one reference runtime,
+not the protocol's required coordinator or leader. Manual Mode is allowed only
+as a degraded workflow.
 
 Full Mode must support:
 
@@ -387,6 +409,12 @@ state or equivalent proof.
 - `dispatch_blocked` means submission or completion could not be proven.
 
 If expected evidence is declared, gates require `dispatch_completed`.
+
+For a controlling agent that is executing its own assigned work, the runtime
+must not paste the controlling agent's dispatch back into its own live context.
+Instead, the controlling agent writes compact task-local evidence and the
+adapter records a `dispatch_completed` receipt only after the expected evidence
+files exist. This preserves receipt semantics without self-prompt pollution.
 
 Receipt ledgers are append-only, so gates must evaluate the latest receipt for
 each selected agent, not merely search for any historical success. A later
@@ -498,6 +526,18 @@ evidence, normally:
 <task>/skill-recommendations.json
 ```
 
+If the backend supports target-agent filtering, the routing layer should also
+write provider-filtered results under:
+
+```text
+<task>/skill-recommendations.json#per_agent
+```
+
+Dispatch prompts must prefer `per_agent.<agent>` over task-level aggregate
+recommendations. The aggregate result is useful for capability scanning, but it
+can surface irrelevant provider-specific skills when broad task text includes
+overloaded words such as "Apple", "agent", or "review".
+
 Dispatch prompts must surface relevant installed skills to the target agent.
 They should include:
 
@@ -515,7 +555,69 @@ role and materially improves the execution task. If a useful skill is missing,
 the task should record the gap instead of silently proceeding as if the skill
 were available.
 
-## 14. Squad Routing
+## 14. Visible Attention Routing
+
+Visible attention routing makes the routing decision inspectable. It borrows the
+useful systems idea from attention mechanisms: select the relevant agents,
+skills, context, and evidence for this task instead of making every participant
+read everything. Unlike a hidden optimizer, VALP must surface the selection and
+masking decisions before dispatch.
+
+Visible attention happens after capability/skill scans and before agent
+dispatch.
+
+Required task evidence:
+
+```text
+<task>/attention-map.json
+<task>/context-selection.json
+<task>/mask-list.json
+<task>/evidence-board.json
+<task>/visible-routing.md
+```
+
+The attention map records:
+
+```text
+loop_layer
+attention heads such as implementation, ux_review, prototype, state_gate
+selected agent or source for each head
+score or status for the selection
+references to selected context, masks, and evidence board
+```
+
+The loop layer should be one of:
+
+```text
+agentic_coding_loop       minutes-scale agent build/test/fix loop
+developer_feedback_loop   hours-scale human/product/design steering loop
+external_feedback_loop    days-or-longer user/beta/production feedback loop
+```
+
+The context-selection record lists what the task selected to read and what it
+excluded by default. The mask-list records inputs that must not influence the
+decision, such as stale chat memory, hidden votes, prototype-as-production-proof,
+unapproved release operations, or invalid/superseded evidence.
+
+The evidence board turns claims into evidence requirements before execution.
+For example, a UI claim should require a build/test log and a real screenshot,
+not just code inspection.
+
+Dispatch prompts should include the recipient's visible attention slice:
+
+```text
+loop layer
+the recipient's attention head
+selected context paths
+masked inputs
+design contract status, when relevant
+```
+
+Audit should fail non-trivial routed tasks when visible attention evidence is
+missing or malformed. This keeps automation visible without forcing the user to
+inspect every low-level command.
+
+## 15. Squad Routing
 
 Squads are optional. A squad may be used when the task should be routed by a
 leader agent instead of assigned directly to one worker.
@@ -533,7 +635,7 @@ Rules:
 
 Squad routing is routing evidence. It is not completion evidence.
 
-## 15. Feedback And Learning
+## 16. Feedback And Learning
 
 VALP should learn from outcomes without becoming stale memory.
 
@@ -570,7 +672,7 @@ a workspace-level routing memory:
 Do not store secrets, raw private data, or full hidden conversations in routing
 feedback. Record evidence paths and short summaries instead.
 
-## 16. Evidence Store
+## 17. Evidence Store
 
 Canonical task evidence lives under:
 

@@ -2,6 +2,7 @@ from pathlib import Path
 import contextlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -49,6 +50,28 @@ class ValpWorkflowTests(unittest.TestCase):
         self.assertIn("manual_evidence", operator["role"])
         self.assertIn("must not imply a specific AI agent is installed", operator["must_not_do"])
 
+    def test_capability_lookup_prefers_workspace_valp_paths_over_herdr_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "workspace"
+            home = base / "home"
+            (root / ".valp" / "agents").mkdir(parents=True)
+            (home / ".herdr").mkdir(parents=True)
+            (root / ".valp" / "agents" / "capabilities.json").write_text(
+                json.dumps({"schema_version": "valp-agent-capabilities.v1", "source": "workspace-valp", "agents": {}}),
+                encoding="utf-8",
+            )
+            (home / ".herdr" / "agent-capabilities.json").write_text(
+                json.dumps({"schema_version": "valp-agent-capabilities.v1", "source": "herdr-fallback", "agents": {}}),
+                encoding="utf-8",
+            )
+
+            with patch.dict(os.environ, {}, clear=True):
+                with patch("valp_cli.workflow.Path.home", return_value=home):
+                    capabilities = load_local_capabilities(root)
+
+        self.assertEqual(capabilities["source"], "workspace-valp")
+
     def test_manual_mode_dispatch_prints_manual_instruction(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -64,6 +87,38 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertTrue(commands)
             self.assertTrue(commands[0].startswith("Manual Mode:"))
             self.assertNotIn("herdr-loop", commands[0])
+
+    def test_dispatch_uses_queue_adapter_without_herdr_command(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-05T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["edits files", "runs tests", "writes verification evidence"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    task_dir = publish_task(root, "TASK-QUEUE", "Fix a bug and run tests", runtime="queue")
+            commands = dispatch_task(root, "TASK-QUEUE")
+
+            routing = read_json(task_dir / "routing.json")
+            self.assertEqual(routing["runtime_adapter"]["class"], "daemon_queue")
+            self.assertTrue(commands)
+            self.assertTrue(commands[0].startswith("VALP Queue Mode:"))
+            self.assertNotIn("herdr-loop", commands[0])
+            preflight = read_json(task_dir / "runtime-preflight.json")
+            self.assertEqual(preflight["adapter_class"], "daemon_queue")
+            self.assertNotIn("terminal_size_status", json.dumps(preflight))
 
     def test_publish_auto_scans_routes_and_writes_dispatches(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

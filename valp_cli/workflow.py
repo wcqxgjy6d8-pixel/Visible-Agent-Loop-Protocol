@@ -83,6 +83,7 @@ DEFAULT_MIN_TERMINAL_SIZE = {"width": 60, "height": 20}
 AGENT_MIN_TERMINAL_SIZE = {
     "agy": {"width": 70, "height": 24},
 }
+RUNTIME_CHOICES = {"auto", "manual", "herdr", "queue"}
 
 
 def now_iso() -> str:
@@ -164,12 +165,71 @@ def task_dir(root: Path, task_id: str) -> Path:
     return root / ".herdr-loop" / "tasks" / task_id
 
 
-def local_capabilities_path() -> Path:
-    return Path.home() / ".herdr" / "agent-capabilities.json"
+def first_existing_or_default(paths: list[Path]) -> Path:
+    for path in paths:
+        if path.exists():
+            return path
+    return paths[0]
 
 
-def local_overlay_path() -> Path:
-    return Path.home() / ".herdr" / "valp-local-overlay.json"
+def local_capabilities_path(root: Path | None = None) -> Path:
+    configured = os.environ.get("VALP_CAPABILITIES_FILE")
+    if configured:
+        return Path(configured).expanduser()
+    candidates: list[Path] = []
+    if root:
+        candidates.append(root.resolve() / ".valp" / "agents" / "capabilities.json")
+    candidates.extend(
+        [
+            Path.home() / ".valp" / "agent-capabilities.json",
+            Path.home() / ".herdr" / "agent-capabilities.json",
+        ]
+    )
+    return first_existing_or_default(candidates)
+
+
+def local_overlay_path(root: Path | None = None) -> Path:
+    configured = os.environ.get("VALP_LOCAL_OVERLAY_FILE")
+    if configured:
+        return Path(configured).expanduser()
+    candidates: list[Path] = []
+    if root:
+        candidates.append(root.resolve() / ".valp" / "local-overlay.json")
+    candidates.extend(
+        [
+            Path.home() / ".valp" / "local-overlay.json",
+            Path.home() / ".herdr" / "valp-local-overlay.json",
+        ]
+    )
+    return first_existing_or_default(candidates)
+
+
+def normalize_runtime(runtime: str | None = None) -> str:
+    selected = (runtime or "auto").strip().lower()
+    if selected not in RUNTIME_CHOICES:
+        raise SystemExit(f"Unsupported runtime: {runtime}. Expected one of: {', '.join(sorted(RUNTIME_CHOICES))}")
+    return selected
+
+
+def auto_runtime() -> str:
+    return "herdr" if shutil.which("herdr") else "manual"
+
+
+def resolve_runtime(runtime: str | None = None) -> str:
+    selected = normalize_runtime(runtime)
+    return auto_runtime() if selected == "auto" else selected
+
+
+def runtime_from_adapter_record(runtime: dict[str, Any]) -> str:
+    runtime_class = str(runtime.get("class") or "").lower()
+    runtime_name = str(runtime.get("name") or "").lower()
+    if runtime_class == "manual" or runtime_name == "manual":
+        return "manual"
+    if runtime_class == "daemon_queue":
+        return "queue"
+    if runtime_class == "pane_controller":
+        return "herdr"
+    return "auto"
 
 
 def classify_profile(prompt: str) -> str:
@@ -185,8 +245,8 @@ def classify_profile(prompt: str) -> str:
     return "generic-analysis"
 
 
-def load_local_capabilities() -> dict[str, Any]:
-    data = read_json(local_capabilities_path())
+def load_local_capabilities(root: Path | None = None) -> dict[str, Any]:
+    data = read_json(local_capabilities_path(root))
     if data:
         return data
     return {
@@ -210,17 +270,20 @@ def load_local_capabilities() -> dict[str, Any]:
     }
 
 
-def load_local_overlay() -> dict[str, Any]:
-    return read_json(local_overlay_path())
+def load_local_overlay(root: Path | None = None) -> dict[str, Any]:
+    return read_json(local_overlay_path(root))
 
 
-def scan_workspace(root: Path, task_id: str | None = None) -> dict[str, Any]:
+def scan_workspace(root: Path, task_id: str | None = None, runtime: str | None = None) -> dict[str, Any]:
     root = workspace_root(root)
-    capabilities = load_local_capabilities()
-    overlay = load_local_overlay()
-    capabilities["runtime_preflight"] = collect_runtime_preflight(list((capabilities.get("agents") or {}).keys()))
+    capabilities_path = local_capabilities_path(root)
+    overlay_path = local_overlay_path(root)
+    capabilities = load_local_capabilities(root)
+    overlay = load_local_overlay(root)
+    capabilities["runtime_preflight"] = collect_runtime_preflight(list((capabilities.get("agents") or {}).keys()), runtime=runtime)
     capabilities["last_valp_scan_at"] = now_iso()
-    capabilities["local_overlay_ref"] = str(local_overlay_path()) if overlay else None
+    capabilities["capabilities_source_ref"] = str(capabilities_path) if read_json(capabilities_path) else None
+    capabilities["local_overlay_ref"] = str(overlay_path) if overlay else None
     write_json(root / ".herdr-loop" / "agents" / "capabilities.json", capabilities)
     if overlay:
         write_json(root / ".herdr-loop" / "local-overlay.json", overlay)
@@ -832,8 +895,16 @@ def attention_slice_for_agent(agent: str, visible_attention: dict[str, Any]) -> 
     )
 
 
-def publish_task(root: Path, task_id: str, prompt: str, profile: str | None = None, route: bool = True) -> Path:
+def publish_task(
+    root: Path,
+    task_id: str,
+    prompt: str,
+    profile: str | None = None,
+    route: bool = True,
+    runtime: str | None = None,
+) -> Path:
     root = workspace_root(root)
+    normalize_runtime(runtime)
     directory = task_dir(root, task_id)
     directory.mkdir(parents=True, exist_ok=True)
     selected_profile = profile or classify_profile(prompt)
@@ -876,13 +947,14 @@ Generated during routing.
     }
     write_json(directory / "state.json", state)
     if route:
-        scan_workspace(root, task_id)
-        route_task(root, task_id)
+        scan_workspace(root, task_id, runtime=runtime)
+        route_task(root, task_id, runtime=runtime)
     return directory
 
 
-def route_task(root: Path, task_id: str) -> dict[str, Any]:
+def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str, Any]:
     root = workspace_root(root)
+    normalize_runtime(runtime)
     directory = task_dir(root, task_id)
     state_path = directory / "state.json"
     state = read_json(state_path)
@@ -890,13 +962,13 @@ def route_task(root: Path, task_id: str) -> dict[str, Any]:
         raise SystemExit(f"Missing state.json for task {task_id}")
     prompt = (directory / "task.md").read_text(encoding="utf-8", errors="replace")
     profile = state.get("profile") or classify_profile(prompt)
-    capabilities = scan_workspace(root, task_id)
-    overlay = load_local_overlay()
+    capabilities = scan_workspace(root, task_id, runtime=runtime)
+    overlay = load_local_overlay(root)
     agents = capabilities.get("agents") or {}
     candidate_scores = score_candidates(profile, agents)
     selected_agents = select_agents(profile, agents, candidate_scores)
     role_assignments = role_assignments_for(profile, selected_agents, agents, candidate_scores)
-    preflight = collect_runtime_preflight(selected_agents)
+    preflight = collect_runtime_preflight(selected_agents, runtime=runtime)
     skill_recommendations = run_skill_recommendations(root, task_id, profile, prompt)
     skill_recommendations = add_per_agent_skill_recommendations(skill_recommendations, selected_agents)
     write_json(directory / "skill-recommendations.json", skill_recommendations)
@@ -920,7 +992,7 @@ def route_task(root: Path, task_id: str) -> dict[str, Any]:
         "schema_version": "valp-capability-routing.v1",
         "task_id": task_id,
         "profile": profile,
-        "runtime_adapter": runtime_adapter_record(preflight),
+        "runtime_adapter": runtime_adapter_record(preflight, runtime=runtime),
         "local_overlay": {
             "used": bool(overlay),
             "ref": ".herdr-loop/local-overlay.json" if overlay else None,
@@ -1169,28 +1241,112 @@ def rejected_candidates(scores: dict[str, dict[str, Any]], selected_agents: list
     return rejected
 
 
-def runtime_adapter_record(preflight: dict[str, Any] | None = None) -> dict[str, Any]:
-    herdr = shutil.which("herdr")
+def runtime_adapter_record(preflight: dict[str, Any] | None = None, runtime: str | None = None) -> dict[str, Any]:
+    preflight = preflight or {}
+    runtime_kind = resolve_runtime(runtime)
+    adapter_class = str(preflight.get("adapter_class") or "")
+    if adapter_class == "manual":
+        runtime_kind = "manual"
+    elif adapter_class == "daemon_queue":
+        runtime_kind = "queue"
+    elif adapter_class == "pane_controller":
+        runtime_kind = "herdr"
+
+    if runtime_kind == "queue":
+        return {
+            "class": "daemon_queue",
+            "name": "VALP headless queue",
+            "full_mode_capable": True,
+            "state_mapping_ref": "docs/task-state-machine.md",
+            "preflight": preflight,
+        }
+    if runtime_kind == "herdr":
+        return {
+            "class": "pane_controller",
+            "name": "HERDR",
+            "full_mode_capable": bool(shutil.which("herdr")) and preflight.get("status") != "fail",
+            "state_mapping_ref": "docs/task-state-machine.md",
+            "preflight": preflight,
+        }
     return {
-        "class": "pane_controller" if herdr else "manual",
-        "name": "HERDR" if herdr else "manual",
-        "full_mode_capable": bool(herdr),
+        "class": "manual",
+        "name": "manual",
+        "full_mode_capable": False,
         "state_mapping_ref": "docs/task-state-machine.md",
-        "preflight": preflight or {},
+        "preflight": preflight,
     }
 
 
-def collect_runtime_preflight(agent_names: list[str] | None = None) -> dict[str, Any]:
+def collect_runtime_preflight(agent_names: list[str] | None = None, runtime: str | None = None) -> dict[str, Any]:
+    runtime_kind = resolve_runtime(runtime)
+    if runtime_kind == "manual":
+        return collect_manual_preflight(agent_names)
+    if runtime_kind == "queue":
+        return collect_queue_preflight(agent_names)
+    return collect_herdr_preflight(agent_names)
+
+
+def collect_manual_preflight(agent_names: list[str] | None = None) -> dict[str, Any]:
+    agents = {
+        agent: {
+            "status": "not_applicable",
+            "session_status": "manual",
+            "notes": ["Manual Mode has no runtime dispatch proof."],
+        }
+        for agent in agent_names or []
+    }
+    return {
+        "generated_at": now_iso(),
+        "runtime": "manual",
+        "adapter_class": "manual",
+        "status": "not_applicable",
+        "checks": {
+            "manual_mode": {
+                "status": "not_applicable",
+                "message": "Manual Mode records dispatch files and manual attestations only.",
+            }
+        },
+        "agents": agents,
+    }
+
+
+def collect_queue_preflight(agent_names: list[str] | None = None) -> dict[str, Any]:
+    agents = {}
+    for agent in agent_names or []:
+        agents[agent] = {
+            "status": "pass",
+            "queue_id": f"queue-{agent}",
+            "worker_id": f"worker-{agent}",
+            "session_status": "idle",
+            "output_ref": f"agents/{agent}/evidence.md",
+            "expected_refs": [f"agents/{agent}/evidence.md"],
+            "notes": ["Headless queue adapters use queue/session facts instead of pane or terminal-size facts."],
+        }
+    return {
+        "generated_at": now_iso(),
+        "runtime": "VALP headless queue",
+        "adapter_class": "daemon_queue",
+        "status": "pass",
+        "checks": {
+            "queue_available": {"status": "pass"},
+            "worker_available": {"status": "pass"},
+        },
+        "agents": agents,
+    }
+
+
+def collect_herdr_preflight(agent_names: list[str] | None = None) -> dict[str, Any]:
     herdr = shutil.which("herdr")
     preflight: dict[str, Any] = {
         "generated_at": now_iso(),
-        "runtime": "HERDR" if herdr else "manual",
-        "status": "pass" if herdr else "warn",
+        "runtime": "HERDR",
+        "adapter_class": "pane_controller",
+        "status": "pass" if herdr else "fail",
         "checks": {},
         "agents": {},
     }
     if not herdr:
-        preflight["checks"]["herdr_cli"] = {"status": "warn", "message": "herdr command not found; Manual Mode only."}
+        preflight["checks"]["herdr_cli"] = {"status": "fail", "message": "herdr command not found; HERDR pane-controller runtime is unavailable."}
         return preflight
 
     status_result = run_command([herdr, "status", "--json"], timeout=5.0)
@@ -1307,10 +1463,13 @@ def provider_matrix_for(selected_agents: list[str], agents: dict[str, Any], over
         info = agents.get(agent, {})
         overlay_profile = overlay_profiles.get(agent) or {}
         agent_preflight = (preflight.get("agents") or {}).get(agent, {})
+        cli_record = agent_preflight.get("cli") or {}
+        runtime_report = cli_record.get("version_output") or agent_preflight.get("worker_id") or agent_preflight.get("queue_id") or "unknown"
+        cli_available = cli_record.get("status") in {"pass", "warn"} if cli_record else "unknown"
         providers[agent] = {
             "provider_name": agent,
-            "provider_version_or_runtime_report": ((agent_preflight.get("cli") or {}).get("version_output")) or "unknown",
-            "cli_available": (agent_preflight.get("cli") or {}).get("status") in {"pass", "warn"},
+            "provider_version_or_runtime_report": runtime_report,
+            "cli_available": cli_available,
             "mcp_support": "supported" if info.get("mcp_servers") else "unknown",
             "skill_discovery_path": overlay_profile.get("skill_library_paths") or "unknown",
             "session_resume_support": "unknown",
@@ -1521,7 +1680,50 @@ def append_dispatch_written_receipts(directory: Path, selected_agents: list[str]
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def dispatch_task(root: Path, task_id: str, agent: str = "all", submit: bool = False) -> list[str]:
+def append_receipt(directory: Path, record: dict[str, Any]) -> None:
+    receipts_path = directory / "dispatch-receipts.jsonl"
+    receipts_path.parent.mkdir(parents=True, exist_ok=True)
+    with receipts_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def write_queue_submission(directory: Path, task_id: str, target: str, expected: list[str]) -> dict[str, Any]:
+    queue_id = f"{task_id}-{target}"
+    worker_id = f"worker-{target}"
+    queue_record = {
+        "schema_version": "valp-queue-dispatch.v1",
+        "task_id": task_id,
+        "agent": target,
+        "queue_id": queue_id,
+        "worker_id": worker_id,
+        "status": "queued",
+        "dispatch_ref": f"agents/{target}/dispatch.md",
+        "expected_refs": expected,
+        "created_at": now_iso(),
+        "note": "Synthetic reference queue submission. Completion still requires dispatch_completed plus expected evidence.",
+    }
+    write_json(directory / "queue" / f"{target}.json", queue_record)
+    append_receipt(
+        directory,
+        {
+            "ts": now_iso(),
+            "agent": target,
+            "event": "dispatch_submitted",
+            "dispatch_ref": f"agents/{target}/dispatch.md",
+            "expected_refs": expected,
+            "proof": {
+                "runtime": "VALP headless queue",
+                "queue_id": queue_id,
+                "worker_id": worker_id,
+                "queue_record": f"queue/{target}.json",
+            },
+            "summary": "Headless queue adapter accepted the dispatch. Completion still requires expected evidence.",
+        },
+    )
+    return queue_record
+
+
+def dispatch_task(root: Path, task_id: str, agent: str = "all", submit: bool = False, runtime: str | None = None) -> list[str]:
     root = workspace_root(root)
     directory = task_dir(root, task_id)
     routing = read_json(directory / "routing.json")
@@ -1529,9 +1731,10 @@ def dispatch_task(root: Path, task_id: str, agent: str = "all", submit: bool = F
         raise SystemExit(f"Missing routing.json for task {task_id}")
     selected_agents = routing.get("selected_agents") or []
     targets = selected_agents if agent == "all" else [agent]
-    runtime = routing.get("runtime_adapter") or {}
-    manual_mode = runtime.get("class") == "manual" or runtime.get("name") == "manual"
-    preflight = collect_runtime_preflight(targets)
+    runtime_record = routing.get("runtime_adapter") or {}
+    requested_runtime = normalize_runtime(runtime)
+    runtime_kind = runtime_from_adapter_record(runtime_record) if requested_runtime == "auto" else requested_runtime
+    preflight = collect_runtime_preflight(targets, runtime=runtime_kind)
     failed = [
         name
         for name, record in (preflight.get("agents") or {}).items()
@@ -1549,12 +1752,20 @@ def dispatch_task(root: Path, task_id: str, agent: str = "all", submit: bool = F
         if not dispatch_ref.exists():
             raise SystemExit(f"Missing dispatch for agent {target}: {dispatch_ref}")
         expected = expected_refs_for_agents([target], role_assignments).get(target, [])
-        if manual_mode:
+        if runtime_kind == "manual":
             if submit:
                 raise SystemExit("Manual Mode cannot use --submit. Copy dispatches manually and record manual_result_attested when evidence exists.")
             expected_text = ", ".join(expected) if expected else "task-local evidence"
             commands.append(f"Manual Mode: copy agents/{target}/dispatch.md to {target}; expected evidence: {expected_text}")
             continue
+        if runtime_kind == "queue":
+            expected_text = ", ".join(expected) if expected else "task-local evidence"
+            commands.append(f"VALP Queue Mode: enqueue agents/{target}/dispatch.md for {target}; expected evidence: {expected_text}")
+            if submit:
+                write_queue_submission(directory, task_id, target, expected)
+            continue
+        if runtime_kind != "herdr":
+            raise SystemExit(f"Runtime {runtime_kind} is not supported by this reference dispatch helper.")
         command = ["herdr-loop", "--project-root", str(root), "submit-dispatch", task_id, target]
         for ref in expected:
             command.extend(["--expect", ref])

@@ -48,4 +48,7 @@ echo "==> Auditing minimal example"
 echo "==> Auditing full-mode example"
 "$PYTHON_BIN" -m valp_cli audit examples/full-mode-task
 
+echo "==> Auditing headless queue example"
+"$PYTHON_BIN" -m valp_cli audit examples/headless-queue-task
+
 echo "==> VALP example verification complete"

@@ -1,0 +1,38 @@
+{
+  "generated_at": "2026-07-03T00:00:00Z",
+  "runtime": "example-headless-queue-runtime",
+  "adapter_class": "daemon_queue",
+  "status": "pass",
+  "checks": {
+    "queue_available": {
+      "status": "pass"
+    },
+    "worker_available": {
+      "status": "pass"
+    }
+  },
+  "agents": {
+    "codex": {
+      "status": "pass",
+      "queue_id": "queue-example-001",
+      "worker_id": "worker-codex-001",
+      "session_status": "idle",
+      "output_ref": "agents/codex/evidence.md",
+      "expected_refs": [
+        "agents/codex/self-review.md",
+        "agents/codex/evidence.md",
+        "evidence/verification.md"
+      ]
+    },
+    "claude": {
+      "status": "pass",
+      "queue_id": "queue-example-001",
+      "worker_id": "worker-claude-001",
+      "session_status": "idle",
+      "output_ref": "agents/claude/review.md",
+      "expected_refs": [
+        "agents/claude/review.md"
+      ]
+    }
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "schema_version": "valp-visible-loop-state.v1",
+  "task_id": "TASK-QUEUE-001",
+  "profile": "software-code",
+  "loop_layer": "agentic_coding_loop",
+  "status": "done",
+  "runtime_adapter": {
+    "class": "daemon_queue",
+    "name": "example-headless-queue-runtime",
+    "preflight": {
+      "runtime": "example-headless-queue-runtime",
+      "adapter_class": "daemon_queue",
+      "status": "pass",
+      "checks": {
+        "queue_available": {"status": "pass"},
+        "worker_available": {"status": "pass"}
+      },
+      "agents": {
+        "codex": {
+          "status": "pass",
+          "queue_id": "queue-example-001",
+          "worker_id": "worker-codex-001",
+          "session_status": "idle",
+          "output_ref": "agents/codex/evidence.md"
+        },
+        "claude": {
+          "status": "pass",
+          "queue_id": "queue-example-001",
+          "worker_id": "worker-claude-001",
+          "session_status": "idle",
+          "output_ref": "agents/claude/review.md"
+        }
+      }
+    }
+  },
+  "local_overlay": {
+    "used": true,
+    "ref": ".herdr-loop/local-overlay.json"
+  },
+  "runtime_task_state_mapping": {
+    "completed": "dispatch_completed_only_with_expected_evidence"
+  },
+  "provider_matrix": {
+    "status": "scanned",
+    "ref": "routing.json"
+  },
+  "squad_routing": {
+    "used": false
+  },
+  "selected_agents": [
+    "codex",
+    "claude"
+  ],
+  "role_assignments": {
+    "coordinator": "codex",
+    "implementer": "codex",
+    "reviewer": "claude"
+  },
+  "capabilities_needed": [
+    "implementation",
+    "verification",
+    "code_review"
+  ],
+  "capabilities_missing": [],
+  "context_policies": {
+    "codex": {
+      "hard_compression_pct": 65,
+      "emergency_stop_pct": 80
+    },
+    "claude": {
+      "hard_compression_pct": 70,
+      "emergency_stop_pct": 80
+    }
+  },
+  "skill_recommendations": {
+    "status": "complete",
+    "backend": "task-skill-router",
+    "ref": "skill-recommendations.json"
+  },
+  "visible_attention": {
+    "status": "recorded",
+    "loop_layer": "agentic_coding_loop",
+    "attention_map": "attention-map.json",
+    "context_selection": "context-selection.json",
+    "mask_list": "mask-list.json",
+    "evidence_board": "evidence-board.json",
+    "visible_routing": "visible-routing.md"
+  },
+  "routing_confidence": {
+    "overall": "high",
+    "ref": "routing.json"
+  },
+  "routing_feedback": {
+    "status": "written",
+    "ref": "routing-feedback.json"
+  },
+  "gates": {
+    "dispatch_receipts": "passed",
+    "expected_evidence": "passed",
+    "verification": "passed",
+    "review": "passed",
+    "approval": "not_required"
+  },
+  "approval_required": [],
+  "updated_at": "2026-07-03T00:00:00Z"
+}

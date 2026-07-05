@@ -8,12 +8,14 @@ publish -> scan -> route -> dispatch -> audit
 
 It is intentionally small. It creates task evidence, reads local capability
 profiles when present, writes routing and dispatch files, prints Manual Mode
-copy instructions or HERDR reference-adapter submit commands, and audits
+copy instructions, HERDR reference-adapter submit commands, or headless queue
+reference records, and audits
 completion evidence.
 
-The CLI is not the whole protocol. In this version, `dispatch` is a HERDR
-reference-adapter helper. Other runtimes should implement the adapter evidence
-contract in `docs/runtime-adapters.md`.
+The CLI is not the whole protocol. It provides small reference helpers for
+manual, HERDR pane-controller, and synthetic headless queue adapter shapes.
+Production runtimes should implement the adapter evidence contract in
+`docs/runtime-adapters.md`.
 
 Print the reference CLI version:
 
@@ -26,7 +28,7 @@ bin/valp --version
 Publish a task and auto-route it:
 
 ```bash
-bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it"
+bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it" --runtime auto
 ```
 
 Publish without routing:
@@ -39,15 +41,25 @@ Run scan and route explicitly:
 
 ```bash
 bin/valp scan --workspace /path/to/workspace --task TASK-001
-bin/valp route TASK-001 --workspace /path/to/workspace
+bin/valp route TASK-001 --workspace /path/to/workspace --runtime auto
 ```
 
 The local scan reads:
 
 ```text
+$VALP_CAPABILITIES_FILE
+<workspace>/.valp/agents/capabilities.json
+~/.valp/agent-capabilities.json
 ~/.herdr/agent-capabilities.json
+
+$VALP_LOCAL_OVERLAY_FILE
+<workspace>/.valp/local-overlay.json
+~/.valp/local-overlay.json
 ~/.herdr/valp-local-overlay.json
 ```
+
+The `~/.herdr` files are compatibility fallbacks for the HERDR reference
+runtime. They are not protocol defaults.
 
 and writes:
 
@@ -72,8 +84,8 @@ At this point the receipt state is `dispatch_written`; the work is not complete.
 Check runtime readiness before dispatch:
 
 ```bash
-bin/valp preflight --agent agy
-bin/valp preflight --agent codex --agent claude --json
+bin/valp preflight --runtime herdr --agent agy
+bin/valp preflight --runtime queue --agent codex --agent claude --json
 ```
 
 Pane-based adapters should record:
@@ -87,6 +99,10 @@ CLI version probe
 restart/update-needed status
 ```
 
+Queue or hosted adapters should record job/session facts such as queue id,
+worker id, session status, output refs, and expected refs. They should not fake
+pane or terminal-size fields.
+
 `valp dispatch --submit` writes `runtime-preflight.json` and stops when a
 selected agent has a failing preflight check.
 
@@ -99,22 +115,32 @@ bin/valp dispatch TASK-001 --workspace /path/to/workspace
 ```
 
 For Manual Mode tasks this prints copy instructions and expected evidence refs.
-For HERDR-routed tasks it prints HERDR reference-adapter submit commands.
+For HERDR-routed tasks it prints HERDR reference-adapter submit commands. For
+queue-routed tasks it prints queue enqueue instructions.
 
-Submit through the local HERDR reference adapter:
+Submit through the selected reference adapter:
 
 ```bash
-bin/valp dispatch TASK-001 --workspace /path/to/workspace --submit
+bin/valp dispatch TASK-001 --workspace /path/to/workspace --runtime herdr --submit
+bin/valp dispatch TASK-001 --workspace /path/to/workspace --runtime queue --submit
 ```
 
-`dispatch --submit` calls `herdr-loop submit-dispatch` for each routed agent.
-It should only be used when the local HERDR panes/runtime are ready. Manual Mode
-tasks cannot use `--submit`; copy dispatches manually and record manual
-attestation receipts when evidence exists.
+`dispatch --runtime herdr --submit` calls `herdr-loop submit-dispatch` for each
+routed agent. It should only be used when the local HERDR panes/runtime are
+ready.
 
-For non-HERDR runtimes, do not post-process these commands as protocol truth.
-Implement an adapter that exports equivalent dispatch receipts, state mapping,
-expected evidence refs, and final synthesis evidence.
+`dispatch --runtime queue --submit` writes task-local queue submission records
+and `dispatch_submitted` receipts. It does not mark the task complete; a queue
+worker or operator must still produce expected evidence and `dispatch_completed`
+receipts.
+
+Manual Mode tasks cannot use `--submit`; copy dispatches manually and record
+manual attestation receipts when evidence exists.
+
+For runtimes beyond these reference helpers, do not post-process printed
+commands as protocol truth. Implement an adapter that exports equivalent
+dispatch receipts, state mapping, expected evidence refs, and final synthesis
+evidence.
 
 ## Audit
 
@@ -241,5 +267,5 @@ It intentionally does not:
 - call external services;
 - validate every JSON schema field deeply.
 
-Future CLI work can add a first-class `--adapter` option, schema validation,
-workspace-wide audits, SARIF output, and runtime adapter checks.
+Future CLI work can add deeper schema validation, workspace-wide audits, SARIF
+output, and more concrete runtime adapter submitters.

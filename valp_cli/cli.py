@@ -6,7 +6,7 @@ from pathlib import Path
 
 from . import __version__
 from .audit import FAIL, TaskAudit, print_text_report, report_to_dict, resolve_task_dir
-from .workflow import collect_runtime_preflight, dispatch_task, publish_task, route_task, scan_workspace
+from .workflow import RUNTIME_CHOICES, collect_runtime_preflight, dispatch_task, publish_task, route_task, scan_workspace
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,7 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 notes:
   dispatch prints Manual Mode instructions for manual tasks.
-  dispatch submits only through the HERDR reference adapter today.
+  dispatch submits through the selected reference adapter when supported.
   HERDR is the reference runtime, not a VALP protocol requirement.
 """,
     )
@@ -34,27 +34,32 @@ notes:
     publish.add_argument("--prompt", help="Task request")
     publish.add_argument("--prompt-file", help="Read task request from a file")
     publish.add_argument("--profile", help="Override auto profile classification")
+    publish.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Runtime adapter to record and preflight")
     publish.add_argument("--no-route", action="store_true", help="Only create task.md/state.json")
     publish.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     scan = sub.add_parser("scan", help="Scan local capabilities and overlay into a workspace")
     scan.add_argument("--workspace", default=".", help="Workspace root")
     scan.add_argument("--task", dest="task_id", help="Task id to update")
+    scan.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Runtime adapter to preflight")
     scan.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     route = sub.add_parser("route", help="Route an existing VALP task")
     route.add_argument("task_id", help="Task id")
     route.add_argument("--workspace", default=".", help="Workspace root")
+    route.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Runtime adapter to record and preflight")
     route.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
-    dispatch = sub.add_parser("dispatch", help="Print dispatch instructions or submit through the HERDR reference adapter")
+    dispatch = sub.add_parser("dispatch", help="Print dispatch instructions or submit through the selected reference adapter")
     dispatch.add_argument("task_id", help="Task id")
     dispatch.add_argument("--workspace", default=".", help="Workspace root")
     dispatch.add_argument("--agent", default="all", help="Agent name or all")
-    dispatch.add_argument("--submit", action="store_true", help="Actually call herdr-loop submit-dispatch through the HERDR reference adapter")
+    dispatch.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Override the runtime adapter recorded in routing.json")
+    dispatch.add_argument("--submit", action="store_true", help="Actually submit through the selected reference adapter when supported")
 
-    preflight = sub.add_parser("preflight", help="Check runtime panes, CLI probes, and terminal sizing")
+    preflight = sub.add_parser("preflight", help="Check selected runtime adapter readiness")
     preflight.add_argument("--agent", action="append", help="Agent name to check; may be repeated")
+    preflight.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Runtime adapter to preflight")
     preflight.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     audit = sub.add_parser("audit", help="Audit a VALP task evidence folder")
@@ -84,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
             prompt_from_args(args),
             profile=args.profile,
             route=not args.no_route,
+            runtime=args.runtime,
         )
         result = {"task_id": args.task_id, "task_dir": str(directory), "routed": not args.no_route}
         if args.json:
@@ -99,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "scan":
-        capabilities = scan_workspace(Path(args.workspace), args.task_id)
+        capabilities = scan_workspace(Path(args.workspace), args.task_id, runtime=args.runtime)
         if args.json:
             print(json.dumps(capabilities, indent=2, ensure_ascii=False))
         else:
@@ -107,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "route":
-        routing = route_task(Path(args.workspace), args.task_id)
+        routing = route_task(Path(args.workspace), args.task_id, runtime=args.runtime)
         if args.json:
             print(json.dumps(routing, indent=2, ensure_ascii=False))
         else:
@@ -121,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "dispatch":
-        commands = dispatch_task(Path(args.workspace), args.task_id, agent=args.agent, submit=args.submit)
+        commands = dispatch_task(Path(args.workspace), args.task_id, agent=args.agent, submit=args.submit, runtime=args.runtime)
         if args.submit:
             print(f"Submitted dispatch for task {args.task_id}")
         else:
@@ -129,22 +135,23 @@ def main(argv: list[str] | None = None) -> int:
             if manual:
                 print("Manual Mode dispatch instructions. Copy dispatches manually and record manual receipts:")
             else:
-                print("Dispatch dry run for the HERDR reference adapter. Use --submit only when HERDR is ready:")
+                print("Dispatch dry run for the selected reference adapter. Use --submit only when the runtime is ready:")
             for command in commands:
                 print(command)
         return 0
 
     if args.command == "preflight":
-        report = collect_runtime_preflight(args.agent)
+        report = collect_runtime_preflight(args.agent, runtime=args.runtime)
         if args.json:
             print(json.dumps(report, indent=2, ensure_ascii=False))
         else:
             print(f"VALP runtime preflight: {str(report.get('status', 'unknown')).upper()}")
             for agent, record in (report.get("agents") or {}).items():
                 size = record.get("terminal_size") or {}
+                session = record.get("pane_id") or record.get("queue_id") or record.get("worker_id") or record.get("session_status")
                 print(
                     f"- {agent}: {record.get('status', 'unknown')} "
-                    f"pane={record.get('pane_id')} "
+                    f"session={session} "
                     f"size={size.get('width', '?')}x{size.get('height', '?')}"
                 )
         return 1 if report.get("status") == "fail" else 0

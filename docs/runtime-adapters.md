@@ -9,6 +9,8 @@ pretending they provide the same guarantees.
 
 HERDR is the current reference adapter target in this repository. It is useful
 for proving the Full Mode path, but it is not the VALP protocol itself.
+The reference CLI also includes a synthetic `queue` adapter shape for testing
+headless evidence without terminal panes.
 
 Terminals are display surfaces, not automatically runtime adapters. A terminal
 that can open panes still needs an adapter layer that can submit dispatches,
@@ -162,6 +164,18 @@ expected evidence refs
 failure reason, if any
 approval state, if needed
 ```
+
+Reference CLI smoke path:
+
+```bash
+bin/valp publish TASK-QUEUE --workspace /path/to/workspace --prompt "..." --runtime queue
+bin/valp preflight --runtime queue --agent codex --json
+bin/valp dispatch TASK-QUEUE --workspace /path/to/workspace --runtime queue
+```
+
+The reference queue path writes queue-shaped records only. It does not replace a
+real queue worker, and it does not turn `dispatch_submitted` into completion.
+Completion still requires `dispatch_completed` receipts and expected evidence.
 
 ## Hosted Or Local Platform Adapter
 

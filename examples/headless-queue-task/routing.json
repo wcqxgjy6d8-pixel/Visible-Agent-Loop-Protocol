@@ -1,0 +1,266 @@
+{
+  "schema_version": "valp-capability-routing.v1",
+  "task_id": "TASK-QUEUE-001",
+  "profile": "software-code",
+  "runtime_adapter": {
+    "class": "daemon_queue",
+    "name": "example-headless-queue-runtime",
+    "full_mode_capable": true,
+    "state_mapping_ref": "docs/task-state-machine.md",
+    "preflight": {
+      "runtime": "example-headless-queue-runtime",
+      "adapter_class": "daemon_queue",
+      "status": "pass",
+      "checks": {
+        "queue_available": {"status": "pass"},
+        "worker_available": {"status": "pass"}
+      },
+      "agents": {
+        "codex": {
+          "status": "pass",
+          "queue_id": "queue-example-001",
+          "worker_id": "worker-codex-001",
+          "session_status": "idle",
+          "output_ref": "agents/codex/evidence.md",
+          "expected_refs": ["agents/codex/self-review.md", "agents/codex/evidence.md", "evidence/verification.md"]
+        },
+        "claude": {
+          "status": "pass",
+          "queue_id": "queue-example-001",
+          "worker_id": "worker-claude-001",
+          "session_status": "idle",
+          "output_ref": "agents/claude/review.md",
+          "expected_refs": ["agents/claude/review.md"]
+        }
+      }
+    }
+  },
+  "local_overlay": {
+    "used": true,
+    "ref": ".herdr-loop/local-overlay.json",
+    "note": "Local agent profiles were used as hints only; current runtime evidence selected the route."
+  },
+  "capabilities_needed": [
+    "implementation",
+    "verification",
+    "code_review"
+  ],
+  "role_requirements": [
+    "coordinator",
+    "implementer",
+    "reviewer"
+  ],
+  "role_assignments": {
+    "coordinator": "codex",
+    "implementer": "codex",
+    "reviewer": "claude"
+  },
+  "coordinator_selection": {
+    "selected_agent": "codex",
+    "selection_rule": "Selected from current capability evidence; the open protocol does not name a universal leader."
+  },
+  "selected_agents": [
+    "codex",
+    "claude"
+  ],
+  "agent_match_reasons": {
+    "codex": [
+      "implementation",
+      "test execution",
+      "evidence writing"
+    ],
+    "claude": [
+      "read-only review",
+      "risk review"
+    ]
+  },
+  "candidate_scores": {
+    "codex": {
+      "profile_fit": 0.9,
+      "tool_fit": 0.95,
+      "skill_fit": 0.8,
+      "permission_fit": 1,
+      "context_fit": 0.9,
+      "evidence_history": 0.8,
+      "availability": 0.9,
+      "risk_fit": 0.85,
+      "overall": 0.89,
+      "confidence": "high",
+      "role_fit": {
+        "coordinator": 0.5,
+        "implementer": 0.95,
+        "reviewer": 0.5
+      },
+      "routing_basis": "capability_roles"
+    },
+    "claude": {
+      "profile_fit": 0.85,
+      "tool_fit": 0.8,
+      "skill_fit": 0.75,
+      "permission_fit": 1,
+      "context_fit": 0.9,
+      "evidence_history": 0.75,
+      "availability": 0.9,
+      "risk_fit": 0.9,
+      "overall": 0.84,
+      "confidence": "high",
+      "role_fit": {
+        "coordinator": 0.35,
+        "implementer": 0.25,
+        "reviewer": 0.95
+      },
+      "routing_basis": "capability_roles"
+    },
+    "agy": {
+      "overall": 0.35,
+      "confidence": "low",
+      "reason": "No prototype task was required.",
+      "role_fit": {
+        "coordinator": 0.25,
+        "implementer": 0.25,
+        "reviewer": 0.25
+      },
+      "routing_basis": "capability_roles"
+    }
+  },
+  "routing_confidence": {
+    "overall": "high",
+    "reason": "Selected agents match implementation, verification, and read-only review evidence gates."
+  },
+  "rejected_candidates": [
+    {
+      "agent": "agy",
+      "reason": "The task did not need isolated prototype evidence.",
+      "confidence": "low"
+    }
+  ],
+  "selected_agent_context_policies": {
+    "codex": {
+      "soft_warning_pct": 55,
+      "hard_compression_pct": 65,
+      "emergency_stop_pct": 80
+    },
+    "claude": {
+      "soft_warning_pct": 60,
+      "hard_compression_pct": 70,
+      "emergency_stop_pct": 80
+    }
+  },
+  "provider_matrix": {
+    "generated_at": "2026-07-03T00:00:00Z",
+    "runtime_preflight": {
+      "runtime": "example-headless-queue-runtime",
+      "adapter_class": "daemon_queue",
+      "status": "pass",
+      "checks": {
+        "queue_available": {"status": "pass"},
+        "worker_available": {"status": "pass"}
+      },
+      "agents": {
+        "codex": {
+          "status": "pass",
+          "queue_id": "queue-example-001",
+          "worker_id": "worker-codex-001",
+          "session_status": "idle",
+          "output_ref": "agents/codex/evidence.md"
+        },
+        "claude": {
+          "status": "pass",
+          "queue_id": "queue-example-001",
+          "worker_id": "worker-claude-001",
+          "session_status": "idle",
+          "output_ref": "agents/claude/review.md"
+        }
+      }
+    },
+    "providers": {
+      "codex": {
+        "provider_name": "codex",
+        "provider_version_or_runtime_report": "worker-codex-001",
+        "cli_available": "unknown",
+        "mcp_support": "supported",
+        "skill_discovery_path": "$CODEX_HOME/skills",
+        "session_resume_support": "supported",
+        "approval_behavior": "manual_or_policy",
+        "model_selection": "runtime_default",
+        "max_concurrency": 1,
+        "context_policy": {
+          "soft_warning_pct": 55,
+          "hard_compression_pct": 65,
+          "emergency_stop_pct": 80
+        },
+        "runtime_preflight": {
+          "status": "pass",
+          "queue_id": "queue-example-001",
+          "worker_id": "worker-codex-001",
+          "session_status": "idle",
+          "output_ref": "agents/codex/evidence.md"
+        },
+        "known_limitations": []
+      },
+      "claude": {
+        "provider_name": "claude",
+        "provider_version_or_runtime_report": "worker-claude-001",
+        "cli_available": "unknown",
+        "mcp_support": "supported",
+        "skill_discovery_path": ".claude/skills/",
+        "session_resume_support": "supported",
+        "approval_behavior": "provider_policy",
+        "model_selection": "runtime_default",
+        "max_concurrency": 1,
+        "context_policy": {
+          "soft_warning_pct": 60,
+          "hard_compression_pct": 70,
+          "emergency_stop_pct": 80
+        },
+        "runtime_preflight": {
+          "status": "pass",
+          "queue_id": "queue-example-001",
+          "worker_id": "worker-claude-001",
+          "session_status": "idle",
+          "output_ref": "agents/claude/review.md"
+        },
+        "known_limitations": []
+      }
+    }
+  },
+  "skill_recommendations": {
+    "schema_version": "valp-skill-recommendations.v1",
+    "status": "complete",
+    "backend": "task-skill-router",
+    "ref": "skill-recommendations.json",
+    "routing": {
+      "priority": "P1",
+      "decision": "auto-load",
+      "reason": "Strong installed workflow match."
+    },
+    "missing_skills": []
+  },
+  "visible_attention": {
+    "schema_version": "valp-visible-attention.v1",
+    "status": "recorded",
+    "loop_layer": "agentic_coding_loop",
+    "design_contract": {
+      "status": "not_applicable",
+      "path": null
+    },
+    "attention_map": "attention-map.json",
+    "context_selection": "context-selection.json",
+    "mask_list": "mask-list.json",
+    "evidence_board": "evidence-board.json",
+    "visible_routing": "visible-routing.md"
+  },
+  "runtime_task_state_mapping": {
+    "queued": "accepted_by_runtime_not_delivery",
+    "dispatched": "dispatch_submitted_only_with_proof",
+    "running": "executing",
+    "completed": "dispatch_completed_only_with_expected_evidence",
+    "failed": "failed_or_blocked_with_reason",
+    "cancelled": "cancelled"
+  },
+  "squad_routing": {
+    "used": false
+  },
+  "routing_feedback_ref": "routing-feedback.json",
+  "capabilities_missing": []
+}

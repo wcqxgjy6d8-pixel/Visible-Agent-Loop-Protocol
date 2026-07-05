@@ -22,7 +22,7 @@ VALP turns those failure points into a protocol: visible dispatches, receipt
 states, expected evidence, review gates, approval gates, and final synthesis.
 It is closer to a control system than a chat convention.
 
-## Two Entry Paths
+## Entry Paths
 
 Choose the path that matches why you are here:
 
@@ -30,6 +30,7 @@ Choose the path that matches why you are here:
 |---|---|---|
 | Understand the protocol | Read [SPEC.md](SPEC.md) and audit `examples/minimal-task/` | No |
 | Try automated multi-agent work | Install HERDR, the current reference runtime | Yes |
+| Inspect a headless runtime shape | Audit `examples/headless-queue-task/` | No |
 | Implement a new runtime | Read [docs/runtime-adapters.md](docs/runtime-adapters.md) | Depends on your adapter |
 
 No-runtime first look:
@@ -54,7 +55,7 @@ scripts/verify-examples.sh
 ```
 
 That script requires Bash and Python. It validates JSON examples and schemas,
-runs the unit tests, then audits both bundled examples. The same check runs in
+runs the unit tests, then audits the bundled examples. The same check runs in
 GitHub Actions on Linux, macOS, and Windows runners for push and pull request.
 
 Reference-runtime trial:
@@ -110,8 +111,8 @@ fragile keystroke automation into terminal panes as Full Mode proof.
 ## Fast Start
 
 VALP's default automated path is Full Mode with HERDR, the current reference
-runtime. The protocol supports other compatible runtimes, but HERDR is the only
-documented reference implementation in this repository today.
+runtime. The protocol supports other compatible runtimes, and this repository
+also includes a synthetic headless queue example for adapter authors.
 
 Recommended first path:
 
@@ -143,25 +144,27 @@ gate:
 
 ```bash
 bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it"
-bin/valp preflight --agent agy
+bin/valp preflight --runtime herdr --agent agy
 bin/valp dispatch TASK-001 --workspace /path/to/workspace
 bin/valp audit examples/full-mode-task
 ```
 
 `valp publish` creates the task, scans local capabilities when available, routes
 selected agents, writes dispatch files, and records `dispatch_written` receipts.
-The current reference scan reads HERDR-compatible local capability files when
-present. If no local capability file is available, it falls back to a generic
-Manual Mode operator record rather than assuming a specific AI agent is
-installed.
+The current reference scan reads VALP-local capability files first, then
+HERDR-compatible files as a compatibility fallback. If no local capability file
+is available, it falls back to a generic Manual Mode operator record rather than
+assuming a specific AI agent is installed.
 
-`valp preflight` checks runtime readiness such as agent sessions, terminal size
-for pane adapters, CLI version probes, and restart/update signals when the
-adapter can expose them.
+`valp preflight` checks adapter-specific runtime readiness such as agent
+sessions, terminal size for pane adapters, queue/worker facts for headless
+adapters, CLI version probes, and restart/update signals when the adapter can
+expose them.
 
-`valp dispatch` prints Manual Mode copy instructions for manual tasks. For
-HERDR-routed tasks, it prints HERDR adapter submit commands by default. Use
-`--submit` only when the local HERDR runtime is ready.
+`valp dispatch` prints Manual Mode copy instructions for manual tasks, HERDR
+adapter submit commands for pane-controller tasks, or queue enqueue
+instructions for headless queue tasks. Use `--submit` only when the selected
+runtime is ready.
 
 `valp audit` scans a task evidence folder and checks the Done Criteria from
 `SPEC.md`, including runtime preflight, skill recommendation evidence, invalid
@@ -171,12 +174,13 @@ See [docs/cli-audit.md](docs/cli-audit.md).
 
 ## Proof It Works
 
-The repository includes two self-verifying task examples:
+The repository includes three self-verifying task examples:
 
 | Example | What it proves | Expected audit |
 |---|---|---|
 | `examples/minimal-task/` | Manual Mode evidence can be audited without a runtime | `PASS`, `pass=13 warn=0 fail=0 skip=5` |
 | `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, review, and final synthesis audit gates | `PASS`, `pass=17 warn=0 fail=0 skip=1` |
+| `examples/headless-queue-task/` | Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=17 warn=0 fail=0 skip=1` |
 
 Run the complete smoke check:
 
@@ -199,7 +203,7 @@ that exports VALP receipts and evidence.
 | Linux | HERDR stable installer, manual binary, or package manager | Full Mode | Reference runtime path |
 | Windows stable workflow | SSH to Linux/macOS host running HERDR | Remote Mode | Full Mode guarantees live on the remote host |
 | Windows local workflow | HERDR Windows preview beta | Conditional Full Mode | Verify beta limitations before claiming Full Mode |
-| Windows without HERDR | Manual Mode today; runner/queue adapter planned | Manual / future adapter | Windows Terminal can display panes, but does not itself provide receipts |
+| Windows without HERDR | Manual Mode today; runner/queue adapter implementation required for Full Mode | Manual / adapter-specific | Windows Terminal can display panes, but does not itself provide receipts |
 | No compatible runtime | Manual files and evidence only | Manual Mode | Useful for learning and audit trails; no runtime proof |
 
 See [docs/platform-support.md](docs/platform-support.md) for platform-specific
@@ -250,7 +254,7 @@ publish task
 
 No agent is assumed to be known from memory. Agent selection is based on current
 runtime evidence: declared role, installed skills, available MCP/tools, runtime
-status, pane/CLI preflight, permission boundary, context policy, optional skill
+status, adapter preflight, permission boundary, context policy, optional skill
 recommendation evidence, local overlay hints, prior verification records, and
 routing feedback.
 Local capability profiles are hints, not fixed assignments. Every task reruns
@@ -358,6 +362,7 @@ Visible-Agent-Loop-Protocol/
     dispatch.md
     minimal-task/
     full-mode-task/
+    headless-queue-task/
 ```
 
 ## Non-Negotiables

@@ -277,6 +277,11 @@ required. The adapter must instead record the equivalent session or job facts
 needed to prove delivery and completion, such as queue id, worker id, hosted run
 id, output reference, artifact path, retry state, and expected evidence refs.
 
+Reference tools may expose adapter selection flags such as `auto`, `manual`,
+`herdr`, or `queue`, but protocol semantics come from the recorded adapter class
+and evidence. A queue adapter must not fake pane fields, and a pane adapter must
+still fail preflight when terminal or display checks fail.
+
 ## 6. Local Overlays
 
 VALP separates open protocol semantics from local execution facts.
@@ -306,6 +311,22 @@ terminals, and runtimes. They must remain subordinate to protocol gates:
 - A local overlay cannot turn a capability profile into a fixed assignment.
 - A local overlay cannot suppress context compression thresholds unless stricter
   policy replaces them.
+
+Reference local scans should prefer protocol-neutral locations before
+runtime-specific compatibility paths:
+
+```text
+<workspace>/.valp/agents/capabilities.json
+~/.valp/agent-capabilities.json
+~/.herdr/agent-capabilities.json
+
+<workspace>/.valp/local-overlay.json
+~/.valp/local-overlay.json
+~/.herdr/valp-local-overlay.json
+```
+
+Environment variables may explicitly select another file, but local overlays
+remain hints and cannot weaken receipt, evidence, approval, or preflight gates.
 
 The preferred layering is:
 

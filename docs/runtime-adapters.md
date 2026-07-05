@@ -10,6 +10,10 @@ pretending they provide the same guarantees.
 HERDR is the current reference adapter target in this repository. It is useful
 for proving the Full Mode path, but it is not the VALP protocol itself.
 
+Terminals are display surfaces, not automatically runtime adapters. A terminal
+that can open panes still needs an adapter layer that can submit dispatches,
+read or collect outputs, and write receipts/evidence.
+
 ## Adapter Classes
 
 | Adapter class | Shape | Mode |
@@ -102,6 +106,30 @@ selected agent's pane is below the adapter's minimum size, the adapter must stop
 dispatch or record the dispatch as blocked until the pane is repaired.
 
 Pane-specific checks are not required for non-pane adapters.
+
+## Windows Terminal Without HERDR
+
+Windows Terminal can be useful for showing multiple PowerShell or CMD sessions,
+but terminal panes alone do not satisfy Full Mode. The missing part is the
+control plane: reliable dispatch submission, output collection, receipt
+writing, timeout handling, expected evidence checks, and final audit state.
+
+A no-HERDR Windows adapter should prefer a runner/queue shape:
+
+```text
+valp task folder
+  -> inbox/<agent>.jsonl or task-local queue
+  -> valp-agent-runner.ps1 per agent/session
+  -> agent CLI or manual operator
+  -> evidence files
+  -> dispatch-receipts.jsonl
+  -> valp audit
+```
+
+This can be displayed inside Windows Terminal panes, but the panes are only the
+UI. The runner/queue is the adapter. Keystroke automation tools can be useful
+for experiments, but they should not be used as Full Mode proof unless they also
+export reliable submission proof, output refs, receipts, and evidence gates.
 
 ## Daemon Queue Adapter
 

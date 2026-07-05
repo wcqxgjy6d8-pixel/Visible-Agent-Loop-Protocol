@@ -19,6 +19,7 @@ For the fastest stable setup:
 Linux/macOS -> official installer
 Windows stable workflow -> SSH into a Linux/macOS HERDR host
 Windows local workflow -> native Windows beta, clearly marked preview
+Windows without HERDR -> Manual Mode today; runner/queue adapter when available
 No runtime -> Manual Mode only
 ```
 
@@ -37,6 +38,7 @@ proof, status waits, or runtime-backed receipt guarantees.
 | Linux | `curl -fsSL https://herdr.dev/install.sh | sh` or package manager | Full Mode |
 | Windows stable workflow | SSH to Linux/macOS host, run `herdr` there | Remote Mode |
 | Windows local workflow | PowerShell preview installer | Windows beta |
+| Windows without HERDR | No HERDR install | Manual Mode today; runner/queue adapter when implemented |
 | No compatible runtime | No install path | Manual Mode; evidence only |
 
 See [docs/platform-support.md](docs/platform-support.md) for detailed platform
@@ -139,6 +141,17 @@ Important Windows beta caveats from HERDR documentation:
 
 For users who need stable automation from a Windows machine today, use SSH into
 a Linux/macOS HERDR host and run the runtime there.
+
+### Windows Without HERDR
+
+Windows Terminal, PowerShell, and CMD can host visible agent sessions, but they
+do not by themselves provide dispatch receipts, status waits, expected evidence
+checks, or timeout handling.
+
+For no-HERDR Windows use today, start with Manual Mode. For automated local
+Windows work, a VALP-compatible runner or queue adapter should be used when one
+is available. The runner should write receipts and evidence into the task
+folder; the terminal should be treated as display only.
 
 ## Terminal Emulator
 

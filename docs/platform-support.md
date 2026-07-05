@@ -22,6 +22,7 @@ Sources:
 | Linux aarch64 | HERDR stable installer, manual binary, or package manager | Full Mode |
 | Windows, stable workflow | SSH into Linux/macOS host and run HERDR there | Remote Mode with Full Mode guarantees on remote host |
 | Windows, local workflow | Native HERDR Windows preview beta | Full Mode only where beta features satisfy adapter requirements |
+| Windows, no HERDR | Manual Mode today; runner/queue adapter is planned | Manual Mode now, future adapter when implemented |
 | Any system without compatible runtime | Manual folders, attestations, and evidence only | Manual Mode |
 
 ## macOS
@@ -58,7 +59,7 @@ Linux users should generally be directed to Full Mode first.
 
 ## Windows
 
-There are two Windows paths.
+There are three Windows paths.
 
 Stable workflow:
 
@@ -88,6 +89,24 @@ Important caveats from HERDR Windows beta documentation include:
 - Direct terminal attach is not supported in the Windows beta.
 - Live server handoff is not supported in the Windows beta.
 - Remote work from Windows should use SSH into the server and run HERDR there.
+
+No-HERDR local workflow:
+
+Windows Terminal, PowerShell, and CMD can be used as display shells. A terminal
+can show multiple panes, but pane layout is not VALP runtime proof. Without
+HERDR, a Windows automation path should use a runner or queue adapter that:
+
+```text
+starts one or more agent sessions
+reads dispatch work from task-local files or JSONL queues
+writes dispatch receipts
+writes expected evidence
+records timeout, blocked, and late-evidence states
+lets valp audit decide completion
+```
+
+Do not treat UI keystroke automation into a terminal pane as Full Mode proof.
+If no runner/queue adapter is installed, use Manual Mode.
 
 ## Manual Mode
 

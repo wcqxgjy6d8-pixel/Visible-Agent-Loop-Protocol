@@ -52,6 +52,7 @@ the adapter evidence in [runtime-adapters.md](runtime-adapters.md).
 | Linux | HERDR stable installer or package manager | Full Mode | Reference runtime path |
 | Windows stable workflow | SSH into a Linux/macOS HERDR host | Remote Mode | Full Mode guarantees live on the remote host |
 | Windows local workflow | HERDR Windows preview beta | Conditional Full Mode | Verify beta limitations before claiming Full Mode |
+| Windows without HERDR | Manual Mode today; runner adapter planned | Manual / future adapter | Windows Terminal panes are display, not runtime proof |
 | No runtime | Manual files only | Manual Mode | No runtime proof |
 
 ### 2. Install Runtime
@@ -83,6 +84,13 @@ Windows local beta:
 powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"
 herdr status
 ```
+
+Windows without HERDR:
+
+Use Manual Mode today. A future no-HERDR Windows adapter should run agent
+sessions through a runner or queue that writes VALP receipts and evidence. Do
+not treat Windows Terminal split panes or keystroke automation as Full Mode
+proof by themselves.
 
 ### 3. Verify Full Mode Capability
 

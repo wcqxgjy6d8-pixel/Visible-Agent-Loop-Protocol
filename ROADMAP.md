@@ -49,6 +49,7 @@
 
 - [shipped] HERDR reference-adapter command generation in `valp dispatch`.
 - [planned] First-class `valp dispatch --adapter <name>` interface.
+- [planned] No-HERDR Windows runner/queue adapter prototype.
 - [planned] Daemon queue adapter.
 - [planned] Managed-agent platform adapter.
 - [planned] Manual adapter helper commands.

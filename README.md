@@ -64,6 +64,28 @@ user request
 HERDR is the current reference runtime for the automated path. It is not the
 protocol itself.
 
+## Runtime Vs Terminal
+
+A terminal app is not enough to provide VALP Full Mode.
+
+Terminal apps such as Windows Terminal, Ghostty, iTerm, Apple Terminal, and
+Linux terminal emulators can display multiple agent sessions. Some terminals can
+also open split panes from the command line. That helps visibility, but it is
+not the same as a runtime adapter.
+
+Full Mode still requires a control layer that can prove:
+
+- which agent received a dispatch;
+- whether the dispatch was submitted, not only inserted as text;
+- which expected evidence appeared;
+- how timeouts, blocked work, and late evidence were recorded;
+- whether approval, review, and final synthesis gates passed.
+
+HERDR currently provides that control layer as the reference runtime. A
+no-HERDR Windows path can still be VALP-compatible, but it should use a
+runner/queue adapter that writes receipts and evidence. It should not rely on
+fragile keystroke automation into terminal panes as Full Mode proof.
+
 ## Fast Start
 
 VALP's default automated path is Full Mode with HERDR, the current reference
@@ -134,6 +156,7 @@ See [docs/cli-audit.md](docs/cli-audit.md).
 | Linux | HERDR stable installer, manual binary, or package manager | Full Mode | Reference runtime path |
 | Windows stable workflow | SSH to Linux/macOS host running HERDR | Remote Mode | Full Mode guarantees live on the remote host |
 | Windows local workflow | HERDR Windows preview beta | Conditional Full Mode | Verify beta limitations before claiming Full Mode |
+| Windows without HERDR | Manual Mode today; runner/queue adapter planned | Manual / future adapter | Windows Terminal can display panes, but does not itself provide receipts |
 | No compatible runtime | Manual files and evidence only | Manual Mode | Useful for learning and audit trails; no runtime proof |
 
 See [docs/platform-support.md](docs/platform-support.md) for platform-specific

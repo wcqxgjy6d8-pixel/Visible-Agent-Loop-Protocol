@@ -54,6 +54,11 @@ For stable automation, SSH into a Linux/macOS host and run HERDR there. Native
 Windows HERDR support is preview beta and should be treated as beta until the
 specific workflow is verified.
 
+Windows users who do not want HERDR can use Manual Mode today. Windows Terminal
+can display multiple panes, but it is not a VALP runtime by itself. A no-HERDR
+automated Windows path needs a runner or queue adapter that writes receipts,
+expected evidence, and auditable state.
+
 ## Does a runtime's "completed" state mean VALP is done?
 
 No. Runtime completion is only one signal. VALP completion requires receipts,

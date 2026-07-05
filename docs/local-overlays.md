@@ -86,7 +86,7 @@ recent routing feedback
   },
   "runtime_preferences": {
     "preferred_full_mode_runtime": "herdr",
-    "manual_mode_allowed": "fallback_only"
+    "manual_mode_allowed": "learning_and_audit"
   },
   "agent_capability_profiles": {
     "codex": {

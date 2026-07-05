@@ -86,9 +86,12 @@ Example:
 Manual Mode may record:
 
 ```text
-dispatch_written
+manual_dispatch_written
 manual_delivery_attested
 manual_result_attested
+manual_blocked
 ```
 
-These are not equivalent to Full Mode runtime receipts.
+These are useful audit records, but they are not equivalent to Full Mode runtime
+receipts. A Manual Mode task can be complete as a manual evidence trail, but it
+must not label manual attestation as `dispatch_submitted`.

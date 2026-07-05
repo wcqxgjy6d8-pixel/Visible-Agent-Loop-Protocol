@@ -25,9 +25,9 @@ No runtime -> Manual Mode only
 VALP Full Mode requires HERDR or a VALP-compatible runtime. It does not
 require a specific terminal emulator.
 
-Manual Mode is only a fallback for environments where a compatible runtime
-cannot be installed. It does not provide automatic dispatch proof, status waits,
-or runtime-backed receipt guarantees.
+Manual Mode is a valid learning and audit path for environments where a
+compatible runtime is not installed. It does not provide automatic dispatch
+proof, status waits, or runtime-backed receipt guarantees.
 
 ## Platform Quick Start
 
@@ -37,7 +37,7 @@ or runtime-backed receipt guarantees.
 | Linux | `curl -fsSL https://herdr.dev/install.sh | sh` or package manager | Full Mode |
 | Windows stable workflow | SSH to Linux/macOS host, run `herdr` there | Remote Mode |
 | Windows local workflow | PowerShell preview installer | Windows beta |
-| No compatible runtime | No install path | Manual Mode, degraded |
+| No compatible runtime | No install path | Manual Mode; evidence only |
 
 See [docs/platform-support.md](docs/platform-support.md) for detailed platform
 notes.
@@ -184,8 +184,8 @@ store evidence manually
 Manual Mode is not Full Mode. It cannot claim automatic dispatch submission,
 agent status proof, or runtime receipt equivalence.
 
-Use Manual Mode for learning, documentation, or temporary audit trails. Do not
-present it as the normal automated multi-agent experience.
+Use Manual Mode for learning, documentation, PR review, or temporary audit
+trails. Do not present it as the normal automated multi-agent experience.
 
 ## Quick Decision Tree
 
@@ -203,5 +203,5 @@ On Windows and want local testing?
   -> install Windows beta, mark limitations
 
 No VALP-compatible runtime and cannot install one?
-  -> Manual Mode only; degraded workflow
+  -> Manual Mode only; evidence trail without runtime proof
 ```

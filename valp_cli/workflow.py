@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -173,9 +174,14 @@ def local_overlay_path() -> Path:
 
 def classify_profile(prompt: str) -> str:
     lowered = prompt.lower()
+    scored: list[tuple[int, str]] = []
     for profile, keywords in PROFILE_RULES:
-        if any(keyword in lowered for keyword in keywords):
-            return profile
+        score = sum(1 for keyword in keywords if keyword in lowered)
+        if score:
+            scored.append((score, profile))
+    if scored:
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return scored[0][1]
     return "generic-analysis"
 
 
@@ -186,15 +192,19 @@ def load_local_capabilities() -> dict[str, Any]:
     return {
         "schema_version": "valp-agent-capabilities.v1",
         "updated_at": now_iso(),
-        "source": "fallback minimal local scan",
+        "source": "generic manual local scan",
         "agents": {
-            "codex": {
+            "manual-operator": {
                 "active": True,
-                "role": ["implementation", "verification", "tool_execution"],
+                "role": ["coordination", "review", "manual_evidence"],
                 "skills": [],
                 "mcp_servers": [],
-                "strengths": ["edits files", "runs commands", "verifies with real tools"],
-                "must_not_do": ["must not bypass approval gates"],
+                "strengths": ["writes manual evidence", "records receipts", "keeps local assumptions out of protocol semantics"],
+                "must_not_do": [
+                    "must not bypass approval gates",
+                    "must not claim runtime dispatch proof",
+                    "must not imply a specific AI agent is installed",
+                ],
             }
         },
     }
@@ -253,9 +263,16 @@ def decompose_execution_tasks(prompt: str, profile: str) -> list[str]:
         line = raw_line.strip()
         if not line:
             continue
-        line = line.lstrip("-*").strip()
-        if line and not line.startswith("#"):
-            candidates.append(line)
+        if line.startswith("#"):
+            continue
+        if re.match(r"^[-*]\s+", line):
+            candidates.append(line[1:].strip())
+            continue
+        numbered = re.match(r"^\d+[.)]\s+(.+)$", line)
+        if numbered:
+            candidates.append(numbered.group(1).strip())
+    if not candidates and cleaned:
+        candidates = [cleaned]
     if not candidates:
         candidates = [cleaned]
 
@@ -824,7 +841,7 @@ def publish_task(root: Path, task_id: str, prompt: str, profile: str | None = No
 
 ID: {task_id}
 Profile: {selected_profile}
-Mode: Full Mode
+Mode: Selected during routing
 
 ## Goal
 
@@ -1078,11 +1095,20 @@ def agent_capability_text(info: dict[str, Any]) -> str:
 
 def role_fit_score(info: dict[str, Any], role: str) -> float:
     text = agent_capability_text(info)
+    negative_text = " ".join(str(item) for item in (info.get("must_not_do") or [])).lower()
     terms = ROLE_MATCH_TERMS.get(role, [])
-    matches = sum(1 for term in terms if term in text)
+    matches = sum(1 for term in terms if term_matches_capability(term, text) and not term_matches_capability(term, negative_text))
     if matches:
         return round(min(0.95, 0.35 + matches * 0.15), 2)
     return 0.25
+
+
+def term_matches_capability(term: str, text: str) -> bool:
+    normalized_text = re.sub(r"[-_]+", " ", text.lower())
+    normalized_term = re.sub(r"[-_]+", " ", term.lower()).strip()
+    if " " in normalized_term:
+        return re.search(rf"(?<!\w){re.escape(normalized_term)}(?!\w)", normalized_text) is not None
+    return normalized_term in set(re.findall(r"[a-z0-9]+", normalized_text))
 
 
 def inferred_primary_role(info: dict[str, Any]) -> str:
@@ -1503,6 +1529,8 @@ def dispatch_task(root: Path, task_id: str, agent: str = "all", submit: bool = F
         raise SystemExit(f"Missing routing.json for task {task_id}")
     selected_agents = routing.get("selected_agents") or []
     targets = selected_agents if agent == "all" else [agent]
+    runtime = routing.get("runtime_adapter") or {}
+    manual_mode = runtime.get("class") == "manual" or runtime.get("name") == "manual"
     preflight = collect_runtime_preflight(targets)
     failed = [
         name
@@ -1521,6 +1549,12 @@ def dispatch_task(root: Path, task_id: str, agent: str = "all", submit: bool = F
         if not dispatch_ref.exists():
             raise SystemExit(f"Missing dispatch for agent {target}: {dispatch_ref}")
         expected = expected_refs_for_agents([target], role_assignments).get(target, [])
+        if manual_mode:
+            if submit:
+                raise SystemExit("Manual Mode cannot use --submit. Copy dispatches manually and record manual_result_attested when evidence exists.")
+            expected_text = ", ".join(expected) if expected else "task-local evidence"
+            commands.append(f"Manual Mode: copy agents/{target}/dispatch.md to {target}; expected evidence: {expected_text}")
+            continue
         command = ["herdr-loop", "--project-root", str(root), "submit-dispatch", task_id, target]
         for ref in expected:
             command.extend(["--expect", ref])

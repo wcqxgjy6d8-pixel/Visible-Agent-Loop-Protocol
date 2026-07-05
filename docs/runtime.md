@@ -47,7 +47,7 @@ provider matrix
 context policy
 agent read
 agent send or insert
-pane/message submit
+agent session/message submit
 submission proof
 runtime task state mapping
 status wait
@@ -80,13 +80,14 @@ See [runtime-adapters.md](runtime-adapters.md) and
 Remote Mode is valid when a local machine connects to a machine running a
 VALP-compatible runtime.
 
-The remote runtime owns agent state, pane state, submission proof, and receipts.
-The local client must not pretend local terminal state proves remote dispatch
-completion.
+The remote runtime owns agent state, agent session state, submission proof, and
+receipts. The local client must not pretend local terminal state proves remote
+dispatch completion.
 
 ## Manual Mode
 
-Manual Mode exists for environments without a VALP-compatible runtime.
+Manual Mode exists for learning, documentation, and environments without a
+VALP-compatible runtime.
 
 Manual Mode can:
 

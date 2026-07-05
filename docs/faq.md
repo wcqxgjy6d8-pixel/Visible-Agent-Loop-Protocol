@@ -7,24 +7,28 @@ collaboration. A product or runtime can implement VALP.
 
 ## Do I need HERDR?
 
-For the recommended Full Mode path, install HERDR or another VALP-compatible
-runtime. HERDR is the reference runtime, not the protocol itself.
+For the documented Full Mode path in this repository, install HERDR. HERDR is
+the current reference runtime, not the protocol itself. Other runtimes can
+implement VALP, but this repository documents HERDR as the reference
+implementation today.
 
 ## Is HERDR required by the protocol?
 
-No. Full Mode requires HERDR or a VALP-compatible runtime. HERDR is the default
-recommended runtime because it is the current reference target.
+No. Full Mode requires a VALP-compatible runtime. HERDR is the current reference
+target, but the protocol allows daemon queues, hosted platforms, remote
+runtimes, or other adapters when they export the required evidence.
 
 ## What happens if I do not install a runtime?
 
-You can use Manual Mode, but it is degraded. Manual Mode can write task folders
-and evidence notes. It cannot prove automatic dispatch submission, wait for
-agent status, or generate runtime-backed receipts.
+You can use Manual Mode. It can write task folders, visible dispatch records,
+manual attestations, and evidence notes. It cannot prove automatic dispatch
+submission, wait for agent status, or generate runtime-backed receipts.
 
 ## Is Manual Mode a normal user experience?
 
-No. Manual Mode is for learning, documentation, temporary audit trails, or
-environments where a compatible runtime cannot be installed.
+Manual Mode is a normal learning and adoption path, but not a Full Mode
+automation path. Use it for documentation, PR reviews, temporary audit trails,
+or environments where a compatible runtime cannot be installed.
 
 ## Does VALP require a specific terminal?
 

@@ -1,0 +1,39 @@
+{
+  "schema_version": "valp-visible-loop-state.v1",
+  "task_id": "MINIMAL-MANUAL-001",
+  "profile": "generic-analysis",
+  "status": "done",
+  "runtime_adapter": {
+    "class": "manual",
+    "name": "manual"
+  },
+  "runtime_task_state_mapping": {
+    "completed": "manual_result_attested_with_expected_evidence"
+  },
+  "provider_matrix": {
+    "status": "scanned",
+    "ref": "routing.json"
+  },
+  "selected_agents": [
+    "manual-reviewer"
+  ],
+  "context_policies": {
+    "manual-reviewer": {
+      "soft_warning_pct": 60,
+      "hard_compression_pct": 70,
+      "emergency_stop_pct": 80
+    }
+  },
+  "skill_recommendations": {
+    "status": "no_matches",
+    "backend": "manual",
+    "ref": "skill-recommendations.json"
+  },
+  "gates": {
+    "verification": "not_required",
+    "review": "passed",
+    "approval": "not_required"
+  },
+  "approval_required": [],
+  "updated_at": "2026-07-05T00:00:00Z"
+}

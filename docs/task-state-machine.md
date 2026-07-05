@@ -6,9 +6,10 @@ VALP separates two concepts:
 : The user-published unit of work with evidence, routing, receipts, review, and
 done criteria.
 
-`execution task`
+`runtime work item`
 : A runtime-owned unit of work, such as a queue item, pane submission,
-issue-triggered run, chat-triggered run, scheduled run, or retry.
+issue-triggered run, chat-triggered run, scheduled run, or retry. Older VALP
+drafts may call this an `execution task`.
 
 The two must be mapped. They are not the same object.
 
@@ -103,7 +104,7 @@ retries may resume when the provider supports it and context policy allows it.
 
 ## Completion Rule
 
-A runtime can finish an execution task without finishing a VALP task.
+A runtime can finish a runtime work item without finishing a VALP task.
 
 VALP is done only when receipts, expected evidence, review, approval gates, and
 final synthesis are recorded.

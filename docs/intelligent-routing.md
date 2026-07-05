@@ -11,7 +11,7 @@ adaptive, auditable, and easy to correct.
 
 ```text
 understand task
-  -> decompose execution tasks
+  -> decompose runtime work items
   -> identify evidence gates
   -> load local overlay, if present
   -> scan runtime/tools/skills/context

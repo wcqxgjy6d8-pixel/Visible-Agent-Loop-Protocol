@@ -7,6 +7,9 @@ The adapter exists so the protocol can work across pane-based tools, daemon
 queues, hosted dashboards, remote SSH hosts, and manual workflows without
 pretending they provide the same guarantees.
 
+HERDR is the current reference adapter target in this repository. It is useful
+for proving the Full Mode path, but it is not the VALP protocol itself.
+
 ## Adapter Classes
 
 | Adapter class | Shape | Mode |
@@ -16,6 +19,24 @@ pretending they provide the same guarantees.
 | hosted/local platform | web board plus local agent workers | Full Mode when audit data is accessible |
 | remote SSH | runtime owns state on another host | Remote Mode |
 | manual | human copies prompts and results | Manual Mode |
+
+## Agent Sessions
+
+VALP uses `agent session` as the generic term for the place where an agent
+receives work and produces output.
+
+Examples:
+
+| Session type | Runtime shape |
+|---|---|
+| terminal pane | pane-controller adapter |
+| queue job | daemon queue adapter |
+| hosted thread/run | hosted platform adapter |
+| SSH-hosted pane or queue | remote adapter |
+| copied prompt / PR comment | manual adapter |
+
+A terminal pane is only one session type. Non-pane runtimes should export
+equivalent job/session identifiers instead of fake pane fields.
 
 ## Full Mode Requirements
 
@@ -38,6 +59,23 @@ approval gate status
 The adapter may store this data in a database, JSONL ledger, local task folder,
 or platform API. The storage is implementation-specific; the exported evidence
 contract is not.
+
+## Coordinator Patterns
+
+VALP does not choose a universal leader.
+
+Common patterns:
+
+| Runtime shape | Coordinator pattern |
+|---|---|
+| pane controller | select a coordinator agent or human from current capability evidence |
+| daemon queue | the daemon writes routing, dispatch receipts, gates, and final synthesis |
+| hosted platform | the platform task controller writes state and evidence refs |
+| manual | a human coordinator writes attestations and synthesis |
+| squad | a selected leader writes visible member routing and handoffs |
+
+The selected coordinator must be recorded in routing evidence with the reason
+for selection. Local defaults are hints, not protocol semantics.
 
 ## Pane Controller Adapter
 
@@ -63,6 +101,8 @@ agent can fail at the UI layer when the pane is too small for its TUI. If a
 selected agent's pane is below the adapter's minimum size, the adapter must stop
 dispatch or record the dispatch as blocked until the pane is repaired.
 
+Pane-specific checks are not required for non-pane adapters.
+
 ## Daemon Queue Adapter
 
 A daemon queue is a system where a local process polls for work, starts an
@@ -80,6 +120,20 @@ The adapter must map runtime queue states into VALP:
 | cancelled | maps to `cancelled` |
 
 Queue success is not enough. VALP still requires evidence.
+
+Recommended queue evidence:
+
+```text
+queue item id
+worker id
+provider/backend id
+dispatch payload ref
+status transition log
+output or artifact ref
+expected evidence refs
+failure reason, if any
+approval state, if needed
+```
 
 ## Hosted Or Local Platform Adapter
 
@@ -133,6 +187,18 @@ manual_result_attested
 ```
 
 Manual attestation is useful for continuity, but it is not Full Mode proof.
+
+Manual adapters should prefer explicit manual labels:
+
+```text
+manual_dispatch_written
+manual_delivery_attested
+manual_result_attested
+manual_blocked
+```
+
+These labels can satisfy Manual Mode continuity, but they do not prove runtime
+delivery.
 
 ## Adapter Rule
 

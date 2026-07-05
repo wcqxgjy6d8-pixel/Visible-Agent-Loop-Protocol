@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Future adapter work may add first-class non-HERDR `valp dispatch --adapter`
+  support.
+
+## 0.2.0-draft
+
 - Adds local coordinator commands: `valp publish`, `valp scan`, `valp route`,
   and `valp dispatch`.
 - `valp publish` now creates a task, scans local capability/overlay files, routes
@@ -20,6 +25,14 @@
   blocked evidence cannot satisfy Done.
 - Adds audit checks for runtime preflight, skill recommendation execution, and
   unsupported runtime/build/test verification claims.
+- Updates the protocol draft to clarify runtime work items, agent sessions,
+  Manual Mode, schema/versioning policy, and the HERDR reference-adapter
+  boundary.
+- Adds a minimal no-runtime Manual Mode example.
+- Adds troubleshooting guidance for preflight, blocked dispatches, skill
+  recommendation failures, and Manual Mode receipts.
+- Treats failed skill recommendation backends as audit warnings instead of hard
+  failures because recommendations are evidence, not authority.
 
 ## 0.1.0-draft
 
@@ -34,8 +47,8 @@
 - Adds profile adapter concept.
 - Adds runtime adapter contract for pane, daemon queue, hosted/local platform,
   remote, and manual workflows.
-- Adds execution task state mapping and clarifies that runtime completion is not
-  VALP completion without expected evidence.
+- Adds runtime work item state mapping and clarifies that runtime completion is
+  not VALP completion without expected evidence.
 - Adds provider matrix as routing evidence.
 - Adds optional squad routing rules.
 - Adds local overlay concept so machine-specific agent profiles stay separate
@@ -45,6 +58,6 @@
 - Adds routing feedback records so future routing can learn from outcomes
   without replacing current scans.
 - Adds platform support guidance for macOS, Linux, Windows SSH, Windows beta,
-  and degraded Manual Mode.
+  and Manual Mode.
 - Adds quickstart, FAQ, comparison document, code of conduct, issue templates,
   and a complete Full Mode task example.

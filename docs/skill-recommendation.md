@@ -10,7 +10,7 @@ The protocol extracts the useful pattern from local skill routers:
 
 ```text
 understand request
-  -> decompose into execution tasks
+  -> decompose into runtime work items
   -> scan installed skills
   -> rank likely skills for each task
   -> surface missing useful skills
@@ -110,7 +110,7 @@ one agent from being asked to load another agent's private skill.
 Each dispatch prompt should include a `Recommended Skills` section with:
 
 ```text
-execution task
+runtime work item
 skill name
 installed/missing status
 confidence
@@ -140,7 +140,7 @@ The routing record should show:
 
 ```text
 which recommender ran
-which execution tasks were scored
+which runtime work items were scored
 which installed skills matched
 which agent library owns the skill
 whether the selected agent is allowed to use it

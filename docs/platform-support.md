@@ -22,7 +22,7 @@ Sources:
 | Linux aarch64 | HERDR stable installer, manual binary, or package manager | Full Mode |
 | Windows, stable workflow | SSH into Linux/macOS host and run HERDR there | Remote Mode with Full Mode guarantees on remote host |
 | Windows, local workflow | Native HERDR Windows preview beta | Full Mode only where beta features satisfy adapter requirements |
-| Any system without compatible runtime | Manual folders and evidence only | Manual Mode, degraded |
+| Any system without compatible runtime | Manual folders, attestations, and evidence only | Manual Mode |
 
 ## macOS
 
@@ -91,14 +91,15 @@ Important caveats from HERDR Windows beta documentation include:
 
 ## Manual Mode
 
-Manual Mode is not the normal VALP experience.
+Manual Mode is a normal way to learn or adopt the evidence discipline. It is not
+the normal automated Full Mode experience.
 
 Use it only when:
 
 ```text
 HERDR cannot be installed
 no VALP-compatible runtime exists
-the user only needs documentation or an audit template
+the user needs documentation, PR review evidence, or an audit template
 the task is temporary and does not require automatic dispatch proof
 ```
 
@@ -114,5 +115,6 @@ automatic evidence gates
 
 ## Documentation Rule
 
-Public VALP documentation should lead users to the best supported Full Mode path
-for their operating system before explaining Manual Mode.
+Public VALP documentation should distinguish the automated Full Mode path from
+the no-runtime Manual Mode path, and must not imply Manual Mode provides runtime
+proof.

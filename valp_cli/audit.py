@@ -286,7 +286,7 @@ class TaskAudit:
         if status == "unavailable":
             return self._warn("skill_recommendations", "Skill recommendation backend result is recorded", "No skill recommendation backend was available", evidence)
         if status == "failed":
-            return self._fail("skill_recommendations", "Skill recommendation backend result is recorded", "Skill recommendation backend failed", evidence)
+            return self._warn("skill_recommendations", "Skill recommendation backend result is recorded", "Skill recommendation backend failed; continue only with explicit missing-recommendation evidence", evidence)
         ref = record.get("ref") or "skill-recommendations.json"
         if status in {"complete", "no_matches"}:
             data = self.skill_recommendations if ref == "skill-recommendations.json" else self._load_json(str(ref))
@@ -313,12 +313,15 @@ class TaskAudit:
         agents = self._selected_agents()
         if not self.receipts:
             return self._fail("dispatch_receipts", "Dispatch receipts satisfy the required gates", "Missing or empty dispatch-receipts.jsonl", evidence)
+        runtime = self.routing.get("runtime_adapter") or self.state.get("runtime_adapter") or {}
+        manual_mode = runtime.get("class") == "manual"
+        completed_events = {"manual_result_attested", "dispatch_completed"} if manual_mode else {"dispatch_completed"}
         latest = self._latest_receipts_by_agent()
         missing = [agent for agent in agents if agent not in latest]
         incomplete = [
             f"{agent}={latest[agent].get('event')}"
             for agent in agents
-            if agent in latest and latest[agent].get("event") != "dispatch_completed"
+            if agent in latest and latest[agent].get("event") not in completed_events
         ]
         failed = []
         if missing:
@@ -327,6 +330,8 @@ class TaskAudit:
             failed.append("latest receipt is not dispatch_completed for: " + ", ".join(incomplete))
         if failed:
             return self._fail("dispatch_receipts", "Dispatch receipts satisfy the required gates", "; ".join(failed), evidence)
+        if manual_mode:
+            return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is manual_result_attested or dispatch_completed for selected agents", evidence)
         return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is dispatch_completed for selected agents", evidence)
 
     def check_expected_evidence(self) -> AuditItem:

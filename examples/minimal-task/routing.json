@@ -1,0 +1,98 @@
+{
+  "schema_version": "valp-capability-routing.v1",
+  "task_id": "MINIMAL-MANUAL-001",
+  "profile": "generic-analysis",
+  "runtime_adapter": {
+    "class": "manual",
+    "name": "manual",
+    "full_mode_capable": false,
+    "state_mapping_ref": "docs/task-state-machine.md"
+  },
+  "runtime_task_state_mapping": {
+    "completed": "manual_result_attested_with_expected_evidence"
+  },
+  "local_overlay": {
+    "used": false
+  },
+  "capabilities_needed": [
+    "manual_review",
+    "visible_synthesis"
+  ],
+  "capabilities_missing": [],
+  "role_requirements": [
+    "reviewer"
+  ],
+  "role_assignments": {
+    "reviewer": "manual-reviewer"
+  },
+  "selected_agents": [
+    "manual-reviewer"
+  ],
+  "agent_match_reasons": {
+    "manual-reviewer": [
+      "manual review evidence for a no-runtime example"
+    ]
+  },
+  "candidate_scores": {
+    "manual-reviewer": {
+      "profile_fit": 0.7,
+      "tool_fit": 0.5,
+      "skill_fit": 0.5,
+      "permission_fit": 1,
+      "context_fit": 1,
+      "evidence_history": 0.5,
+      "availability": 1,
+      "risk_fit": 1,
+      "overall": 0.72,
+      "confidence": "medium"
+    }
+  },
+  "routing_confidence": {
+    "overall": "medium",
+    "reason": "Manual Mode example uses human attestation and does not claim runtime proof."
+  },
+  "selected_agent_context_policies": {
+    "manual-reviewer": {
+      "soft_warning_pct": 60,
+      "hard_compression_pct": 70,
+      "emergency_stop_pct": 80
+    }
+  },
+  "provider_matrix": {
+    "generated_at": "2026-07-05T00:00:00Z",
+    "providers": {
+      "manual-reviewer": {
+        "provider_name": "manual-reviewer",
+        "provider_version_or_runtime_report": "manual",
+        "cli_available": false,
+        "mcp_support": "unknown",
+        "skill_discovery_path": "none",
+        "session_resume_support": "not_applicable",
+        "approval_behavior": "manual_attestation",
+        "model_selection": "manual",
+        "max_concurrency": 1,
+        "context_policy": {
+          "soft_warning_pct": 60,
+          "hard_compression_pct": 70,
+          "emergency_stop_pct": 80
+        },
+        "runtime_preflight": {
+          "status": "not_applicable"
+        },
+        "known_limitations": [
+          "no automatic dispatch proof",
+          "no runtime status wait"
+        ],
+        "last_verified_at": "2026-07-05T00:00:00Z"
+      }
+    }
+  },
+  "skill_recommendations": {
+    "status": "no_matches",
+    "backend": "manual",
+    "ref": "skill-recommendations.json"
+  },
+  "squad_routing": {
+    "used": false
+  }
+}

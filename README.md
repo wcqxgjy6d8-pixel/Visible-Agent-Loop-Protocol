@@ -6,16 +6,74 @@ The protocol is designed for terminal-based AI coding agents, review agents,
 research agents, prototype agents, and coordinator agents. It is not tied to a
 single project, operating system, terminal emulator, or model provider.
 
+## Why VALP?
+
+Agent work often fails in ways that ordinary chat transcripts hide:
+
+- an agent says "done" without evidence;
+- text is inserted into an input box but never submitted;
+- a runtime marks a job completed before expected files exist;
+- a reviewer gives a hidden opinion that the user cannot audit;
+- a local preference silently turns into a fixed leader assignment.
+
+VALP turns those failure points into a protocol: visible dispatches, receipt
+states, expected evidence, review gates, approval gates, and final synthesis.
+It is closer to a control system than a chat convention.
+
+## Two Entry Paths
+
+Choose the path that matches why you are here:
+
+| Goal | Start here | Runtime required? |
+|---|---|---|
+| Understand the protocol | Read [SPEC.md](SPEC.md) and audit `examples/minimal-task/` | No |
+| Try automated multi-agent work | Install HERDR, the current reference runtime | Yes |
+| Implement a new runtime | Read [docs/runtime-adapters.md](docs/runtime-adapters.md) | Depends on your adapter |
+
+No-runtime first look:
+
+```bash
+bin/valp audit examples/minimal-task
+```
+
+Reference-runtime trial:
+
+```bash
+bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it"
+bin/valp dispatch TASK-001 --workspace /path/to/workspace
+```
+
+`publish` only creates and routes the task. It is not a completion signal. A
+new task will not pass `valp audit` until dispatch receipts, expected evidence,
+verification/review status, and final synthesis are recorded.
+
+## Architecture
+
+```text
+user request
+  -> VALP task folder
+  -> reference CLI or compatible runtime adapter
+  -> agent sessions, queues, hosted runs, or manual handoffs
+  -> dispatch receipts
+  -> expected evidence
+  -> verification/review/approval gates
+  -> final synthesis
+  -> valp audit
+```
+
+HERDR is the current reference runtime for the automated path. It is not the
+protocol itself.
+
 ## Fast Start
 
-VALP's default path is Full Mode automation. Install HERDR or another
-VALP-compatible runtime first; without a runtime, VALP is only a manual audit
-workflow.
+VALP's default automated path is Full Mode with HERDR, the current reference
+runtime. The protocol supports other compatible runtimes, but HERDR is the only
+documented reference implementation in this repository today.
 
 Recommended first path:
 
 ```text
-1. Install HERDR or a VALP-compatible runtime.
+1. Install HERDR, the reference VALP runtime.
 2. Verify the runtime can list agents and report status.
 3. Create or choose a workspace.
 4. Publish a task.
@@ -47,14 +105,20 @@ bin/valp dispatch TASK-001 --workspace /path/to/workspace
 bin/valp audit examples/full-mode-task
 ```
 
-`valp publish` creates the task, scans local capabilities, routes selected
-agents, writes dispatch files, and records `dispatch_written` receipts.
+`valp publish` creates the task, scans local capabilities when available, routes
+selected agents, writes dispatch files, and records `dispatch_written` receipts.
+The current reference scan reads HERDR-compatible local capability files when
+present. If no local capability file is available, it falls back to a generic
+Manual Mode operator record rather than assuming a specific AI agent is
+installed.
 
-`valp preflight` checks runtime readiness such as agent panes, terminal size,
-CLI version probes, and restart/update signals when the adapter can expose them.
+`valp preflight` checks runtime readiness such as agent sessions, terminal size
+for pane adapters, CLI version probes, and restart/update signals when the
+adapter can expose them.
 
-`valp dispatch` prints HERDR adapter submit commands by default. Use
-`--submit` to call `herdr-loop submit-dispatch`.
+`valp dispatch` prints Manual Mode copy instructions for manual tasks. For
+HERDR-routed tasks, it prints HERDR adapter submit commands by default. Use
+`--submit` only when the local HERDR runtime is ready.
 
 `valp audit` scans a task evidence folder and checks the Done Criteria from
 `SPEC.md`, including runtime preflight, skill recommendation evidence, invalid
@@ -64,13 +128,13 @@ See [docs/cli-audit.md](docs/cli-audit.md).
 
 ## Platform Paths
 
-| User system | Recommended path | Mode |
-|---|---|---|
-| macOS | HERDR stable installer or Homebrew | Full Mode |
-| Linux | HERDR stable installer, manual binary, or package manager | Full Mode |
-| Windows stable workflow | SSH to Linux/macOS host running HERDR | Remote Mode with Full Mode guarantees on remote host |
-| Windows local workflow | HERDR Windows preview beta | Verify beta limitations before claiming Full Mode |
-| No compatible runtime | Manual files and evidence only | Manual Mode, degraded |
+| User system | Recommended path | Mode | Caveat |
+|---|---|---|---|
+| macOS | HERDR stable installer or Homebrew | Full Mode | Reference runtime path |
+| Linux | HERDR stable installer, manual binary, or package manager | Full Mode | Reference runtime path |
+| Windows stable workflow | SSH to Linux/macOS host running HERDR | Remote Mode | Full Mode guarantees live on the remote host |
+| Windows local workflow | HERDR Windows preview beta | Conditional Full Mode | Verify beta limitations before claiming Full Mode |
+| No compatible runtime | Manual files and evidence only | Manual Mode | Useful for learning and audit trails; no runtime proof |
 
 See [docs/platform-support.md](docs/platform-support.md) for platform-specific
 notes.
@@ -90,10 +154,10 @@ Full Mode is the intended VALP experience for automated multi-agent work:
 - approval gates for high-risk actions;
 - final synthesis record.
 
-Manual Mode is a degraded fallback for environments where a compatible runtime
-cannot be installed. It can preserve task folders and evidence notes, but it
-does not provide automatic dispatch proof, status waits, or runtime-backed
-receipt guarantees.
+Manual Mode is a valid way to learn or adopt the evidence discipline before a
+runtime is installed. It can preserve task folders, manual dispatch records, and
+evidence notes, but it must not claim automatic dispatch proof, status waits, or
+runtime-backed receipt guarantees.
 
 ## Core Idea
 
@@ -106,7 +170,7 @@ publish task
   -> select runtime adapter
   -> classify task profile
   -> build provider matrix
-  -> preflight runtime and panes
+  -> preflight runtime and agent sessions
   -> score and route agents by evidence
   -> run skill recommendation, if available
   -> route squad if needed
@@ -135,9 +199,9 @@ receipts and expected evidence.
 
 | Mode | Runtime requirement | Guarantees |
 |---|---|---|
-| Full Mode | HERDR or VALP-compatible runtime | agent scan, visible dispatch, submission proof, status waits, receipt ledger, evidence gates |
+| Full Mode | HERDR reference runtime or compatible runtime | agent scan, visible dispatch, submission proof, status waits, receipt ledger, evidence gates |
 | Remote Mode | SSH to a VALP-compatible runtime | same as Full Mode, with remote runtime caveats |
-| Manual Mode | no runtime automation | task folders and evidence files only; no automatic dispatch proof |
+| Manual Mode | no runtime automation | task folders, manual attestations, and evidence files; no automatic dispatch proof |
 
 Terminal apps such as Ghostty, iTerm, Apple Terminal, Windows Terminal, or a
 Linux terminal are display shells. The protocol requires runtime capabilities,
@@ -160,7 +224,7 @@ The protocol itself only requires a VALP-compatible runtime interface:
 agent list
 agent status/read
 agent send/insert
-pane submit
+agent session/message submit
 submission proof
 status wait
 task evidence store
@@ -193,7 +257,9 @@ Visible-Agent-Loop-Protocol/
     faq.md
     comparison.md
     runtime-adapters.md
+    schema-versioning.md
     task-state-machine.md
+    troubleshooting.md
     local-overlays.md
     intelligent-routing.md
     provider-matrix.md
@@ -224,6 +290,7 @@ Visible-Agent-Loop-Protocol/
     context-policy.json
     routing.json
     dispatch.md
+    minimal-task/
     full-mode-task/
 ```
 
@@ -247,4 +314,6 @@ Visible-Agent-Loop-Protocol/
 
 ## Status
 
-Initial open protocol draft.
+Open protocol draft with reference CLI version `0.2.0`. The protocol draft is
+`0.2.0-draft`; HERDR remains the current reference runtime, not a protocol
+requirement.

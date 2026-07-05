@@ -89,7 +89,9 @@ restrictions, according to the license text checked on 2026-07-03.
 
 ## Practical Use
 
-Use HERDR or another compatible runtime when you want Full Mode automation.
+Use HERDR, the current reference runtime, when you want the documented Full Mode
+automation path. Other runtimes can be VALP-compatible if they implement the
+adapter evidence contract.
 
 Use VALP when you need a portable protocol and evidence standard.
 

@@ -51,7 +51,7 @@ preference.
 
 ```text
 decompose the user request
-map each execution task to required capabilities and evidence
+map each runtime work item to required capabilities and evidence
 load local overlay profiles, if present
 scan runtime, tools, MCP, skills, and context policy
 score candidate agents
@@ -143,7 +143,7 @@ should require review before mutation or ask for explicit approval.
   "selected_agent_context_policies": {},
   "skill_recommendations": {
     "status": "not_run",
-    "reason": "requires decomposed execution tasks"
+    "reason": "requires decomposed runtime work items"
   },
   "visible_attention": {
     "status": "recorded",

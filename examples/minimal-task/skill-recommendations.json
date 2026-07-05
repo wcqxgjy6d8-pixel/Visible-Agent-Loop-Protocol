@@ -1,0 +1,13 @@
+{
+  "schema_version": "valp-skill-recommendations.v1",
+  "task_id": "MINIMAL-MANUAL-001",
+  "profile": "generic-analysis",
+  "status": "no_matches",
+  "backend": "manual",
+  "execution_tasks": [
+    "manual review of a no-runtime VALP example"
+  ],
+  "results": [],
+  "missing_skills": [],
+  "generated_at": "2026-07-05T00:00:00Z"
+}

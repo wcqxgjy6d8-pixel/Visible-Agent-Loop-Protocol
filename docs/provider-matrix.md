@@ -67,7 +67,8 @@ current availability.
 : Determines whether the agent can safely receive more work.
 
 `runtime_preflight`
-: Determines whether the runtime pane, CLI, display size, and update state are
+: Determines whether the runtime agent session, CLI, display size for pane
+adapters, and update state are
 ready enough for dispatch.
 
 `known_limitations`

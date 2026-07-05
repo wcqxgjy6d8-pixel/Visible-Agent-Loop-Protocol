@@ -1,13 +1,70 @@
 from pathlib import Path
+import contextlib
+import io
 import json
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from valp_cli.workflow import publish_task, read_json, route_task, scan_workspace
+from valp_cli.cli import main
+from valp_cli.workflow import (
+    classify_profile,
+    decompose_execution_tasks,
+    dispatch_task,
+    load_local_capabilities,
+    publish_task,
+    read_json,
+    route_task,
+    scan_workspace,
+)
 
 
 class ValpWorkflowTests(unittest.TestCase):
+    def test_cli_version_flag(self) -> None:
+        output = io.StringIO()
+        with self.assertRaises(SystemExit) as raised:
+            with contextlib.redirect_stdout(output):
+                main(["--version"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("valp 0.2.0", output.getvalue())
+
+    def test_profile_classification_scores_all_matches(self) -> None:
+        self.assertEqual(classify_profile("Fix the HERDR agent connector code"), "agent-runtime")
+
+    def test_plain_goal_decomposition_keeps_paragraph_together(self) -> None:
+        tasks = decompose_execution_tasks("Fix the protocol docs and verify the examples.", "software-code")
+        self.assertEqual(tasks[0], "Fix the protocol docs and verify the examples.")
+
+    def test_list_goal_decomposition_uses_explicit_items(self) -> None:
+        tasks = decompose_execution_tasks("- Fix SPEC numbering\n- Add minimal example", "generic-analysis")
+        self.assertIn("Fix SPEC numbering", tasks)
+        self.assertIn("Add minimal example", tasks)
+
+    def test_empty_environment_fallback_is_runtime_neutral(self) -> None:
+        with patch("valp_cli.workflow.local_capabilities_path", return_value=Path("/tmp/valp-missing-capabilities.json")):
+            capabilities = load_local_capabilities()
+        self.assertIn("manual-operator", capabilities["agents"])
+        self.assertNotIn("codex", capabilities["agents"])
+        operator = capabilities["agents"]["manual-operator"]
+        self.assertIn("manual_evidence", operator["role"])
+        self.assertIn("must not imply a specific AI agent is installed", operator["must_not_do"])
+
+    def test_manual_mode_dispatch_prints_manual_instruction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.local_capabilities_path", return_value=root / "missing-capabilities.json"):
+                with patch("valp_cli.workflow.local_overlay_path", return_value=root / "missing-overlay.json"):
+                    with patch("valp_cli.workflow.shutil.which", return_value=None):
+                        task_dir = publish_task(root, "TASK-MANUAL", "Review the task evidence")
+                        commands = dispatch_task(root, "TASK-MANUAL")
+                        with self.assertRaises(SystemExit):
+                            dispatch_task(root, "TASK-MANUAL", submit=True)
+
+            self.assertEqual(read_json(task_dir / "routing.json")["runtime_adapter"]["class"], "manual")
+            self.assertTrue(commands)
+            self.assertTrue(commands[0].startswith("Manual Mode:"))
+            self.assertNotIn("herdr-loop", commands[0])
+
     def test_publish_auto_scans_routes_and_writes_dispatches(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -29,6 +86,7 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertIn("selected_agents", routing)
             self.assertEqual(routing["visible_attention"]["status"], "recorded")
             self.assertTrue(routing["selected_agents"])
+            self.assertIn("Mode: Selected during routing", (task_dir / "task.md").read_text(encoding="utf-8"))
 
             for agent in routing["selected_agents"]:
                 dispatch_path = task_dir / "agents" / agent / "dispatch.md"

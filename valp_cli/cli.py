@@ -4,12 +4,28 @@ import argparse
 import json
 from pathlib import Path
 
+from . import __version__
 from .audit import FAIL, TaskAudit, print_text_report, report_to_dict, resolve_task_dir
 from .workflow import collect_runtime_preflight, dispatch_task, publish_task, route_task, scan_workspace
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="valp", description="VALP reference CLI")
+    parser = argparse.ArgumentParser(
+        prog="valp",
+        description="VALP reference CLI",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  valp audit examples/minimal-task
+  valp publish TASK-001 --workspace . --prompt "Fix the bug and verify it"
+  valp dispatch TASK-001 --workspace .
+
+notes:
+  dispatch prints Manual Mode instructions for manual tasks.
+  dispatch submits only through the HERDR reference adapter today.
+  HERDR is the reference runtime, not a VALP protocol requirement.
+""",
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     publish = sub.add_parser("publish", help="Create a VALP task and auto-route by default")
@@ -31,11 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
     route.add_argument("--workspace", default=".", help="Workspace root")
     route.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
-    dispatch = sub.add_parser("dispatch", help="Print or submit dispatches through the local HERDR adapter")
+    dispatch = sub.add_parser("dispatch", help="Print dispatch instructions or submit through the HERDR reference adapter")
     dispatch.add_argument("task_id", help="Task id")
     dispatch.add_argument("--workspace", default=".", help="Workspace root")
     dispatch.add_argument("--agent", default="all", help="Agent name or all")
-    dispatch.add_argument("--submit", action="store_true", help="Actually call herdr-loop submit-dispatch")
+    dispatch.add_argument("--submit", action="store_true", help="Actually call herdr-loop submit-dispatch through the HERDR reference adapter")
 
     preflight = sub.add_parser("preflight", help="Check runtime panes, CLI probes, and terminal sizing")
     preflight.add_argument("--agent", action="append", help="Agent name to check; may be repeated")
@@ -109,7 +125,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.submit:
             print(f"Submitted dispatch for task {args.task_id}")
         else:
-            print("Dispatch dry run. Use --submit to call HERDR:")
+            manual = any(command.startswith("Manual Mode:") for command in commands)
+            if manual:
+                print("Manual Mode dispatch instructions. Copy dispatches manually and record manual receipts:")
+            else:
+                print("Dispatch dry run for the HERDR reference adapter. Use --submit only when HERDR is ready:")
             for command in commands:
                 print(command)
         return 0

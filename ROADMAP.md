@@ -2,80 +2,83 @@
 
 ## 0.1 Protocol Draft
 
-- Generic lifecycle.
-- Full/Remote/Manual runtime modes.
-- Capability routing.
-- Context policy scanning.
-- Dispatch receipts.
-- Evidence layout.
-- Skill recommendation abstraction.
-- Profile adapters.
-- Runtime adapter contract.
-- Execution task state mapping.
-- Provider matrix.
-- Optional squad routing.
-- Local overlays for runtime/operator-specific configuration.
-- Intelligent routing scores and confidence bands.
-- Routing feedback records for learning from task outcomes.
-- Cross-platform Full Mode guidance for macOS, Linux, Windows SSH, Windows
-  beta, and Manual Mode fallback.
-- Quickstart, FAQ, comparison document, issue templates, code of conduct, and
-  a complete Full Mode evidence example.
+- [shipped] Generic lifecycle.
+- [shipped] Full/Remote/Manual runtime modes.
+- [shipped] Capability routing.
+- [shipped] Context policy scanning.
+- [shipped] Dispatch receipts.
+- [shipped] Evidence layout.
+- [shipped] Skill recommendation abstraction.
+- [shipped] Profile adapters.
+- [shipped] Runtime adapter contract.
+- [shipped] Runtime work item state mapping.
+- [shipped] Provider matrix.
+- [shipped] Optional squad routing.
+- [shipped] Local overlays for runtime/operator-specific configuration.
+- [shipped] Intelligent routing scores and confidence bands.
+- [shipped] Routing feedback records for learning from task outcomes.
+- [shipped] Cross-platform Full Mode guidance for macOS, Linux, Windows SSH,
+  Windows beta, and Manual Mode.
+- [shipped] Quickstart, FAQ, comparison document, issue templates, code of
+  conduct, and a complete Full Mode evidence example.
 
 ## 0.2 Reference CLI
 
-- `valp publish` for local task creation and default auto-route.
-- `valp scan` for local capability and overlay snapshots.
-- `valp route` for candidate scoring, selected agents, dispatch files, and
-  `dispatch_written` receipts.
-- `valp dispatch` for HERDR adapter submit command generation and optional
-  `--submit`.
-- `valp preflight` for runtime pane/CLI readiness checks before dispatch.
-- `valp audit` for task evidence folders.
-- Map Done Criteria to executable audit items.
-- Validate dispatch receipts.
-- Validate context policy presence.
-- Validate approval gates.
-- Validate runtime preflight gates.
-- Validate skill recommendation evidence and dispatch surfacing.
-- Validate invalid/superseded evidence status.
-- Validate runtime/build/test claims have concrete evidence.
-- Produce text and JSON task audit reports.
-- Generate workspace scaffold.
-- Validate schemas.
+- [shipped] `valp publish` for local task creation and default auto-route.
+- [shipped] `valp scan` for local capability and overlay snapshots.
+- [shipped] `valp route` for candidate scoring, selected agents, dispatch
+  files, and `dispatch_written` receipts.
+- [shipped] `valp dispatch` for HERDR reference-adapter submit command
+  generation and optional `--submit`.
+- [shipped] `valp preflight` for runtime pane/CLI readiness checks before
+  dispatch.
+- [shipped] `valp audit` for task evidence folders.
+- [shipped] Map Done Criteria to executable audit items.
+- [shipped] Validate dispatch receipts.
+- [shipped] Validate context policy presence.
+- [shipped] Validate approval gates.
+- [shipped] Validate runtime preflight gates.
+- [shipped] Validate skill recommendation evidence and dispatch surfacing.
+- [shipped] Validate invalid/superseded evidence status.
+- [shipped] Validate runtime/build/test claims have concrete evidence.
+- [shipped] Produce text and JSON task audit reports.
+- [planned] `valp init` workspace scaffold.
+- [planned] Standalone schema validation command.
 
 ## 0.3 Runtime Adapters
 
-- HERDR adapter.
-- Daemon queue adapter.
-- Managed-agent platform adapter.
-- Manual adapter.
-- Remote SSH adapter notes.
-- Windows preview caveats.
-- Linux/macOS stable runtime notes.
+- [shipped] HERDR reference-adapter command generation in `valp dispatch`.
+- [planned] First-class `valp dispatch --adapter <name>` interface.
+- [planned] Daemon queue adapter.
+- [planned] Managed-agent platform adapter.
+- [planned] Manual adapter helper commands.
+- [shipped] Remote SSH adapter notes.
+- [shipped] Windows preview caveats.
+- [shipped] Linux/macOS stable runtime notes.
 
 ## 0.4 Recommendation Backends
 
-- Generic recommendation contract.
-- Optional task-skill-router adapter.
-- Missing capability reporting.
-- Recommendation audit log.
+- [shipped] Generic recommendation contract.
+- [shipped] Optional task-skill-router adapter in the reference CLI.
+- [shipped] Missing capability reporting.
+- [planned] Recommendation audit log beyond task-local JSON evidence.
 
 ## 0.5 Routing Intelligence
 
-- Candidate scoring CLI output.
-- Local overlay validation.
-- Routing feedback aggregation.
-- Confidence-based discovery task generation.
-- Re-routing when tools, context, or evidence gates change.
+- [shipped] Candidate scoring in routing evidence.
+- [planned] Candidate scoring CLI output.
+- [planned] Local overlay validation.
+- [planned] Routing feedback aggregation.
+- [planned] Confidence-based discovery task generation.
+- [planned] Re-routing when tools, context, or evidence gates change.
 
 ## 0.6 Profile Packs
 
-- software-code
-- research
-- web-frontend
-- apple-app
-- document-artifact
-- agent-runtime
-- ops-release
-- prototype
+- [planned] software-code
+- [planned] research
+- [planned] web-frontend
+- [planned] apple-app
+- [planned] document-artifact
+- [planned] agent-runtime
+- [planned] ops-release
+- [planned] prototype

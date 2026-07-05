@@ -1,6 +1,6 @@
 # Visible Agent Loop Protocol Specification
 
-Version: 0.1.0-draft
+Version: 0.2.0-draft
 
 ## 1. Purpose
 
@@ -15,24 +15,35 @@ profiles.
 
 `agent`
 : A local or remote AI worker with a role, tool access, context limits, and
-permission boundaries.
+permission boundaries, backed by a model provider, runtime provider, or manual
+operator.
 
 `runtime`
 : A system that can list agents, inspect status, send visible dispatches,
-submit panes/messages, wait for state, and read output.
+submit agent sessions/messages, wait for state, and read output.
 
 `runtime adapter`
-: The compatibility layer that maps a concrete runtime, such as a pane
+: The compatibility layer that maps a concrete runtime, such as an agent-session
 controller, daemon queue, hosted agent platform, or manual workflow, into VALP
 receipts and evidence.
+
+`agent session`
+: A visible or addressable interaction channel for one agent, such as a
+terminal pane, hosted-agent thread, queue worker, or manually copied dispatch.
+
+`pane`
+: A terminal split or equivalent visible UI surface used by a pane-controller
+runtime adapter. A pane is one possible agent session type, not a protocol
+requirement.
 
 `task`
 : A user-published unit of work with a task id and evidence folder.
 
-`execution task`
+`runtime work item`
 : A runtime-owned unit of agent work, such as a queue item, issue-triggered run,
-chat-triggered run, scheduled run, or pane-submitted prompt. An execution task is
-not the same as a VALP task; it must be mapped into VALP evidence.
+chat-triggered run, scheduled run, hosted-agent thread, or pane-submitted prompt.
+A runtime work item is not the same as a VALP task; it must be mapped into VALP
+evidence. Older documents may call this an `execution task`.
 
 `profile`
 : A domain adapter that defines gates and evidence for a task type, such as
@@ -93,36 +104,65 @@ contain skills owned by other providers.
 
 ## 3. Lifecycle
 
+VALP defines a small set of phases, with finer sub-steps inside each phase. A
+runtime may persist the phase, the sub-state, or both, but it must always export
+enough evidence to satisfy the Done Criteria.
+
+High-level phases:
+
+```text
+INTAKE
+  -> SCAN
+  -> ROUTE
+  -> DISPATCH
+  -> EXECUTE
+  -> REVIEW
+  -> RECORD
+  -> DONE / BLOCKED / FAILED / CANCELLED
+```
+
+Expanded sub-steps:
+
 ```text
 INTAKE
   -> PUBLISH
-  -> SCAN CAPABILITIES
-  -> SCAN CONTEXT POLICIES
-  -> LOAD LOCAL OVERLAY
+SCAN
+  -> SCAN CAPABILITIES, CONTEXT POLICIES, AND LOCAL OVERLAY
   -> SELECT RUNTIME ADAPTER
+ROUTE
   -> CLASSIFY TASK
   -> SELECT PROFILE
-  -> DECOMPOSE EXECUTION TASKS
+  -> DECOMPOSE INTO RUNTIME WORK ITEMS
   -> RECOMMEND SKILLS, IF BACKEND EXISTS
   -> BUILD PROVIDER MATRIX
-  -> PREFLIGHT RUNTIME AND AGENT PANES
+  -> PREFLIGHT RUNTIME AND AGENT SESSIONS
   -> SCORE AND ROUTE AGENTS
   -> ROUTE SQUAD, IF USED
+DISPATCH
   -> WRITE VISIBLE DISPATCH
   -> SUBMIT DISPATCH
   -> MAP RUNTIME TASK STATES
+EXECUTE
   -> ANALYZE
   -> EXECUTE / RESEARCH / PROTOTYPE
   -> VERIFY
+REVIEW
   -> REVIEW
   -> FIX
   -> REVIEW AGAIN
   -> APPROVAL GATE, IF NEEDED
+RECORD
   -> RECORD
   -> DONE / BLOCKED / FAILED / CANCELLED
 ```
 
 ## 4. State Machine
+
+The state machine below is the full reference vocabulary. Implementations may
+collapse adjacent sub-states into phase-level records if they preserve the
+required evidence and state mapping. For example, a small CLI may record
+`dispatching` while separately writing routing, provider, preflight, and visible
+attention evidence.
 
 ```text
 new
@@ -152,7 +192,7 @@ new
   -> done | blocked | failed | cancelled
 ```
 
-### 4.1 Execution Task State Mapping
+### 4.1 Runtime Work Item State Mapping
 
 Runtimes may expose their own queue state machine. A VALP adapter may map states
 such as:
@@ -231,6 +271,11 @@ If terminal dimensions cannot be read, the adapter must record `unknown` instead
 of pretending the pane is safe. If dimensions are below the agent minimum, Full
 Mode dispatch must stop or require an explicit operator repair before sending
 the task.
+
+For headless, daemon, hosted, or queue-based runtimes, pane fields are not
+required. The adapter must instead record the equivalent session or job facts
+needed to prove delivery and completion, such as queue id, worker id, hosted run
+id, output reference, artifact path, retry state, and expected evidence refs.
 
 ## 6. Local Overlays
 
@@ -311,12 +356,12 @@ or quality.
 Minimum routing decision steps:
 
 ```text
-decompose the task into execution tasks
+decompose the task into runtime work items
 identify required capabilities and evidence gates
 load local overlay profiles, if present
 scan current runtime/tool/skill/context state
 run runtime preflight for selected or high-relevance agents
-rank candidate agents for each execution task
+rank candidate agents for each runtime work item
 select a coordinator from current capability evidence
 record confidence and risk for selected agents
 record missing capability or uncertainty
@@ -324,11 +369,23 @@ route discovery/review before implementation when confidence is low
 ```
 
 Coordinator or leader selection is a routing output, not a protocol constant.
-VALP must not hard-code one vendor, product, local agent name, or runtime pane as
-the universal leader. A local overlay may express preferences, but the final
+VALP must not hard-code one vendor, product, local agent name, or runtime
+session type as the universal leader. A local overlay may express preferences,
+but the final
 selection must be justified by current capability, tool, context, permission,
 availability, profile, and evidence scans. If a user has a stronger coordinator
 agent, the open protocol should let that agent own state and gates.
+
+Coordinator selection patterns:
+
+- Pane-controller runtime: choose a coordinator agent or human from current
+  capability evidence, then record that choice and reason in routing evidence.
+- Daemon or hosted runtime: the runtime process may act as coordinator if it
+  writes visible dispatches, receipts, gates, and final synthesis evidence.
+- Manual Mode: a human coordinator may copy dispatches and write attestations,
+  but must not label those attestations as Full Mode submission proof.
+- Squad routing: a selected squad leader may coordinate sub-agents only when the
+  leader decision, member list, and handoffs are visible evidence.
 
 Recommended scoring factors:
 
@@ -363,8 +420,9 @@ Low confidence rules:
 ## 9. Runtime Modes
 
 Full Mode requires a VALP-compatible runtime. HERDR is one reference runtime,
-not the protocol's required coordinator or leader. Manual Mode is allowed only
-as a degraded workflow.
+not the protocol's required coordinator or leader. Manual Mode is a valid
+learning and audit workflow, but it must not claim Full Mode automation
+guarantees.
 
 Full Mode must support:
 
@@ -373,7 +431,7 @@ agent list
 agent status
 agent read
 agent send/insert
-pane/message submit
+agent session/message submit
 submission proof
 wait for status
 task evidence writing
@@ -385,7 +443,8 @@ equivalent submission proof, state transitions, output references, and evidence
 locations. Queue completion alone is not enough.
 
 Manual Mode may write task folders and evidence files, but it cannot claim
-automatic dispatch proof.
+automatic dispatch proof, runtime-backed status waits, or Full Mode receipt
+equivalence.
 
 ## 10. Dispatch Receipts
 
@@ -399,6 +458,19 @@ dispatch_completed
 dispatch_blocked
 ```
 
+Manual Mode may also record manual-only receipt labels:
+
+```text
+manual_dispatch_written
+manual_delivery_attested
+manual_result_attested
+manual_blocked
+```
+
+Manual labels are useful audit records, but they are not Full Mode runtime
+proof. `manual_result_attested` may satisfy a Manual Mode evidence trail only
+when expected evidence exists; it must not be reported as `dispatch_submitted`.
+
 Rules:
 
 - `dispatch_written` means the dispatch file exists and was surfaced.
@@ -407,6 +479,8 @@ Rules:
 state or equivalent proof.
 - `dispatch_completed` means expected evidence exists.
 - `dispatch_blocked` means submission or completion could not be proven.
+- `manual_result_attested` means a human coordinator attests that expected
+  evidence exists in a Manual Mode task.
 
 If expected evidence is declared, gates require `dispatch_completed`.
 
@@ -509,7 +583,7 @@ The useful extracted pattern is:
 
 ```text
 understand request
-  -> decompose into execution tasks
+  -> decompose into runtime work items
   -> rank installed skills against each task
   -> surface missing useful skills
   -> record recommendation evidence
@@ -542,7 +616,7 @@ Dispatch prompts must surface relevant installed skills to the target agent.
 They should include:
 
 ```text
-execution task
+runtime work item
 recommended skill name
 installed or missing status
 confidence/mode/decision
@@ -551,9 +625,9 @@ instruction that recommendations are aids, not permission grants
 ```
 
 An agent should use or load a recommended skill only when it matches the agent's
-role and materially improves the execution task. If a useful skill is missing,
-the task should record the gap instead of silently proceeding as if the skill
-were available.
+role and materially improves the runtime work item. If a useful skill is
+missing, the task should record the gap instead of silently proceeding as if the
+skill were available.
 
 ## 14. Visible Attention Routing
 
@@ -672,7 +746,28 @@ a workspace-level routing memory:
 Do not store secrets, raw private data, or full hidden conversations in routing
 feedback. Record evidence paths and short summaries instead.
 
-## 17. Evidence Store
+## 17. Schema And Protocol Versioning
+
+The protocol version and JSON schema versions are related but independent.
+
+Protocol version describes the human-readable VALP contract: lifecycle,
+receipts, adapter duties, evidence gates, approval gates, and Done Criteria.
+Schema version describes one machine-readable artifact shape, such as routing,
+state, receipts, or visible attention evidence.
+
+Rules:
+
+- A schema version may remain `v1` while the protocol draft moves from
+  `0.1.0-draft` to `0.2.0-draft`, as long as that artifact shape stays
+  backward-compatible.
+- Additive fields should be accepted by older readers when possible.
+- Readers should preserve or ignore unknown fields instead of failing, unless
+  the unknown field changes a safety gate.
+- Breaking artifact changes require a new schema version.
+- A task folder should record the schema version for each machine-readable
+  artifact it writes.
+
+## 18. Evidence Store
 
 Canonical task evidence lives under:
 
@@ -717,7 +812,7 @@ Agents must not make runtime/build/test/lint/UI verification claims without
 concrete evidence. Claims such as "build passed", "tests passed", "UI verified",
 or equivalent must cite a command log, screenshot, receipt, or evidence path.
 
-## 17. Approval Gates
+## 19. Approval Gates
 
 The following require explicit user approval:
 
@@ -745,7 +840,14 @@ external_private_data
 
 No approval is inferred from silence.
 
-## 18. Done Criteria
+The approval mechanism is adapter-specific. A pane-controller adapter may use a
+visible prompt, operator confirmation, or policy file. A daemon or hosted
+adapter may require an approval record or allowlist before starting high-risk
+work. Manual Mode may use a human-written attestation. In all cases, the task
+evidence must record what was requested, who or what approved it, when it was
+approved, and which scope the approval covered.
+
+## 20. Done Criteria
 
 A task is done only when:
 

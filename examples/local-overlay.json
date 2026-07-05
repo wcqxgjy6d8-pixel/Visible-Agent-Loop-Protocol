@@ -4,7 +4,7 @@
   "operator": "example-operator",
   "workspace_defaults": {
     "evidence_root": ".herdr-loop/tasks",
-    "manual_mode": "fallback_only"
+    "manual_mode": "allowed_for_learning_and_audit"
   },
   "runtime_preferences": {
     "preferred_full_mode_runtime": "herdr-or-compatible-runtime",

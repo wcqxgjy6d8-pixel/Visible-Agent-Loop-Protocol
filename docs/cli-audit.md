@@ -7,8 +7,19 @@ publish -> scan -> route -> dispatch -> audit
 ```
 
 It is intentionally small. It creates task evidence, reads local capability
-profiles, writes routing and dispatch files, prints HERDR submit commands, and
-audits completion evidence.
+profiles when present, writes routing and dispatch files, prints Manual Mode
+copy instructions or HERDR reference-adapter submit commands, and audits
+completion evidence.
+
+The CLI is not the whole protocol. In this version, `dispatch` is a HERDR
+reference-adapter helper. Other runtimes should implement the adapter evidence
+contract in `docs/runtime-adapters.md`.
+
+Print the reference CLI version:
+
+```bash
+bin/valp --version
+```
 
 ## Publish / Scan / Route
 
@@ -81,20 +92,29 @@ selected agent has a failing preflight check.
 
 ## Dispatch
 
-Print the HERDR adapter submit commands:
+Print dispatch instructions:
 
 ```bash
 bin/valp dispatch TASK-001 --workspace /path/to/workspace
 ```
 
-Submit through the local HERDR adapter:
+For Manual Mode tasks this prints copy instructions and expected evidence refs.
+For HERDR-routed tasks it prints HERDR reference-adapter submit commands.
+
+Submit through the local HERDR reference adapter:
 
 ```bash
 bin/valp dispatch TASK-001 --workspace /path/to/workspace --submit
 ```
 
 `dispatch --submit` calls `herdr-loop submit-dispatch` for each routed agent.
-It should only be used when the local HERDR panes/runtime are ready.
+It should only be used when the local HERDR panes/runtime are ready. Manual Mode
+tasks cannot use `--submit`; copy dispatches manually and record manual
+attestation receipts when evidence exists.
+
+For non-HERDR runtimes, do not post-process these commands as protocol truth.
+Implement an adapter that exports equivalent dispatch receipts, state mapping,
+expected evidence refs, and final synthesis evidence.
 
 ## Audit
 
@@ -131,6 +151,12 @@ Audit a task folder directly:
 
 ```bash
 bin/valp audit examples/full-mode-task
+```
+
+Audit the minimal no-runtime example:
+
+```bash
+bin/valp audit examples/minimal-task
 ```
 
 Audit a workspace task:
@@ -198,7 +224,7 @@ The command maps the Done Criteria into these audit items:
 ```text
 VALP audit: PASS
 Task: /path/to/Visible-Agent-Loop-Protocol/examples/full-mode-task
-Summary: pass=16 warn=0 fail=0 skip=1
+Summary: pass=17 warn=0 fail=0 skip=1
 ```
 
 The example has one skip because it does not use squad routing.
@@ -215,5 +241,5 @@ It intentionally does not:
 - call external services;
 - validate every JSON schema field deeply.
 
-Future CLI work can add schema validation, workspace-wide audits, SARIF output,
-and runtime adapter checks.
+Future CLI work can add a first-class `--adapter` option, schema validation,
+workspace-wide audits, SARIF output, and runtime adapter checks.

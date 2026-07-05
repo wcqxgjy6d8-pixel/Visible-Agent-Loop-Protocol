@@ -579,11 +579,22 @@ state or equivalent proof.
 
 If expected evidence is declared, gates require `dispatch_completed`.
 
+For Full Mode and Remote Mode, `dispatch_completed` is not valid by itself. The
+receipt ledger must also contain a prior `dispatch_submitted` receipt for that
+selected agent with concrete runtime submission proof, such as a runtime
+submission id, queue id, hosted run id, pane/session submission proof, or
+equivalent adapter proof. A dry-run command, local sub-agent result,
+simulation, manually fabricated completion receipt, or copied review file cannot
+be upgraded into Full Mode completion.
+
 For a controlling agent that is executing its own assigned work, the runtime
 must not paste the controlling agent's dispatch back into its own live context.
 Instead, the controlling agent writes compact task-local evidence and the
 adapter records a `dispatch_completed` receipt only after the expected evidence
-files exist. This preserves receipt semantics without self-prompt pollution.
+files exist. This preserves receipt semantics without self-prompt pollution, but
+it is controller-local evidence unless an adapter also records runtime
+submission proof. Controller-local evidence must not be described as HERDR live
+agent dispatch.
 
 Receipt ledgers are append-only, so gates must evaluate the latest receipt for
 each selected agent, not merely search for any historical success. A later

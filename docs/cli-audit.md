@@ -268,7 +268,7 @@ The command maps the Done Criteria into these audit items:
 | `routing_confidence` | routing confidence, missing capabilities, and relevant rejected candidates are recorded |
 | `skill_recommendations` | skill recommendation backend result is recorded when available |
 | `squad_routing` | squad routing evidence is recorded when a squad is used |
-| `dispatch_receipts` | dispatch receipts satisfy the required gates |
+| `dispatch_receipts` | dispatch receipts satisfy the required gates; Full/Remote Mode completions require prior runtime submission proof |
 | `expected_evidence` | expected evidence exists and is not invalid/superseded/rejected/blocked |
 | `claim_evidence` | runtime/build/test/lint/UI claims cite command logs, screenshots, receipts, or evidence paths |
 | `verification` | verification passed or has a scoped blocker |

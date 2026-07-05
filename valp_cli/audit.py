@@ -328,11 +328,24 @@ class TaskAudit:
             failed.append("missing receipt for: " + ", ".join(missing))
         if incomplete:
             failed.append("latest receipt is not dispatch_completed for: " + ", ".join(incomplete))
+        if not manual_mode:
+            missing_submission_proof = [
+                agent
+                for agent in agents
+                if agent in latest
+                and latest[agent].get("event") == "dispatch_completed"
+                and not self._has_runtime_submission_proof(agent)
+            ]
+            if missing_submission_proof:
+                failed.append(
+                    "missing runtime submission proof before completion for: "
+                    + ", ".join(missing_submission_proof)
+                )
         if failed:
             return self._fail("dispatch_receipts", "Dispatch receipts satisfy the required gates", "; ".join(failed), evidence)
         if manual_mode:
             return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is manual_result_attested or dispatch_completed for selected agents", evidence)
-        return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is dispatch_completed for selected agents", evidence)
+        return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is dispatch_completed for selected agents and runtime submission proof exists", evidence)
 
     def check_expected_evidence(self) -> AuditItem:
         refs = self._expected_evidence_refs()
@@ -518,6 +531,28 @@ class TaskAudit:
             if agent:
                 latest[str(agent)] = receipt
         return latest
+
+    def _has_runtime_submission_proof(self, agent: str) -> bool:
+        for receipt in self.receipts:
+            if receipt.get("agent") != agent or receipt.get("event") != "dispatch_submitted":
+                continue
+            proof = receipt.get("proof")
+            if not isinstance(proof, dict) or not proof:
+                continue
+            proof_text = json.dumps(proof, sort_keys=True).lower()
+            forbidden = [
+                "dry_run",
+                "dry-run",
+                "simulation",
+                "simulated",
+                "subagent",
+                "sub-agent",
+                "manual_attestation",
+            ]
+            if any(term in proof_text for term in forbidden):
+                continue
+            return True
+        return False
 
     def _review_evidence_exists(self) -> bool:
         if (self.task_dir / "agents/claude/review.md").exists():

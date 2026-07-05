@@ -8,7 +8,7 @@ Bash shell for scripts/verify-examples.sh
 Python 3.11 or another supported Python 3
 ```
 
-VALP has two practical entry paths:
+VALP has three practical entry paths:
 
 - understand the protocol without installing a runtime;
 - try Full Mode automation with HERDR, the current reference runtime.
@@ -255,6 +255,10 @@ dispatch_blocked
 Text in an input box is only `dispatch_inserted`. It is not delivery.
 
 If expected evidence is declared, the gate requires `dispatch_completed`.
+For Full Mode and Remote Mode, the same agent also needs a prior
+`dispatch_submitted` receipt with runtime submission proof. A dry-run command or
+local sub-agent result is useful as analysis evidence, but it is not HERDR/live
+dispatch proof.
 
 To see the HERDR reference-adapter submit commands:
 

@@ -73,6 +73,55 @@ class ValpAuditTests(unittest.TestCase):
             self.assertEqual(report.status, FAIL)
             self.assertTrue(any(item.id == "dispatch_receipts" and item.status == FAIL for item in report.items))
 
+    def test_full_mode_completion_without_runtime_submission_proof_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            receipts_path = task / "dispatch-receipts.jsonl"
+            receipts = [
+                json.loads(line)
+                for line in receipts_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            receipts = [receipt for receipt in receipts if receipt.get("event") != "dispatch_submitted"]
+            receipts_path.write_text(
+                "".join(json.dumps(receipt) + "\n" for receipt in receipts),
+                encoding="utf-8",
+            )
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(
+                any(
+                    item.id == "dispatch_receipts"
+                    and item.status == FAIL
+                    and "missing runtime submission proof" in item.message
+                    for item in report.items
+                )
+            )
+
+    def test_dry_run_submission_proof_does_not_satisfy_full_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            receipts_path = task / "dispatch-receipts.jsonl"
+            receipts = []
+            for line in receipts_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                receipt = json.loads(line)
+                if receipt.get("event") == "dispatch_submitted":
+                    receipt["proof"] = {"mode": "dry_run", "note": "printed command only"}
+                receipts.append(receipt)
+            receipts_path.write_text(
+                "".join(json.dumps(receipt) + "\n" for receipt in receipts),
+                encoding="utf-8",
+            )
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "dispatch_receipts" and item.status == FAIL for item in report.items))
+
     def test_invalid_expected_evidence_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             task = Path(tmp) / "task"

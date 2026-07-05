@@ -1,4 +1,4 @@
-# VALP, HERDR, And Multica
+# VALP, HERDR, Hermes MoA, And Multica
 
 This document defines scope boundaries. It is not a ranking.
 
@@ -8,6 +8,7 @@ This document defines scope boundaries. It is not a ranking.
 |---|---|---|
 | VALP | Protocol | Open rules for visible, evidence-backed multi-agent collaboration |
 | HERDR | Runtime | Reference runtime for Full Mode automation |
+| Hermes MoA | Model provider pattern | Model-level reference fan-out plus one acting aggregator model |
 | Multica | Platform | Managed agents platform with web UI, daemon, issue/task model, skills, and squads |
 
 ## VALP
@@ -48,6 +49,42 @@ evidence store
 ```
 
 HERDR is not the protocol itself.
+
+## Hermes MoA And Delegation
+
+Hermes Mixture of Agents (MoA) is a model-level aggregation pattern, not a VALP
+task-completion protocol. MoA can improve one acting model's reasoning by
+running reference models first and giving their advice to an aggregator. The
+aggregator remains the acting model that produces the assistant response and
+tool calls.
+
+In VALP terms:
+
+```text
+MoA improves one acting model's reasoning.
+VALP governs multi-agent task execution.
+```
+
+MoA traces can be useful evidence because they may show what reference models
+saw, what they advised, and what the aggregator received. They are not
+completion proof by themselves. VALP completion still requires dispatch
+receipts, expected evidence, verification, review, approval resolution when
+needed, final synthesis, and audit.
+
+Hermes delegation can be a VALP runtime adapter only when the adapter exports
+the required evidence contract:
+
+```text
+dispatch submission proof
+expected evidence refs
+runtime task state mapping
+failure state and failure reason
+receipt ledger or equivalent audit records
+review and approval gate status
+```
+
+Hidden model consensus, private advisor traces, or subagent summaries are not
+enough to claim VALP Full Mode completion.
 
 ## Multica
 

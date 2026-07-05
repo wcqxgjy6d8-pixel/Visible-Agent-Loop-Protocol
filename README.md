@@ -22,6 +22,13 @@ VALP turns those failure points into a protocol: visible dispatches, receipt
 states, expected evidence, review gates, approval gates, and final synthesis.
 It is closer to a control system than a chat convention.
 
+VALP is not a model ensemble or hidden consensus method. A model-level system
+such as Hermes Mixture of Agents (MoA) can improve one acting model's reasoning
+by collecting reference-model advice before the acting model responds. VALP
+governs multi-agent task execution: which runtime or agent was routed, what was
+dispatched, what evidence was expected, what actually completed, and whether
+the work passed review and audit.
+
 ## Entry Paths
 
 Choose the path that matches why you are here:
@@ -69,6 +76,11 @@ bin/valp dispatch TASK-001 --workspace /path/to/workspace
 `publish` only creates and routes the task. It is not a completion signal. A
 new task will not pass `valp audit` until dispatch receipts, expected evidence,
 verification/review status, and final synthesis are recorded.
+
+For Full Mode claims, completed receipts must be backed by actual runtime
+submission proof for each selected agent. Dry-run dispatch output, local
+sub-agent analysis, or a manually appended `dispatch_completed` receipt is not
+HERDR/live agent proof.
 
 Auto Visible Mode is the opt-in version of this entry path: a local policy or
 runtime watcher can decide that a user request should publish a VALP task
@@ -391,6 +403,8 @@ Visible-Agent-Loop-Protocol/
 - No fake success.
 - Text inserted into an input box is not delivery.
 - Dispatch completion requires receipts and expected evidence.
+- Full/Remote Mode completion also requires prior runtime submission proof; dry
+  runs and local sub-agent simulations do not count as live dispatch.
 - High-risk actions require explicit user approval.
 - Auto Visible Mode is automatic visible intake, not silent execution.
 - Long context is a reliability risk and must be scanned before dispatch.

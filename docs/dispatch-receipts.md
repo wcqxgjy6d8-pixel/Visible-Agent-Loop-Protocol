@@ -48,6 +48,14 @@ dispatch_completed
 
 `dispatch_submitted` is not enough when evidence is expected.
 
+For Full Mode and Remote Mode, `dispatch_completed` also needs runtime
+submission provenance. Each selected agent must have a prior
+`dispatch_submitted` receipt with concrete adapter proof, for example a
+submission id, queue id, hosted run id, pane/session submit proof, or equivalent
+runtime record. A dry-run dispatch, a local sub-agent result, a simulated
+review, or a manually appended `dispatch_completed` receipt is not HERDR/live
+runtime proof.
+
 Because the ledger is append-only, validators must evaluate the latest receipt
 for each selected agent. A historical `dispatch_completed` does not satisfy the
 gate if a later receipt for the same agent is `dispatch_blocked`,
@@ -77,6 +85,10 @@ Example:
   "exit_code": 0,
   "dispatch_ref": "agents/claude/dispatch.md",
   "expected_refs": ["agents/claude/visible-review.md"],
+  "proof": {
+    "runtime_state": "completed",
+    "evidence_found": true
+  },
   "summary": "Expected dispatch evidence exists"
 }
 ```

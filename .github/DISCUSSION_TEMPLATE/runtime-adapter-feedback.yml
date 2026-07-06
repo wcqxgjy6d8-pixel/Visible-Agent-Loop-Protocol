@@ -1,0 +1,40 @@
+name: Runtime adapter feedback
+description: Discuss whether a runtime can produce VALP-compatible evidence.
+title: "[Runtime adapter] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this to discuss whether a runtime, queue, hosted agent system, terminal controller, or manual workflow can produce VALP-compatible evidence.
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime or platform
+      placeholder: HERDR, daemon queue, hosted agent runner, terminal controller, manual workflow
+    validations:
+      required: true
+  - type: textarea
+    id: available
+    attributes:
+      label: Evidence it can export
+      description: List agent scan, dispatch submit, submission proof, status wait, receipt ledger, expected evidence, provider matrix, and review/approval support.
+    validations:
+      required: true
+  - type: textarea
+    id: missing
+    attributes:
+      label: Missing evidence
+      description: Which VALP Full Mode requirements are not available yet?
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Likely VALP mode
+      options:
+        - Full Mode
+        - Remote Mode
+        - Manual Mode
+        - Unsure
+    validations:
+      required: true

@@ -1,0 +1,29 @@
+name: Show and tell
+description: Share a VALP experiment, task folder, adapter prototype, or audit result.
+title: "[Show and tell] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share a VALP experiment, task folder, runtime adapter prototype, or audit result. Please remove private project data before posting.
+  - type: textarea
+    id: what
+    attributes:
+      label: What did you try?
+      description: Link the example, branch, gist, task folder summary, or audit output.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Result
+      description: What passed, warned, failed, or felt unclear?
+    validations:
+      required: true
+  - type: textarea
+    id: useful
+    attributes:
+      label: What would make this easier?
+      description: Mention docs, CLI output, examples, schema fields, or runtime adapter behavior.
+    validations:
+      required: false

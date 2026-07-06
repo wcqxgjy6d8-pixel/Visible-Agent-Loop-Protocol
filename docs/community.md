@@ -1,0 +1,58 @@
+# Community
+
+VALP is looking for skeptical implementation feedback, not hype. The useful
+question is whether the protocol makes agent work more auditable in real
+workflows.
+
+## Start Here
+
+For a no-runtime first pass:
+
+```bash
+git clone https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol.git
+cd Visible-Agent-Loop-Protocol
+python -m pip install -r requirements-dev.txt
+bin/valp audit examples/minimal-task
+```
+
+For repository verification:
+
+```bash
+scripts/verify-examples.sh
+```
+
+## Best Feedback
+
+The most useful community feedback is concrete:
+
+- a real agent workflow where "completed" did not prove the work was done;
+- a runtime adapter that can or cannot export VALP receipts and evidence;
+- an example task folder that passes or fails audit for a clear reason;
+- schema or documentation wording that produces the wrong mental model;
+- first-install friction found by running `valp doctor`, preflight, or the
+  quickstart.
+
+## Contribution Paths
+
+Good first contributions usually fit one of these shapes:
+
+- improve quickstart or install wording;
+- add a small Manual Mode example;
+- add a runtime adapter capability checklist;
+- improve `valp doctor` or audit messages;
+- tighten schema/example consistency;
+- document a comparison against a real agent workflow.
+
+For broad ideas, use GitHub Discussions. For concrete bugs or scoped changes,
+open an issue. For code or doc changes, open a pull request and include the
+verification command you ran.
+
+## Ground Rules
+
+- Keep the protocol runtime-neutral.
+- Do not turn HERDR, one terminal app, one model provider, or one local machine
+  into a protocol requirement.
+- Do not weaken receipt, review, evidence, or approval gates to make an example
+  pass.
+- Do not claim production readiness or platform support beyond the evidence in
+  this repository.

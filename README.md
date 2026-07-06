@@ -67,6 +67,22 @@ Choose the path that matches why you are here:
 | Inspect a headless runtime shape | Audit `examples/headless-queue-task/` | No |
 | Implement a new runtime | Read [docs/runtime-adapters.md](docs/runtime-adapters.md) | Depends on your adapter |
 
+## Community
+
+VALP is most useful when people bring real workflow failures and concrete
+runtime evidence. The project is looking for:
+
+- runtime adapter feedback from queues, hosted agent systems, terminal
+  controllers, and manual review workflows;
+- small audited examples that show where visible receipts help or fail;
+- documentation improvements that make first install and first audit easier;
+- skeptical critiques of whether the protocol is useful or just ceremony.
+
+Start with [docs/community.md](docs/community.md), open-ended feedback in
+[GitHub Discussions](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/discussions),
+or scoped tasks in
+[good first issues](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22).
+
 No-runtime first look:
 
 ```bash
@@ -404,6 +420,7 @@ Visible-Agent-Loop-Protocol/
     faq.md
     comparison.md
     runtime-adapters.md
+    community.md
     project-status.md
     schema-versioning.md
     task-state-machine.md

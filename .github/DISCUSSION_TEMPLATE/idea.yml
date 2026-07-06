@@ -1,0 +1,36 @@
+name: Idea
+description: Suggest a protocol, workflow, or evidence improvement.
+title: "[Idea] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for open-ended protocol or workflow ideas. If you found a concrete bug, open an issue instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What should VALP support or explain better?
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Workflow
+      description: What real agent workflow, runtime, review process, or failure case motivates this?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence impact
+      description: Which receipts, expected evidence, review gates, approval gates, or runtime adapter fields would change?
+    validations:
+      required: false
+  - type: textarea
+    id: smallest
+    attributes:
+      label: Smallest useful artifact
+      description: What is the smallest example, doc patch, or fixture that would test the idea?
+    validations:
+      required: false

@@ -5,6 +5,10 @@
 It is a health check, not a repair command and not a replacement for
 `valp audit`.
 
+For first installs, Doctor should run before any real agent dispatch. An App or
+installer can use it as the first visible environment check after resolving the
+actual install root and CLI path.
+
 ## Usage
 
 ```bash
@@ -38,6 +42,19 @@ bundled task example audits
 manual, queue, and HERDR reference adapter probes
 optional task audit when --task is provided
 ```
+
+First-install App flows should combine Doctor with runtime preflight:
+
+```text
+resolve install root and CLI path
+  -> run doctor on the protocol checkout
+  -> run runtime preflight for Full Mode
+  -> run publish/dispatch dry run
+  -> ask the user before real --submit, policy_auto, or watcher mode
+```
+
+Doctor success means the protocol checkout and reference checks are healthy. It
+does not mean a live runtime task has completed.
 
 ## Status
 

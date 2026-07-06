@@ -62,6 +62,17 @@ class ValpWorkflowTests(unittest.TestCase):
         credential_kinds = {item["kind"] for item in classify_approval_risks("Rotate credentials.")}
         self.assertIn("auth", credential_kinds)
 
+    def test_risk_classifier_ignores_first_install_dry_run_control_words(self) -> None:
+        prompt = "Smoke test VALP publish and HERDR dispatch dry run only. Do not submit to agent panes."
+        self.assertEqual(classify_approval_risks(prompt), [])
+        self.assertEqual(classify_approval_risks("Document `valp publish TASK-001` and `--submit`, but do not execute it."), [])
+
+    def test_risk_classifier_keeps_real_submit_and_release_actions(self) -> None:
+        kinds = {item["kind"] for item in classify_approval_risks("Submit the app release and deploy it.")}
+        self.assertIn("submit", kinds)
+        self.assertIn("release", kinds)
+        self.assertIn("deploy", kinds)
+
     def test_plain_goal_decomposition_keeps_paragraph_together(self) -> None:
         tasks = decompose_execution_tasks("Fix the protocol docs and verify the examples.", "software-code")
         self.assertEqual(tasks[0], "Fix the protocol docs and verify the examples.")

@@ -293,6 +293,38 @@ watcher must export the source event, rule, task id, and approval state into
 VALP evidence before dispatching work. A watcher that cannot export this proof
 is not an Auto Visible Mode implementation.
 
+### 4.3 First-Install Health Gate
+
+A first install, including an App-managed install, must prove environment health
+before real dispatch. The installer or App should run an explicit health gate in
+this order:
+
+```text
+install check
+  -> valp doctor
+  -> runtime preflight, when Full Mode is requested
+  -> publish/dispatch dry run
+  -> visible user decision before any submit or Auto Visible policy
+  -> optional live smoke test
+```
+
+The first install gate must not assume a fixed checkout path such as a Desktop
+folder. It should record the actual install root, CLI path, runtime path, and
+doctor/preflight report refs. A symlink or App bundle wrapper is valid only when
+`valp doctor` can still identify the protocol checkout and `bin/valp` entrypoint.
+
+The dry run may create a task folder and write routing, dispatch files, visible
+attention evidence, and `dispatch_written` receipts. It must not append
+`dispatch_submitted` or `dispatch_completed` receipts unless a runtime actually
+submitted work and the expected evidence appeared. A new dry-run task is allowed
+to fail `valp audit`; that means work has not completed, not that installation
+failed.
+
+New installs must default to Manual trigger mode. `policy_auto`, `watcher`, and
+real `--submit` behavior are opt-in after the user can inspect doctor,
+preflight, dry-run routing, selected agents, expected evidence, and approval
+risks.
+
 ## 5. Runtime Adapters
 
 VALP is runtime-neutral. A runtime adapter translates concrete platform behavior

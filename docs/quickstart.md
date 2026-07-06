@@ -87,6 +87,28 @@ Full Mode requires a compatible runtime. HERDR is the current reference runtime
 documented by this repository. Other runtimes can implement VALP by exporting
 the adapter evidence in [runtime-adapters.md](runtime-adapters.md).
 
+### 0. Run The First-Install Health Gate
+
+Do this before real dispatch, especially when VALP is installed through an App
+or another installer that manages paths for the user:
+
+```text
+install check
+  -> valp doctor
+  -> runtime preflight
+  -> publish/dispatch dry run
+  -> user opt-in for real submit or Auto Visible Mode
+```
+
+The App or installer should resolve the actual install root instead of assuming
+a fixed Desktop checkout path. A broken symlink, stale wrapper, missing Python
+dependency, or missing runtime should be shown as a doctor/preflight result, not
+as an agent task failure.
+
+A dry-run task is only an environment check. It may write routing and dispatch
+files, but it should still fail audit until a real dispatch produces expected
+evidence and final synthesis.
+
 ### 1. Pick Your Platform Path
 
 | System | Recommended path | Expected mode | Caveat |

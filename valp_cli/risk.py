@@ -31,19 +31,63 @@ def classify_approval_risks(text: str) -> list[dict[str, str]]:
     matches: list[dict[str, str]] = []
     for kind, patterns in HIGH_RISK_APPROVAL_PATTERNS.items():
         for pattern in patterns:
-            if _matches_phrase(lowered, pattern):
+            if _matches_actionable_phrase(lowered, pattern, kind):
                 matches.append({"kind": kind, "matched": pattern})
                 break
     return matches
 
 
-def _matches_phrase(text: str, phrase: str) -> bool:
+def _matches_actionable_phrase(text: str, phrase: str, kind: str) -> bool:
+    return any(
+        _is_actionable_match(text, match.start(), match.end(), kind)
+        for match in _iter_phrase_matches(text, phrase)
+    )
+
+
+def _iter_phrase_matches(text: str, phrase: str):
     normalized = re.sub(r"[_-]+", " ", phrase.lower()).strip()
     if not normalized:
-        return False
+        return []
     if normalized in {"rm rf", "reset hard"}:
-        return phrase.lower() in text
+        return re.finditer(re.escape(phrase.lower()), text)
     parts = [re.escape(part) for part in normalized.split()]
     separator = r"[\s_-]+"
     pattern = rf"(?<![a-z0-9]){separator.join(parts)}(?![a-z0-9])"
-    return re.search(pattern, text) is not None
+    return re.finditer(pattern, text)
+
+
+def _is_actionable_match(text: str, start: int, end: int, kind: str) -> bool:
+    if _inside_inline_code(text, start):
+        return False
+    if start >= 2 and text[start - 2 : start] == "--":
+        return False
+
+    before = text[max(0, start - 48) : start]
+    window = text[max(0, start - 96) : min(len(text), end + 96)]
+    negation_pattern = (
+        r"\b(do not|don't|dont|never|without|no|not|avoid|skip|refuse to|must not|should not|will not)\b"
+        r"[\s\S]{0,40}$"
+    )
+    if re.search(negation_pattern, before):
+        return False
+    if re.search(
+        r"\b(dry[- ]run|smoke test|simulation|simulated|mock run|print only|documentation only|docs only)\b",
+        window,
+    ):
+        return False
+    if kind in {"publish", "submit"} and _is_valp_control_word_context(window):
+        return False
+    return True
+
+
+def _inside_inline_code(text: str, offset: int) -> bool:
+    line_start = text.rfind("\n", 0, offset) + 1
+    return text[line_start:offset].count("`") % 2 == 1
+
+
+def _is_valp_control_word_context(window: str) -> bool:
+    return bool(
+        re.search(r"\b(bin/)?valp\s+(publish|dispatch|audit|doctor|preflight)\b", window)
+        or re.search(r"\bpublish(?:ed|ing)?\s+(a\s+)?(valp\s+)?task\b", window)
+        or re.search(r"\btask\s+publish(?:ed|ing)?\b", window)
+    )

@@ -52,6 +52,7 @@ platform.
 | Full state-machine transition suite | Partially covered | State vocabulary is specified; full transition suite is planned |
 | Context compression runtime integration | Partially covered | Semantics are documented; live adapter enforcement is not yet covered |
 | Auto Visible watcher E2E | Not covered | Trigger policy semantics exist; watcher implementation is runtime-specific |
+| App-managed first install E2E | Not covered in repository CI | Protocol now defines doctor-first health gate; App installer implementation must prove it |
 
 ## Reference Runtime Boundary
 
@@ -76,6 +77,7 @@ and exports the required receipts and evidence.
 | No public live Full Mode case study | Manual Mode case studies prove task evidence, not live runtime dispatch | Planned before stronger Full Mode promotion |
 | Non-HERDR adapters are not first-class | Runtime-neutral protocol claims need at least one credible non-HERDR implementation | Adapter contract and synthetic queue fixture exist; implementation planned |
 | Live Full Mode E2E coverage is limited | CLI tests cannot prove a real runtime can submit, wait, collect, and audit | Keep Full Mode claims tied to adapter proof |
+| App installer behavior is not a protocol runtime | First-launch UX can accidentally hide path, preflight, and submit boundaries | First-install health gate is specified; App must expose doctor/preflight/dry-run results |
 | Windows local Full Mode is conditional | Native Windows runtime support is beta-dependent | Recommend SSH remote for stable Windows workflow |
 | No GitHub release yet | Users need a stable install/evaluation point | Planned release/tag after documentation and example calibration |
 | Small public community | Social proof is low | Avoid community-size overclaims |

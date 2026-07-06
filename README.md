@@ -175,11 +175,13 @@ also includes a synthetic headless queue example for adapter authors.
 Recommended first path:
 
 ```text
-1. Install HERDR, the reference VALP runtime.
-2. Verify the runtime can list agents and report status.
-3. Create or choose a workspace.
-4. Publish a task.
-5. Let the runtime scan agents, dispatch visibly, wait for status, and write
+1. Install VALP and resolve the actual install root.
+2. Run `valp doctor` before any real dispatch.
+3. Install HERDR, the reference VALP runtime, when Full Mode is desired.
+4. Run runtime preflight for the selected agents.
+5. Create or choose a workspace.
+6. Publish and dispatch a dry-run task first.
+7. Let the runtime scan agents, dispatch visibly, wait for status, and write
    receipts/evidence.
 ```
 
@@ -192,6 +194,11 @@ herdr status
 
 See [INSTALL.md](INSTALL.md) for Homebrew, Windows, SSH remote, and fallback
 paths.
+
+App-managed installs should follow the same order: install check, doctor,
+runtime preflight, dry-run publish/dispatch, user opt-in, then optional live
+smoke test. New installs should not enable `--submit`, `policy_auto`, or watcher
+mode before the user has seen doctor/preflight results.
 
 New users should start with [docs/quickstart.md](docs/quickstart.md).
 

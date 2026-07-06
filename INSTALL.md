@@ -27,6 +27,32 @@ This installs the `valp` console script from the local checkout and the
 development dependency used by the repository smoke check. It does not install
 or replace a runtime adapter.
 
+## First Run Health Gate
+
+The first action after installing VALP should be diagnosis, not dispatch. This
+is especially important for App-managed installs, where the App may install a
+CLI wrapper, create symlinks, or manage a hidden checkout path.
+
+Recommended first-run order:
+
+```text
+1. Resolve the actual VALP install root and `valp` executable path.
+2. Run `valp doctor --workspace <install-root>`.
+3. If the user wants Full Mode, run `valp preflight --runtime <runtime>`.
+4. Run a publish/dispatch dry run to prove routing and visible dispatch output.
+5. Show the report to the user before enabling real `--submit`.
+6. Enable Auto Visible Mode, watcher mode, or policy_auto only after opt-in.
+```
+
+An installer or App must not hard-code a Desktop checkout path. It should store
+the actual install root it created and verify that `valp doctor` can find the
+protocol checkout, Python runtime, examples, schemas, and reference adapters.
+
+A dry run may create a task folder and print submit commands. It must not
+actually send work to agents and must not be reported as a completed task.
+Newly published dry-run tasks normally fail `valp audit` because expected
+evidence and final synthesis do not exist yet.
+
 For the fastest stable setup:
 
 ```text

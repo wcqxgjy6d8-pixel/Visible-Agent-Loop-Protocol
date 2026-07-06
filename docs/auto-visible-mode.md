@@ -20,6 +20,11 @@ detected, and what evidence will be required.
 New installs should default to `manual`. `policy_auto` and `watcher` are opt-in
 because they can start work without another explicit command.
 
+For App-managed installs, the App should not enable `policy_auto` or `watcher`
+on first launch. It should first run the install health gate: doctor, runtime
+preflight when Full Mode is requested, and a publish/dispatch dry run whose
+result is shown to the user before real `--submit` is enabled.
+
 ## Flow
 
 ```text

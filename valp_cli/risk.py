@@ -63,7 +63,7 @@ def _is_actionable_match(text: str, start: int, end: int, kind: str) -> bool:
         return False
 
     before = text[max(0, start - 48) : start]
-    window = text[max(0, start - 96) : min(len(text), end + 96)]
+    action_context = _local_action_context(text, start, end)
     negation_pattern = (
         r"\b(do not|don't|dont|never|without|no|not|avoid|skip|refuse to|must not|should not|will not)\b"
         r"[\s\S]{0,40}$"
@@ -72,12 +72,27 @@ def _is_actionable_match(text: str, start: int, end: int, kind: str) -> bool:
         return False
     if re.search(
         r"\b(dry[- ]run|smoke test|simulation|simulated|mock run|print only|documentation only|docs only)\b",
-        window,
+        action_context,
     ):
         return False
-    if kind in {"publish", "submit"} and _is_valp_control_word_context(window):
+    if kind in {"publish", "submit"} and _is_valp_control_word_context(action_context):
         return False
     return True
+
+
+def _local_action_context(text: str, start: int, end: int) -> str:
+    delimiter = re.compile(
+        r"[,;.!?\n]|\b(?:then|next|after|before|afterward|afterwards|after that)\b",
+        re.IGNORECASE,
+    )
+    left = 0
+    for match in delimiter.finditer(text[:start]):
+        left = match.end()
+    right = len(text)
+    next_delimiter = delimiter.search(text[end:])
+    if next_delimiter:
+        right = end + next_delimiter.start()
+    return text[left:right]
 
 
 def _inside_inline_code(text: str, offset: int) -> bool:

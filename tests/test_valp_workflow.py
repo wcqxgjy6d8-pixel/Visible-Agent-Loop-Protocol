@@ -65,6 +65,7 @@ class ValpWorkflowTests(unittest.TestCase):
     def test_risk_classifier_ignores_first_install_dry_run_control_words(self) -> None:
         prompt = "Smoke test VALP publish and HERDR dispatch dry run only. Do not submit to agent panes."
         self.assertEqual(classify_approval_risks(prompt), [])
+        self.assertEqual(classify_approval_risks("Run a deploy dry run only."), [])
         self.assertEqual(classify_approval_risks("Document `valp publish TASK-001` and `--submit`, but do not execute it."), [])
 
     def test_risk_classifier_keeps_real_submit_and_release_actions(self) -> None:
@@ -72,6 +73,11 @@ class ValpWorkflowTests(unittest.TestCase):
         self.assertIn("submit", kinds)
         self.assertIn("release", kinds)
         self.assertIn("deploy", kinds)
+        deploy_after_dry_run = {item["kind"] for item in classify_approval_risks("Run a dry run first, then deploy production.")}
+        self.assertIn("deploy", deploy_after_dry_run)
+        submit_after_smoke_test = {item["kind"] for item in classify_approval_risks("Run smoke test, then submit the app release.")}
+        self.assertIn("submit", submit_after_smoke_test)
+        self.assertIn("release", submit_after_smoke_test)
 
     def test_plain_goal_decomposition_keeps_paragraph_together(self) -> None:
         tasks = decompose_execution_tasks("Fix the protocol docs and verify the examples.", "software-code")

@@ -21,6 +21,22 @@ For repository verification:
 scripts/verify-examples.sh
 ```
 
+## Where To Post
+
+Use GitHub Discussions for open-ended feedback:
+
+- whether VALP is useful reliability engineering or unnecessary ceremony;
+- runtime adapter ideas before they are ready for an issue;
+- task folder or audit experiments that need interpretation;
+- workflow stories where a runtime said "completed" before evidence existed.
+
+Use GitHub Issues for concrete work:
+
+- broken docs;
+- schema/example inconsistencies;
+- CLI or audit behavior that can be reproduced;
+- a scoped docs or fixture improvement.
+
 ## Best Feedback
 
 The most useful community feedback is concrete:

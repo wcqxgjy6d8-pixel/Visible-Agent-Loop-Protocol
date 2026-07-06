@@ -82,6 +82,7 @@ Start with [docs/community.md](docs/community.md), open-ended feedback in
 [GitHub Discussions](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/discussions),
 or scoped tasks in
 [good first issues](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22).
+For support routing, see [SUPPORT.md](SUPPORT.md).
 
 No-runtime first look:
 
@@ -407,6 +408,7 @@ Visible-Agent-Loop-Protocol/
   LICENSE
   CHANGELOG.md
   CONTRIBUTING.md
+  SUPPORT.md
   SECURITY.md
   PRIVACY.md
   docs/

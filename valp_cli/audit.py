@@ -14,6 +14,17 @@ WARN = "warn"
 FAIL = "fail"
 SKIP = "skip"
 
+VISIBLE_ATTENTION_REQUIRED_PROFILES = {
+    "software-code",
+    "apple-app",
+    "web-frontend",
+    "research",
+    "document-artifact",
+    "agent-runtime",
+    "ops-release",
+    "prototype",
+}
+
 
 @dataclass
 class AuditItem:
@@ -248,7 +259,7 @@ class TaskAudit:
         evidence = self._existing(required_refs + ["routing.json", "state.json"])
         profile = str(self.routing.get("profile") or self.state.get("profile") or "")
         agents = self._selected_agents()
-        non_trivial = len(agents) > 1 or profile in {"software-code", "apple-app", "web-frontend", "agent-runtime", "ops-release", "prototype"}
+        non_trivial = len(agents) > 1 or profile in VISIBLE_ATTENTION_REQUIRED_PROFILES
         if not non_trivial and not (self.routing.get("visible_attention") or self.state.get("visible_attention")):
             return self._skip("visible_attention", "Visible attention routing evidence is recorded", "Simple task without visible attention requirement", evidence)
         missing = [ref for ref in required_refs if not (self.task_dir / ref).exists()]

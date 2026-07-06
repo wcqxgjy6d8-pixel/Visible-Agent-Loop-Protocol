@@ -46,7 +46,10 @@ import json
 try:
     from jsonschema import Draft202012Validator
 except ImportError as exc:
-    raise SystemExit("jsonschema is required for schema validation. Install with: python -m pip install jsonschema") from exc
+    raise SystemExit(
+        "jsonschema is required for schema validation. Install with: "
+        "python -m pip install -r requirements-dev.txt"
+    ) from exc
 
 root = Path(".")
 schema_by_name = {

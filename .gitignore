@@ -4,6 +4,6 @@ node_modules/
 dist/
 build/
 __pycache__/
+*.egg-info/
 *.pyc
 *.log
-

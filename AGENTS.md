@@ -28,6 +28,12 @@ This repository documents an open protocol.
 Before considering protocol edits complete:
 
 ```bash
+scripts/verify-examples.sh
+```
+
+For focused debugging, the canonical smoke check expands to:
+
+```bash
 python3 -m json.tool examples/context-policy.json >/dev/null
 python3 -m json.tool examples/routing.json >/dev/null
 python3 -m json.tool examples/trigger-policy.json >/dev/null
@@ -40,6 +46,13 @@ python3 -m json.tool schemas/receipts.schema.json >/dev/null
 python3 -m json.tool schemas/evidence-status.schema.json >/dev/null
 python3 -m json.tool schemas/skill-recommendations.schema.json >/dev/null
 python3 -m json.tool schemas/trigger-policy.schema.json >/dev/null
+python3 -m json.tool schemas/attention-map.schema.json >/dev/null
+python3 -m json.tool schemas/context-selection.schema.json >/dev/null
+python3 -m json.tool schemas/mask-list.schema.json >/dev/null
+python3 -m json.tool schemas/evidence-board.schema.json >/dev/null
+python3 -m unittest tests/test_valp_audit.py tests/test_valp_workflow.py tests/test_valp_doctor.py tests/test_schema_examples.py
+bin/valp audit examples/minimal-task >/dev/null
 bin/valp audit examples/full-mode-task >/dev/null
-python3 -m unittest tests/test_valp_audit.py tests/test_valp_workflow.py
+bin/valp audit examples/headless-queue-task >/dev/null
+bin/valp audit examples/real-doc-calibration-task >/dev/null
 ```

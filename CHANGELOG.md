@@ -15,6 +15,13 @@
   covered by the receipt schema.
 - Adds `valp doctor` for non-mutating workspace health checks, JSON output, and
   optional Markdown reports.
+- Adds standard Python development metadata, a `requirements-dev.txt` file, and
+  editable-install instructions for the reference CLI.
+- Adds `docs/visual-flow.md` with a Mermaid task timeline and task evidence map.
+- Clarifies visible-attention audit scope and requires `loop_layer` to be
+  documented consistently across visible-attention JSON artifacts.
+- Updates repository agent instructions so `scripts/verify-examples.sh` is the
+  canonical protocol-edit verification command.
 - Defines Auto Visible Mode as opt-in automatic, visible task intake with
   trigger evidence, skill recommendation visibility, approval boundaries, and
   final report expectations.

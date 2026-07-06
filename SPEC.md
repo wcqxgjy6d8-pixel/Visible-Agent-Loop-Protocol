@@ -756,6 +756,12 @@ Required task evidence:
 <task>/visible-routing.md
 ```
 
+The four JSON artifacts must all carry `schema_version`, `profile`, and
+`loop_layer`. `attention-map.json` additionally carries `task_id` and attention
+heads. `context-selection.json` carries selected and not-selected context.
+`mask-list.json` carries excluded inputs and reasons. `evidence-board.json`
+carries claims and required evidence.
+
 The attention map records:
 
 ```text
@@ -796,6 +802,14 @@ design contract status, when relevant
 Audit should fail non-trivial routed tasks when visible attention evidence is
 missing or malformed. This keeps automation visible without forcing the user to
 inspect every low-level command.
+
+A non-trivial routed task is any task with more than one selected agent, or any
+task in a profile that normally needs external evidence, source review,
+artifact review, release gates, runtime repair, implementation, verification, or
+prototype evidence. Current examples include `software-code`, `apple-app`,
+`web-frontend`, `research`, `document-artifact`, `agent-runtime`, `ops-release`,
+and `prototype`. A single-agent, no-runtime learning task may skip visible
+attention when it records that it is simple Manual Mode.
 
 ## 15. Squad Routing
 

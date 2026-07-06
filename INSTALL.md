@@ -15,6 +15,18 @@ VALP is designed for automated multi-agent collaboration. The default user path
 is Full Mode: install HERDR or another VALP-compatible runtime before running
 multi-agent tasks.
 
+For working on this repository's reference CLI locally:
+
+```bash
+python -m pip install -e ".[dev]"
+valp audit examples/minimal-task
+scripts/verify-examples.sh
+```
+
+This installs the `valp` console script from the local checkout and the
+development dependency used by the repository smoke check. It does not install
+or replace a runtime adapter.
+
 For the fastest stable setup:
 
 ```text

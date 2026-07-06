@@ -33,6 +33,21 @@ class ValpAuditTests(unittest.TestCase):
         self.assertEqual(report.status, PASS)
         self.assertEqual(report.fail_count, 0)
 
+    def test_research_profile_requires_visible_attention_even_single_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(ROOT / "examples" / "minimal-task", task)
+            state = json.loads((task / "state.json").read_text(encoding="utf-8"))
+            routing = json.loads((task / "routing.json").read_text(encoding="utf-8"))
+            state["profile"] = "research"
+            routing["profile"] = "research"
+            (task / "state.json").write_text(json.dumps(state), encoding="utf-8")
+            (task / "routing.json").write_text(json.dumps(routing), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "visible_attention" and item.status == FAIL for item in report.items))
+
     def test_pane_runtime_terminal_size_fail_still_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             task = Path(tmp) / "task"

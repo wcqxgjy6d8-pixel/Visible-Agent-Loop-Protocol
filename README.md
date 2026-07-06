@@ -72,6 +72,7 @@ No-runtime first look:
 ```bash
 git clone https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol.git
 cd Visible-Agent-Loop-Protocol
+python -m pip install -r requirements-dev.txt
 bin/valp audit examples/minimal-task
 ```
 
@@ -85,6 +86,7 @@ Summary: pass=13 warn=0 fail=0 skip=5
 Proof check for this repository:
 
 ```bash
+python -m pip install -r requirements-dev.txt
 scripts/verify-examples.sh
 ```
 
@@ -92,6 +94,13 @@ That script requires Bash, Python, and the Python `jsonschema` package. It
 validates JSON examples against schemas, runs the unit tests, then audits the
 bundled examples. The same check runs in GitHub Actions on Linux, macOS, and
 Windows runners for push and pull request.
+
+Editable local CLI install for development:
+
+```bash
+python -m pip install -e ".[dev]"
+valp audit examples/minimal-task
+```
 
 Reference-runtime trial:
 
@@ -132,6 +141,8 @@ user request
 
 HERDR is the current reference runtime for the automated path. It is not the
 protocol itself.
+
+For a visual sequence diagram, see [docs/visual-flow.md](docs/visual-flow.md).
 
 ## Runtime Vs Terminal
 

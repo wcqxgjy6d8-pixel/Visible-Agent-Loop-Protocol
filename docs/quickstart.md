@@ -28,6 +28,7 @@ Clone the repository and audit the minimal example:
 ```bash
 git clone https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol.git
 cd Visible-Agent-Loop-Protocol
+python -m pip install -r requirements-dev.txt
 bin/valp audit examples/minimal-task
 ```
 
@@ -41,12 +42,19 @@ Summary: pass=13 warn=0 fail=0 skip=5
 To verify all bundled examples and CLI tests in one command:
 
 ```bash
-python -m pip install jsonschema
+python -m pip install -r requirements-dev.txt
 scripts/verify-examples.sh
 ```
 
 This is the same smoke check used by the repository GitHub Actions workflow on
 Linux, macOS, and Windows runners.
+
+For editable local CLI development:
+
+```bash
+python -m pip install -e ".[dev]"
+valp audit examples/minimal-task
+```
 
 This shows the smallest useful VALP evidence shape:
 

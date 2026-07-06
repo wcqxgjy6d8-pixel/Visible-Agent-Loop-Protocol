@@ -11,6 +11,7 @@ from valp_cli.audit import FAIL, PASS, WARN, TaskAudit
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "full-mode-task"
 QUEUE_EXAMPLE = ROOT / "examples" / "headless-queue-task"
+REAL_DOC_EXAMPLE = ROOT / "examples" / "real-doc-calibration-task"
 
 
 class ValpAuditTests(unittest.TestCase):
@@ -26,6 +27,11 @@ class ValpAuditTests(unittest.TestCase):
         preflight_text = (QUEUE_EXAMPLE / "runtime-preflight.json").read_text(encoding="utf-8")
         self.assertNotIn("terminal_size_status", preflight_text)
         self.assertNotIn("pane_id", preflight_text)
+
+    def test_real_documentation_calibration_case_study_passes(self) -> None:
+        report = TaskAudit(REAL_DOC_EXAMPLE).run()
+        self.assertEqual(report.status, PASS)
+        self.assertEqual(report.fail_count, 0)
 
     def test_pane_runtime_terminal_size_fail_still_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,0 +1,43 @@
+{
+  "schema_version": "valp-routing-feedback.v1",
+  "task_id": "REAL-DOC-CALIBRATION-2026-07-06",
+  "profile": "protocol-docs",
+  "selected_agents": [
+    "codex"
+  ],
+  "candidate_agents": [
+    "codex"
+  ],
+  "routing_confidence": {
+    "overall": "high",
+    "reason": "The task was scoped to repository documentation edits and local verification."
+  },
+  "expected_evidence": [
+    "agents/codex/evidence.md",
+    "agents/codex/review.md",
+    "evidence/verification.md"
+  ],
+  "actual_evidence": [
+    "agents/codex/evidence.md",
+    "agents/codex/review.md",
+    "evidence/verification.md",
+    "final-synthesis.md"
+  ],
+  "verification_result": "passed",
+  "review_result": "passed",
+  "approval_outcomes": [],
+  "blockers": [],
+  "result": "done",
+  "lessons": [
+    "Real case studies should identify their mode and avoid upgrading Manual Mode evidence into Full Mode claims.",
+    "Public protocol promotion should separate repository proof, runtime proof, and production proof."
+  ],
+  "next_routing_hints": [
+    "Use a live runtime task for the next Full Mode case study.",
+    "Route non-HERDR adapter work to an implementation task, not a documentation-only task."
+  ],
+  "privacy_notes": [
+    "No private machine paths, credentials, user data, or unreleased runtime logs are included."
+  ],
+  "updated_at": "2026-07-06T00:00:00Z"
+}

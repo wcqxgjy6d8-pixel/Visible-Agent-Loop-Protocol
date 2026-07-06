@@ -1,0 +1,42 @@
+{
+  "schema_version": "valp-visible-loop-state.v1",
+  "task_id": "REAL-DOC-CALIBRATION-2026-07-06",
+  "profile": "protocol-docs",
+  "status": "done",
+  "runtime_adapter": {
+    "class": "manual",
+    "name": "manual"
+  },
+  "runtime_task_state_mapping": {
+    "completed": "manual_result_attested_with_expected_evidence"
+  },
+  "provider_matrix": {
+    "status": "scanned",
+    "ref": "routing.json"
+  },
+  "selected_agents": [
+    "codex"
+  ],
+  "context_policies": {
+    "codex": {
+      "soft_warning_pct": 60,
+      "hard_compression_pct": 70,
+      "emergency_stop_pct": 80
+    }
+  },
+  "skill_recommendations": {
+    "status": "no_matches",
+    "backend": "manual",
+    "ref": "skill-recommendations.json"
+  },
+  "routing_feedback": {
+    "ref": "routing-feedback.json"
+  },
+  "gates": {
+    "verification": "passed",
+    "review": "passed",
+    "approval": "not_required"
+  },
+  "approval_required": [],
+  "updated_at": "2026-07-06T00:00:00Z"
+}

@@ -100,4 +100,7 @@ echo "==> Auditing full-mode example"
 echo "==> Auditing headless queue example"
 "$PYTHON_BIN" -m valp_cli audit examples/headless-queue-task
 
+echo "==> Auditing real documentation calibration case study"
+"$PYTHON_BIN" -m valp_cli audit examples/real-doc-calibration-task
+
 echo "==> VALP example verification complete"

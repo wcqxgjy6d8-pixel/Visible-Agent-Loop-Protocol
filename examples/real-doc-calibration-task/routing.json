@@ -1,0 +1,112 @@
+{
+  "schema_version": "valp-capability-routing.v1",
+  "task_id": "REAL-DOC-CALIBRATION-2026-07-06",
+  "profile": "protocol-docs",
+  "runtime_adapter": {
+    "class": "manual",
+    "name": "manual",
+    "full_mode_capable": false,
+    "state_mapping_ref": "docs/task-state-machine.md"
+  },
+  "runtime_task_state_mapping": {
+    "completed": "manual_result_attested_with_expected_evidence"
+  },
+  "local_overlay": {
+    "used": false
+  },
+  "capabilities_needed": [
+    "protocol_documentation",
+    "evidence_boundary_review",
+    "public_positioning",
+    "repository_verification"
+  ],
+  "capabilities_missing": [
+    "live_full_mode_runtime_e2e_case",
+    "first_class_non_herdr_adapter"
+  ],
+  "role_requirements": [
+    "documentation_calibrator"
+  ],
+  "role_assignments": {
+    "documentation_calibrator": "codex"
+  },
+  "coordinator_selection": {
+    "coordinator": "codex",
+    "reason": "Codex can inspect the repository, edit documentation, run local verification, and record the evidence boundary."
+  },
+  "selected_agents": [
+    "codex"
+  ],
+  "agent_match_reasons": {
+    "codex": [
+      "repository editing and verification available",
+      "task requires precise public-claim calibration",
+      "Manual Mode is sufficient because this case study does not claim live runtime dispatch"
+    ]
+  },
+  "candidate_scores": {
+    "codex": {
+      "profile_fit": 0.9,
+      "tool_fit": 0.9,
+      "skill_fit": 0.7,
+      "permission_fit": 1,
+      "context_fit": 0.8,
+      "evidence_history": 0.8,
+      "availability": 1,
+      "risk_fit": 1,
+      "overall": 0.89,
+      "confidence": "high"
+    }
+  },
+  "routing_confidence": {
+    "overall": "high",
+    "reason": "A single documentation editor can make and verify the scoped public-claim calibration."
+  },
+  "selected_agent_context_policies": {
+    "codex": {
+      "soft_warning_pct": 60,
+      "hard_compression_pct": 70,
+      "emergency_stop_pct": 80
+    }
+  },
+  "provider_matrix": {
+    "generated_at": "2026-07-06T00:00:00Z",
+    "providers": {
+      "codex": {
+        "provider_name": "codex",
+        "provider_version_or_runtime_report": "manual-mode repository editor",
+        "cli_available": true,
+        "mcp_support": "not_required",
+        "skill_discovery_path": "local session",
+        "session_resume_support": "not_claimed",
+        "approval_behavior": "manual_operator_gate",
+        "model_selection": "not_recorded",
+        "max_concurrency": 1,
+        "context_policy": {
+          "soft_warning_pct": 60,
+          "hard_compression_pct": 70,
+          "emergency_stop_pct": 80
+        },
+        "runtime_preflight": {
+          "status": "not_applicable",
+          "reason": "Manual Mode case study does not claim live runtime dispatch."
+        },
+        "known_limitations": [
+          "no automatic dispatch proof",
+          "no live runtime status wait",
+          "does not prove Full Mode"
+        ],
+        "last_verified_at": "2026-07-06T00:00:00Z"
+      }
+    }
+  },
+  "skill_recommendations": {
+    "status": "no_matches",
+    "backend": "manual",
+    "ref": "skill-recommendations.json"
+  },
+  "squad_routing": {
+    "used": false
+  },
+  "routing_feedback_ref": "routing-feedback.json"
+}

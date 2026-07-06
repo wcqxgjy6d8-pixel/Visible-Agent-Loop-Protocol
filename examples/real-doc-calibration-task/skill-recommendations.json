@@ -1,0 +1,26 @@
+{
+  "schema_version": "valp-skill-recommendations.v1",
+  "task_id": "REAL-DOC-CALIBRATION-2026-07-06",
+  "profile": "protocol-docs",
+  "status": "no_matches",
+  "backend": "manual",
+  "generated_at": "2026-07-06T00:00:00Z",
+  "execution_tasks": [
+    "calibrate public documentation claims"
+  ],
+  "routing": {
+    "selected_agent": "codex",
+    "reason": "No external skill backend was required for a scoped documentation calibration case study."
+  },
+  "results": [
+    {
+      "task": "calibrate public documentation claims",
+      "routing": {
+        "selected_agent": "codex"
+      },
+      "matches": [],
+      "missing_skills": []
+    }
+  ],
+  "missing_skills": []
+}

@@ -18,6 +18,16 @@ No. Full Mode requires a VALP-compatible runtime. HERDR is the current reference
 target, but the protocol allows daemon queues, hosted platforms, remote
 runtimes, or other adapters when they export the required evidence.
 
+## Is HERDR closed source?
+
+No. As checked on 2026-07-06, HERDR has a public source repository at
+<https://github.com/ogulcancelik/herdr>. The repository contains source and
+project files, and its license text says AGPL-3.0-or-later for open-source use
+plus a commercial license option.
+
+This does not make HERDR a VALP requirement. It only means the current reference
+runtime is public rather than closed.
+
 ## What happens if I do not install a runtime?
 
 You can use Manual Mode. It can write task folders, visible dispatch records,
@@ -129,8 +139,24 @@ task. The leader's decision is routing evidence, not completion evidence.
 No. Profiles adapt VALP to domains such as software-code, research,
 web-frontend, apple-app, documents, prototypes, and operations.
 
+## Are the public examples real task case studies?
+
+Mostly no, with one exception. The minimal, Full Mode, and headless queue
+examples are synthetic fixtures. `examples/real-doc-calibration-task/` is a
+sanitized real Manual Mode documentation case study.
+
+There is still no public live Full Mode case study with runtime submission
+proof.
+
+## What test coverage exists today?
+
+The repository currently tests audit behavior, workflow creation/routing,
+doctor diagnostics, schema validation, and bundled examples. It does not yet
+provide a live-runtime E2E suite for every adapter class, full state-machine
+transition, context compression path, or Auto Visible runtime watcher.
+
 ## Is this ready for production?
 
-This repository is an initial open protocol draft. Use it as a protocol and
-reference structure. Production use depends on a compatible runtime and
-adapter quality.
+This repository is an initial open protocol draft and reference CLI. Use it as a
+protocol and evidence structure. Production use depends on a compatible runtime,
+adapter quality, live E2E verification, and local operational controls.

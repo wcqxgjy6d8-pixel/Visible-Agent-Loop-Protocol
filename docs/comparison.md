@@ -35,6 +35,11 @@ terminal emulator, database, or operating system.
 
 HERDR is the reference runtime for Full Mode.
 
+As checked on 2026-07-06, HERDR is public at
+<https://github.com/ogulcancelik/herdr>, includes source and project files, and
+uses AGPL-3.0-or-later plus a commercial license option. VALP should not
+describe HERDR as closed source.
+
 In VALP terms, HERDR is expected to provide runtime capabilities such as:
 
 ```text

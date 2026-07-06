@@ -8,6 +8,32 @@ The protocol is designed for terminal-based AI coding agents, review agents,
 research agents, prototype agents, and coordinator agents. It is not tied to a
 single project, operating system, terminal emulator, or model provider.
 
+## Current Status
+
+VALP is a `0.2.0-draft` open protocol plus an MIT-licensed reference CLI. It is
+not a mature hosted platform and should not be described as production-ready by
+itself.
+
+What this repository proves today:
+
+- schemas, unit tests, and bundled examples pass `scripts/verify-examples.sh`;
+- CI runs the repository smoke check on Linux, macOS, and Windows runners;
+- `valp audit` enforces receipt, evidence, review, approval, and final
+  synthesis gates for the included task folders.
+
+What it does not prove yet:
+
+- a public live Full Mode case study using a runtime end to end;
+- first-class non-HERDR runtime adapters beyond the synthetic queue fixture;
+- native Full Mode guarantees on every local operating system;
+- production deployment reliability for a third-party runtime.
+
+HERDR is the current reference runtime for the automated path. It has a public
+source repository, currently documented at
+<https://github.com/ogulcancelik/herdr>, but VALP completion semantics do not
+depend on HERDR specifically. See [docs/project-status.md](docs/project-status.md)
+for the current evidence and gap matrix.
+
 ## Why VALP?
 
 Agent work often fails in ways that ordinary chat transcripts hide:
@@ -202,13 +228,14 @@ See [docs/cli-audit.md](docs/cli-audit.md).
 
 ## Proof It Works
 
-The repository includes three self-verifying task examples:
+The repository includes four self-verifying task examples:
 
 | Example | What it proves | Expected audit |
 |---|---|---|
 | `examples/minimal-task/` | Manual Mode evidence can be audited without a runtime | `PASS`, `pass=13 warn=0 fail=0 skip=5` |
 | `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, review, and final synthesis audit gates | `PASS`, `pass=17 warn=0 fail=0 skip=1` |
-| `examples/headless-queue-task/` | Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=17 warn=0 fail=0 skip=1` |
+| `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=17 warn=0 fail=0 skip=1` |
+| `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=14 warn=0 fail=0 skip=4` |
 
 Run the complete smoke check:
 
@@ -308,10 +335,11 @@ not a specific terminal emulator.
 
 ## Runtime Compatibility
 
-HERDR is the reference runtime. As of 2026-07-03, the public HERDR site describes
-stable Linux/macOS support and Windows preview beta support. Runtime support can
-change; check the current runtime documentation before publishing platform
-claims.
+HERDR is the reference runtime. Public HERDR documentation currently describes
+stable Linux/macOS support and Windows preview beta support, and the public
+source repository is linked from [docs/project-status.md](docs/project-status.md).
+Runtime support can change; check current runtime documentation before
+publishing platform claims.
 
 Reference: https://herdr.dev/
 
@@ -358,6 +386,7 @@ Visible-Agent-Loop-Protocol/
     faq.md
     comparison.md
     runtime-adapters.md
+    project-status.md
     schema-versioning.md
     task-state-machine.md
     troubleshooting.md
@@ -396,6 +425,7 @@ Visible-Agent-Loop-Protocol/
     minimal-task/
     full-mode-task/
     headless-queue-task/
+    real-doc-calibration-task/
 ```
 
 ## Non-Negotiables

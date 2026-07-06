@@ -4,13 +4,14 @@ VALP is cross-platform as a protocol. Full Mode depends on the runtime adapter
 available on the user's machine or remote host.
 
 The default recommended runtime is HERDR. Platform support below reflects HERDR
-public documentation checked on 2026-07-03.
+public documentation and repository metadata checked on 2026-07-06.
 
 Sources:
 
 - https://herdr.dev/docs/install/
 - https://herdr.dev/docs/windows-beta/
 - https://herdr.dev/
+- https://github.com/ogulcancelik/herdr
 
 ## Recommended Matrix
 

@@ -50,6 +50,21 @@
 - [planned] `valp init` workspace scaffold.
 - [planned] Standalone schema validation command.
 
+## 0.2.x Credibility Calibration
+
+- [shipped] Public status and evidence matrix that separates proved repository
+  checks from live runtime claims.
+- [shipped] Documentation correction that HERDR is a public reference runtime,
+  not a closed-source protocol dependency.
+- [shipped] Sanitized real-world Manual Mode task case study with task folder,
+  receipts, evidence, review, final synthesis, and audit output.
+- [shipped] Public coverage matrix for tested CLI/schema/example behavior versus
+  missing live-runtime E2E areas.
+- [planned] First GitHub release or tag for evaluators who need a stable
+  checkpoint.
+- [planned] Public Full Mode walkthrough using a live runtime, clearly separated
+  from synthetic fixtures.
+
 ## 0.3 Runtime Adapters
 
 - [shipped] HERDR reference-adapter command generation in `valp dispatch`.

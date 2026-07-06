@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Adds a project status and evidence matrix that separates current repository
+  proof from unproven live-runtime, adapter, case-study, and production claims.
+- Clarifies that HERDR is the public reference runtime and not a VALP protocol
+  dependency, while keeping first-class non-HERDR adapters on the roadmap.
+- Adds a sanitized real Manual Mode documentation calibration case study and
+  includes it in the repository smoke check.
 - Hardens `valp audit` against weak completion evidence: approval ledgers are
   checked, high-risk goals trigger approval requirements, verification gates
   need concrete evidence, runtime/build/test claims need real evidence, bundled

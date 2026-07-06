@@ -1,11 +1,13 @@
 # Installation Guide
 
-Checked against HERDR public documentation on 2026-07-03.
+Checked against HERDR public documentation and repository metadata on
+2026-07-06.
 
 Sources:
 
 - https://herdr.dev/docs/install/
 - https://herdr.dev/docs/windows-beta/
+- https://github.com/ogulcancelik/herdr
 
 ## Default Path: Full Mode
 

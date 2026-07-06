@@ -8,9 +8,26 @@ queues, hosted dashboards, remote SSH hosts, and manual workflows without
 pretending they provide the same guarantees.
 
 HERDR is the current reference adapter target in this repository. It is useful
-for proving the Full Mode path, but it is not the VALP protocol itself.
-The reference CLI also includes a synthetic `queue` adapter shape for testing
-headless evidence without terminal panes.
+for proving the documented Full Mode path, but it is not the VALP protocol
+itself. The reference CLI also includes a synthetic `queue` adapter shape for
+testing headless evidence without terminal panes.
+
+## Reference Runtime Status
+
+HERDR should be described as the current reference runtime, not as a protocol
+dependency and not as a closed-source black box.
+
+Externally checked on 2026-07-06:
+
+- `https://github.com/ogulcancelik/herdr` is a public repository.
+- The repository contains source and project files, including Rust sources,
+  `Cargo.toml`, tests, docs, website files, and workers.
+- Its license text says AGPL-3.0-or-later for open-source use plus a commercial
+  license option.
+
+The existence of a public HERDR repository does not remove the adapter gap:
+VALP still needs first-class non-HERDR adapters before it can demonstrate more
+than one automated Full Mode implementation.
 
 Terminals are display surfaces, not automatically runtime adapters. A terminal
 that can open panes still needs an adapter layer that can submit dispatches,

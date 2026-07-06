@@ -6,17 +6,19 @@ The protocol requires a runtime layer for Full Mode.
 
 HERDR is the reference runtime. It is not the protocol itself.
 
-As of 2026-07-03, public HERDR documentation describes:
+As of 2026-07-06, public HERDR documentation and repository metadata describe:
 
 - stable Linux/macOS support;
 - Windows preview beta support;
 - remote attachment through SSH;
-- operation from terminal environments.
+- operation from terminal environments;
+- a public source repository at `https://github.com/ogulcancelik/herdr`.
 
 Verify current support before making release claims:
 
 ```text
 https://herdr.dev/
+https://github.com/ogulcancelik/herdr
 ```
 
 ## Terminal Emulator Policy

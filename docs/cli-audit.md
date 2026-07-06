@@ -157,6 +157,10 @@ human explanation for why the task exists. It does not replace runtime
 preflight, dispatch receipts, expected evidence, approval resolution, review, or
 final synthesis.
 
+Audit treats corrupted JSONL ledgers as failures. It also requires expected
+evidence refs to be task-relative safe paths; refs that point outside the task
+folder are not completion evidence.
+
 ## What It Audits
 
 `valp audit` reads a VALP task folder and checks:
@@ -274,8 +278,8 @@ The command maps the Done Criteria into these audit items:
 | `skill_recommendations` | skill recommendation backend result is recorded when available |
 | `squad_routing` | squad routing evidence is recorded when a squad is used |
 | `dispatch_receipts` | dispatch receipts satisfy the required gates; Full/Remote Mode completions require prior runtime submission proof |
-| `expected_evidence` | expected evidence exists and is not invalid/superseded/rejected/blocked |
-| `claim_evidence` | runtime/build/test/lint/UI claims cite command logs, screenshots, receipts, or evidence paths |
+| `expected_evidence` | expected evidence refs exist, are task-relative safe paths, and are not invalid/superseded/rejected/blocked |
+| `claim_evidence` | runtime/build/test/lint/UI claims, including final synthesis claims, cite command logs, screenshots, receipts, or evidence paths |
 | `verification` | verification passed or has a scoped blocker with concrete verification evidence unless verification is explicitly not required |
 | `review_findings` | review findings have no unresolved critical/high blockers |
 | `approvals` | approvals are resolved, including task-local approval ledgers |

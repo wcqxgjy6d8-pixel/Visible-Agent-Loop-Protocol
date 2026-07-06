@@ -24,7 +24,10 @@
     "dispatch_ref": {"type": "string"},
     "expected_refs": {
       "type": "array",
-      "items": {"type": "string"}
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+      }
     },
     "proof": {"type": "object"},
     "runtime": {"type": "object"}

@@ -67,6 +67,11 @@ If an evidence file exists but is marked `invalid`, `superseded`, `rejected`, or
 `blocked` in `evidence-status.json`, it does not satisfy `dispatch_completed` or
 the expected evidence gate.
 
+Expected evidence refs must be task-relative safe paths. They must be non-empty
+POSIX-style relative paths and must not be absolute paths, contain backslash
+separators, or include `..` path segments. Evidence outside the task folder
+cannot satisfy `dispatch_completed`.
+
 ## Receipt Ledger
 
 Receipts are appended to:
@@ -74,6 +79,9 @@ Receipts are appended to:
 ```text
 .herdr-loop/tasks/<task-id>/dispatch-receipts.jsonl
 ```
+
+Every non-empty JSONL line must parse as a JSON object. A corrupted receipt
+ledger is an audit failure, even if earlier valid lines look complete.
 
 Example:
 

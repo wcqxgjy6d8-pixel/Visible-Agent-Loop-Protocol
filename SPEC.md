@@ -350,6 +350,9 @@ For headless, daemon, hosted, or queue-based runtimes, pane fields are not
 required. The adapter must instead record the equivalent session or job facts
 needed to prove delivery and completion, such as queue id, worker id, hosted run
 id, output reference, artifact path, retry state, and expected evidence refs.
+Expected evidence refs must be task-relative safe paths: non-empty POSIX-style
+relative paths with no absolute prefix, backslash separators, or `..` path
+segments. Evidence outside the VALP task folder cannot satisfy completion.
 
 Reference tools may expose adapter selection flags such as `auto`, `manual`,
 `herdr`, or `queue`, but protocol semantics come from the recorded adapter class
@@ -381,6 +384,7 @@ terminals, and runtimes. They must remain subordinate to protocol gates:
 - A local overlay cannot declare hidden dispatch valid.
 - A local overlay cannot treat insertion as submission.
 - A local overlay cannot skip expected evidence.
+- A local overlay cannot point expected evidence outside the task folder.
 - A local overlay cannot bypass approval gates.
 - A local overlay cannot turn a capability profile into a fixed assignment.
 - A local overlay cannot suppress context compression thresholds unless stricter

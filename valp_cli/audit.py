@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, asdict
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .risk import classify_approval_risks
@@ -50,6 +50,7 @@ class TaskAudit:
     def __init__(self, task_dir: Path, strict: bool = False) -> None:
         self.task_dir = task_dir.resolve()
         self.strict = strict
+        self.jsonl_errors: dict[str, list[str]] = {}
         self.state = self._load_json("state.json")
         self.routing = self._load_json("routing.json")
         self.feedback = self._load_json("routing-feedback.json")
@@ -326,6 +327,14 @@ class TaskAudit:
     def check_dispatch_receipts(self) -> AuditItem:
         evidence = self._existing(["dispatch-receipts.jsonl"])
         agents = self._selected_agents()
+        receipt_errors = self.jsonl_errors.get("dispatch-receipts.jsonl") or []
+        if receipt_errors:
+            return self._fail(
+                "dispatch_receipts",
+                "Dispatch receipts satisfy the required gates",
+                "Invalid dispatch receipt ledger: " + "; ".join(receipt_errors[:5]),
+                evidence,
+            )
         if not self.receipts:
             return self._fail("dispatch_receipts", "Dispatch receipts satisfy the required gates", "Missing or empty dispatch-receipts.jsonl", evidence)
         runtime = self.routing.get("runtime_adapter") or self.state.get("runtime_adapter") or {}
@@ -366,7 +375,15 @@ class TaskAudit:
         refs = self._expected_evidence_refs()
         evidence = self._existing(["task.md", "dispatch-receipts.jsonl"])
         if not refs:
-            return self._warn("expected_evidence", "Expected evidence exists", "No expected evidence refs found", evidence)
+            return self._fail("expected_evidence", "Expected evidence exists", "No expected evidence refs found", evidence)
+        unsafe = [ref for ref in refs if not self._is_safe_task_ref(ref)]
+        if unsafe:
+            return self._fail(
+                "expected_evidence",
+                "Expected evidence exists",
+                "Expected evidence refs must be task-relative safe paths: " + ", ".join(unsafe),
+                evidence,
+            )
         missing = [ref for ref in refs if not (self.task_dir / ref).exists()]
         invalid = [
             f"{ref}={status}"
@@ -427,6 +444,16 @@ class TaskAudit:
 
     def check_approvals(self) -> AuditItem:
         evidence = self._existing(["state.json", "approvals/requested.jsonl", "approvals/user-decisions.jsonl"])
+        approval_errors = []
+        for ref in ["approvals/requested.jsonl", "approvals/user-decisions.jsonl"]:
+            approval_errors.extend(self.jsonl_errors.get(ref) or [])
+        if approval_errors:
+            return self._fail(
+                "approvals",
+                "Approvals are resolved",
+                "Invalid approval ledger: " + "; ".join(approval_errors[:5]),
+                evidence,
+            )
         gate = (self.state.get("gates") or {}).get("approval")
         approval_required = self.state.get("approval_required") or []
         ledger = self._approval_ledger_result()
@@ -538,26 +565,33 @@ class TaskAudit:
             r"\bverification passed\b",
         ]
         unsupported: list[str] = []
-        roots = [self.task_dir / "agents", self.task_dir / "evidence"]
-        for root in roots:
-            if not root.exists():
+        for path in self._claim_evidence_paths():
+            if path.name in {"dispatch.md", "context-compression.md"}:
                 continue
-            for path in root.rglob("*.md"):
-                if path.name in {"dispatch.md", "context-compression.md", "final-synthesis.md"}:
-                    continue
-                text = path.read_text(encoding="utf-8", errors="replace")
-                lowered = text.lower()
-                claim_found = any(
-                    re.search(pattern, line, re.IGNORECASE)
-                    for line in lowered.splitlines()
-                    for pattern in claim_patterns
-                )
-                if not claim_found:
-                    continue
-                if self._has_concrete_claim_evidence(text):
-                    continue
-                unsupported.append(f"{path.relative_to(self.task_dir)}")
+            text = path.read_text(encoding="utf-8", errors="replace")
+            lowered = text.lower()
+            claim_found = any(
+                re.search(pattern, line, re.IGNORECASE)
+                for line in lowered.splitlines()
+                for pattern in claim_patterns
+            )
+            if not claim_found:
+                continue
+            if self._has_concrete_claim_evidence(text):
+                continue
+            unsupported.append(f"{path.relative_to(self.task_dir)}")
         return unsupported
+
+    def _claim_evidence_paths(self) -> list[Path]:
+        paths: list[Path] = []
+        for root in [self.task_dir / "agents", self.task_dir / "evidence"]:
+            if root.exists():
+                paths.extend(sorted(root.rglob("*.md")))
+        for relative in ["final-synthesis.md", "evidence/final-synthesis.md"]:
+            path = self.task_dir / relative
+            if path.exists() and path not in paths:
+                paths.append(path)
+        return paths
 
     def _has_concrete_claim_evidence(self, text: str) -> bool:
         if self._references_existing_evidence_path(text):
@@ -590,11 +624,22 @@ class TaskAudit:
         candidates.update(re.findall(r"(?<![\w/.-])((?:agents|evidence|gates|logs|screenshots)/[^\s),;:]+)", text))
         for candidate in candidates:
             ref = candidate.strip().strip(".,;:)")
-            if not ref or ref.startswith("/") or ".." in Path(ref).parts:
+            if not self._is_safe_task_ref(ref):
                 continue
             if (self.task_dir / ref).exists():
                 return True
         return False
+
+    def _is_safe_task_ref(self, ref: str) -> bool:
+        if not isinstance(ref, str):
+            return False
+        ref = ref.strip()
+        if not ref or ref.startswith("/") or "\\" in ref:
+            return False
+        path = PurePosixPath(ref)
+        if path.is_absolute():
+            return False
+        return ".." not in path.parts
 
     def _approval_ledger_result(self) -> dict[str, list[str]]:
         decisions_by_key: dict[str, list[dict[str, Any]]] = {}
@@ -742,15 +787,18 @@ class TaskAudit:
         if not path.exists():
             return []
         records = []
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if not line.strip():
                 continue
             try:
                 data = json.loads(line)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
+                self.jsonl_errors.setdefault(relative, []).append(f"{relative}:{lineno}: {exc.msg}")
                 continue
             if isinstance(data, dict):
                 records.append(data)
+            else:
+                self.jsonl_errors.setdefault(relative, []).append(f"{relative}:{lineno}: expected object")
         return records
 
     def _read_text(self, relative: str) -> str:

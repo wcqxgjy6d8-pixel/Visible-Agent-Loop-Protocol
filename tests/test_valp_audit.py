@@ -76,6 +76,85 @@ class ValpAuditTests(unittest.TestCase):
             self.assertEqual(report.status, FAIL)
             self.assertTrue(any(item.id == "expected_evidence" and item.status == FAIL for item in report.items))
 
+    def test_missing_expected_evidence_refs_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(ROOT / "examples" / "minimal-task", task)
+            receipts_path = task / "dispatch-receipts.jsonl"
+            receipts = [
+                json.loads(line)
+                for line in receipts_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            for receipt in receipts:
+                receipt["expected_refs"] = []
+            receipts_path.write_text(
+                "".join(json.dumps(receipt) + "\n" for receipt in receipts),
+                encoding="utf-8",
+            )
+            (task / "task.md").write_text(
+                "# Task\n\n## Goal\n\nManual review.\n\n## Expected Evidence\n\nGenerated during routing.\n",
+                encoding="utf-8",
+            )
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(
+                any(
+                    item.id == "expected_evidence"
+                    and item.status == FAIL
+                    and "No expected evidence refs found" in item.message
+                    for item in report.items
+                )
+            )
+
+    def test_unsafe_expected_evidence_ref_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            receipts_path = task / "dispatch-receipts.jsonl"
+            receipts = [
+                json.loads(line)
+                for line in receipts_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            for receipt in receipts:
+                if receipt.get("agent") == "codex":
+                    receipt["expected_refs"] = ["../outside.md"]
+            receipts_path.write_text(
+                "".join(json.dumps(receipt) + "\n" for receipt in receipts),
+                encoding="utf-8",
+            )
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(
+                any(
+                    item.id == "expected_evidence"
+                    and item.status == FAIL
+                    and "task-relative safe paths" in item.message
+                    for item in report.items
+                )
+            )
+
+    def test_corrupt_dispatch_receipt_jsonl_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            with (task / "dispatch-receipts.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write("{bad json\n")
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(
+                any(
+                    item.id == "dispatch_receipts"
+                    and item.status == FAIL
+                    and "Invalid dispatch receipt ledger" in item.message
+                    for item in report.items
+                )
+            )
+
     def test_later_blocked_receipt_supersedes_completed_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             task = Path(tmp) / "task"
@@ -201,6 +280,30 @@ class ValpAuditTests(unittest.TestCase):
             report = TaskAudit(task).run()
             self.assertNotEqual(report.status, FAIL)
             self.assertTrue(any(item.id == "claim_evidence" and item.status == PASS for item in report.items))
+
+    def test_final_synthesis_runtime_claim_without_evidence_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(ROOT / "examples" / "minimal-task", task)
+            (task / "final-synthesis.md").write_text(
+                "# Final Synthesis\n\n"
+                "Result: done. Tests passed and build passed.\n"
+                "Decision: accept.\n"
+                "Disagreement: none.\n"
+                "Evidence gap: none.\n",
+                encoding="utf-8",
+            )
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(
+                any(
+                    item.id == "claim_evidence"
+                    and item.status == FAIL
+                    and "final-synthesis.md" in item.message
+                    for item in report.items
+                )
+            )
 
     def test_pending_approval_ledger_fails_even_when_state_is_stale(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

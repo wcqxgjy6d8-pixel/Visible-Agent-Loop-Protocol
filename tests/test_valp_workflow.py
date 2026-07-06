@@ -10,6 +10,7 @@ from unittest.mock import patch
 from valp_cli.cli import main
 from valp_cli.workflow import (
     classify_profile,
+    classify_approval_risks,
     decompose_execution_tasks,
     dispatch_task,
     load_local_capabilities,
@@ -31,6 +32,35 @@ class ValpWorkflowTests(unittest.TestCase):
 
     def test_profile_classification_scores_all_matches(self) -> None:
         self.assertEqual(classify_profile("Fix the HERDR agent connector code"), "agent-runtime")
+
+    def test_high_risk_goal_marks_approval_required_on_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_dir = publish_task(
+                root,
+                "TASK-RISK",
+                "Deploy the release to production and rotate secrets.",
+                route=False,
+            )
+
+            state = read_json(task_dir / "state.json")
+            self.assertEqual(state["gates"]["approval"], "needs_approval")
+            self.assertTrue(state["approval_required"])
+            kinds = {item["kind"] for item in state["approval_required"]}
+            self.assertIn("deploy", kinds)
+            self.assertIn("secrets", kinds)
+            task_text = (task_dir / "task.md").read_text(encoding="utf-8")
+            self.assertIn("`deploy`", task_text)
+            self.assertIn("`secrets`", task_text)
+
+    def test_risk_classifier_uses_word_boundaries(self) -> None:
+        kinds = {item["kind"] for item in classify_approval_risks("Deploy release and export private data.")}
+        self.assertIn("deploy", kinds)
+        self.assertIn("release", kinds)
+        self.assertIn("external_private_data", kinds)
+        self.assertEqual(classify_approval_risks("Write author notes."), [])
+        credential_kinds = {item["kind"] for item in classify_approval_risks("Rotate credentials.")}
+        self.assertIn("auth", credential_kinds)
 
     def test_plain_goal_decomposition_keeps_paragraph_together(self) -> None:
         tasks = decompose_execution_tasks("Fix the protocol docs and verify the examples.", "software-code")

@@ -62,9 +62,10 @@ Proof check for this repository:
 scripts/verify-examples.sh
 ```
 
-That script requires Bash and Python. It validates JSON examples and schemas,
-runs the unit tests, then audits the bundled examples. The same check runs in
-GitHub Actions on Linux, macOS, and Windows runners for push and pull request.
+That script requires Bash, Python, and the Python `jsonschema` package. It
+validates JSON examples against schemas, runs the unit tests, then audits the
+bundled examples. The same check runs in GitHub Actions on Linux, macOS, and
+Windows runners for push and pull request.
 
 Reference-runtime trial:
 

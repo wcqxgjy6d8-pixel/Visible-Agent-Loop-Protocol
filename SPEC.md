@@ -946,6 +946,11 @@ external_private_data
 
 No approval is inferred from silence.
 
+Task publishing or routing should classify the task goal and explicit
+`Approval Risks` section for the high-risk categories above. When a match is
+found, task state must record the risk, set `approval_required`, and stop the
+approval gate from passing until explicit approval evidence exists.
+
 The approval mechanism is adapter-specific. A pane-controller adapter may use a
 visible prompt, operator confirmation, or policy file. A daemon or hosted
 adapter may require an approval record or allowlist before starting high-risk
@@ -973,9 +978,11 @@ A task is done only when:
 - expected evidence exists and is not marked invalid, superseded, rejected, or
   blocked;
 - runtime/build/test/lint/UI claims cite concrete evidence;
-- verification passed or has a scoped blocker;
+- verification passed or has a scoped blocker with concrete verification
+  evidence unless verification is explicitly not required;
 - review findings have no unresolved critical/high blockers;
-- approvals are resolved;
+- approvals are resolved, including any task-local approval request and user
+  decision ledger;
 - final synthesis records decisions, disagreements, evidence gaps, and result.
 - feedback record is written for non-trivial tasks when the runtime supports it.
 

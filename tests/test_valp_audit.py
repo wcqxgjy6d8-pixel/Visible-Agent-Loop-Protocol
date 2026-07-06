@@ -3,6 +3,7 @@ import json
 import shutil
 import tempfile
 import unittest
+from jsonschema import Draft202012Validator
 
 from valp_cli.audit import FAIL, PASS, WARN, TaskAudit
 
@@ -153,6 +154,126 @@ class ValpAuditTests(unittest.TestCase):
             report = TaskAudit(task).run()
             self.assertEqual(report.status, FAIL)
             self.assertTrue(any(item.id == "claim_evidence" and item.status == FAIL for item in report.items))
+
+    def test_backtick_marker_without_existing_evidence_does_not_support_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            (task / "agents" / "codex" / "evidence.md").write_text(
+                "# Codex Evidence\n\nBuild passed and tests passed. See `foo`.\n",
+                encoding="utf-8",
+            )
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "claim_evidence" and item.status == FAIL for item in report.items))
+
+    def test_existing_evidence_path_supports_runtime_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            (task / "agents" / "codex" / "evidence.md").write_text(
+                "# Codex Evidence\n\nBuild passed and tests passed. See `evidence/verification.md`.\n",
+                encoding="utf-8",
+            )
+
+            report = TaskAudit(task).run()
+            self.assertNotEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "claim_evidence" and item.status == PASS for item in report.items))
+
+    def test_pending_approval_ledger_fails_even_when_state_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            approvals_dir = task / "approvals"
+            approvals_dir.mkdir()
+            request = {
+                "request_id": "deploy-prod",
+                "kind": "deploy",
+                "scope": "production",
+                "status": "pending",
+            }
+            (approvals_dir / "requested.jsonl").write_text(json.dumps(request) + "\n", encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "approvals" and item.status == FAIL for item in report.items))
+
+    def test_approved_approval_ledger_resolves_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            approvals_dir = task / "approvals"
+            approvals_dir.mkdir()
+            request = {
+                "request_id": "deploy-prod",
+                "kind": "deploy",
+                "scope": "production",
+                "status": "pending",
+            }
+            decision = {
+                "request_id": "deploy-prod",
+                "decision": "approved",
+                "approved_by": "operator",
+            }
+            (approvals_dir / "requested.jsonl").write_text(json.dumps(request) + "\n", encoding="utf-8")
+            (approvals_dir / "user-decisions.jsonl").write_text(json.dumps(decision) + "\n", encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            self.assertNotEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "approvals" and item.status == PASS for item in report.items))
+
+    def test_high_risk_goal_without_approval_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            (task / "task.md").write_text(
+                "# Task\n\n## Goal\n\nDeploy the release to production and rotate secrets.\n",
+                encoding="utf-8",
+            )
+            state = json.loads((task / "state.json").read_text(encoding="utf-8"))
+            state["gates"]["approval"] = "not_required"
+            state["approval_required"] = []
+            (task / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "approvals" and item.status == FAIL for item in report.items))
+
+    def test_verification_passed_requires_concrete_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            state = json.loads((task / "state.json").read_text(encoding="utf-8"))
+            state["gates"]["verification"] = "passed"
+            (task / "state.json").write_text(json.dumps(state), encoding="utf-8")
+            (task / "evidence" / "verification.md").unlink()
+            receipts = [
+                json.loads(line)
+                for line in (task / "dispatch-receipts.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            for receipt in receipts:
+                refs = receipt.get("expected_refs") or []
+                receipt["expected_refs"] = [ref for ref in refs if ref != "evidence/verification.md"]
+            (task / "dispatch-receipts.jsonl").write_text(
+                "".join(json.dumps(receipt) + "\n" for receipt in receipts),
+                encoding="utf-8",
+            )
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "verification" and item.status == FAIL for item in report.items))
+
+    def test_manual_receipts_match_receipt_schema(self) -> None:
+        schema = json.loads((ROOT / "schemas" / "receipts.schema.json").read_text(encoding="utf-8"))
+        validator = Draft202012Validator(schema)
+        receipt_path = ROOT / "examples" / "minimal-task" / "dispatch-receipts.jsonl"
+        errors = []
+        for line in receipt_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                errors.extend(validator.iter_errors(json.loads(line)))
+        self.assertEqual(errors, [])
 
     def test_skill_router_not_run_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

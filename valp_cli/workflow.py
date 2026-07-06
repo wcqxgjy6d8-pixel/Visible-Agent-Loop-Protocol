@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .risk import classify_approval_risks
+
 
 PROFILE_RULES = [
     ("apple-app", ["swift", "swiftui", "xcode", "app store", "testflight", "macos", "ios", "entitlement"]),
@@ -908,6 +910,11 @@ def publish_task(
     directory = task_dir(root, task_id)
     directory.mkdir(parents=True, exist_ok=True)
     selected_profile = profile or classify_profile(prompt)
+    approval_risks = classify_approval_risks(prompt)
+    approval_risk_text = "\n".join(
+        f"- `{risk['kind']}` matched `{risk['matched']}`"
+        for risk in approval_risks
+    ) or "- No approval-gated risks detected."
     task_md = f"""# Task
 
 ID: {task_id}
@@ -924,14 +931,19 @@ Generated during routing.
 
 ## Approval Risks
 
-Generated during routing.
+{approval_risk_text}
 """
     (directory / "task.md").write_text(task_md, encoding="utf-8")
+    approval_gate = "needs_approval" if approval_risks else "not_required"
     state = {
         "schema_version": "valp-visible-loop-state.v1",
         "task_id": task_id,
         "profile": selected_profile,
         "status": "published",
+        "risk": {
+            "approval_required": bool(approval_risks),
+            "matches": approval_risks,
+        },
         "selected_agents": [],
         "capabilities_needed": PROFILE_CAPABILITIES.get(selected_profile, PROFILE_CAPABILITIES["generic-analysis"]),
         "capabilities_missing": [],
@@ -940,9 +952,9 @@ Generated during routing.
             "expected_evidence": "needs_evidence",
             "verification": "needs_evidence",
             "review": "needs_evidence",
-            "approval": "not_required",
+            "approval": approval_gate,
         },
-        "approval_required": [],
+        "approval_required": approval_risks,
         "updated_at": now_iso(),
     }
     write_json(directory / "state.json", state)
@@ -962,6 +974,15 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         raise SystemExit(f"Missing state.json for task {task_id}")
     prompt = (directory / "task.md").read_text(encoding="utf-8", errors="replace")
     profile = state.get("profile") or classify_profile(prompt)
+    approval_risks = (state.get("risk") or {}).get("matches") or classify_approval_risks(extract_goal_text(prompt))
+    if approval_risks and (state.get("gates") or {}).get("approval") in {None, "not_required"}:
+        state.setdefault("gates", {})["approval"] = "needs_approval"
+    if approval_risks and not state.get("approval_required"):
+        state["approval_required"] = approval_risks
+    state["risk"] = {
+        "approval_required": bool(approval_risks),
+        "matches": approval_risks,
+    }
     capabilities = scan_workspace(root, task_id, runtime=runtime)
     overlay = load_local_overlay(root)
     agents = capabilities.get("agents") or {}
@@ -993,6 +1014,7 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         "task_id": task_id,
         "profile": profile,
         "runtime_adapter": runtime_adapter_record(preflight, runtime=runtime),
+        "risk": state["risk"],
         "local_overlay": {
             "used": bool(overlay),
             "ref": ".herdr-loop/local-overlay.json" if overlay else None,

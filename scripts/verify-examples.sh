@@ -39,8 +39,57 @@ for path in sorted(Path("examples").rglob("*.jsonl")):
                 raise SystemExit(f"{path}:{lineno}: invalid JSONL: {exc}") from exc
 PY
 
+echo "==> Validating bundled examples against schemas"
+"$PYTHON_BIN" - <<'PY'
+from pathlib import Path
+import json
+try:
+    from jsonschema import Draft202012Validator
+except ImportError as exc:
+    raise SystemExit("jsonschema is required for schema validation. Install with: python -m pip install jsonschema") from exc
+
+root = Path(".")
+schema_by_name = {
+    "attention-map.json": "attention-map.schema.json",
+    "context-selection.json": "context-selection.schema.json",
+    "evidence-board.json": "evidence-board.schema.json",
+    "evidence-status.json": "evidence-status.schema.json",
+    "local-overlay.json": "local-overlay.schema.json",
+    "mask-list.json": "mask-list.schema.json",
+    "routing-feedback.json": "routing-feedback.schema.json",
+    "routing.json": "routing.schema.json",
+    "skill-recommendations.json": "skill-recommendations.schema.json",
+    "state.json": "state.schema.json",
+    "trigger-policy.json": "trigger-policy.schema.json",
+}
+validators = {
+    schema_name: Draft202012Validator(json.loads((root / "schemas" / schema_name).read_text(encoding="utf-8")))
+    for schema_name in set(schema_by_name.values())
+}
+errors = []
+for path in sorted((root / "examples").rglob("*.json")):
+    schema_name = schema_by_name.get(path.name)
+    if not schema_name:
+        continue
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for error in validators[schema_name].iter_errors(data):
+        errors.append(f"{path} {error.json_path}: {error.message}")
+
+receipt_validator = Draft202012Validator(json.loads((root / "schemas" / "receipts.schema.json").read_text(encoding="utf-8")))
+for path in sorted((root / "examples").rglob("dispatch-receipts.jsonl")):
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        data = json.loads(line)
+        for error in receipt_validator.iter_errors(data):
+            errors.append(f"{path}:{lineno} {error.json_path}: {error.message}")
+
+if errors:
+    raise SystemExit("\n".join(errors))
+PY
+
 echo "==> Running unit tests"
-"$PYTHON_BIN" -m unittest tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py
+"$PYTHON_BIN" -m unittest tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py tests/test_schema_examples.py
 
 echo "==> Auditing minimal example"
 "$PYTHON_BIN" -m valp_cli audit examples/minimal-task

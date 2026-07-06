@@ -6,6 +6,8 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
 
+from .risk import classify_approval_risks
+
 
 PASS = "pass"
 WARN = "warn"
@@ -47,6 +49,8 @@ class TaskAudit:
         self.mask_list = self._load_json("mask-list.json")
         self.evidence_board = self._load_json("evidence-board.json")
         self.receipts = self._load_jsonl("dispatch-receipts.jsonl")
+        self.approval_requests = self._load_jsonl("approvals/requested.jsonl")
+        self.approval_decisions = self._load_jsonl("approvals/user-decisions.jsonl")
         self.task_text = self._read_text("task.md")
         self.final_synthesis_text = self._read_first_existing(
             ["final-synthesis.md", "evidence/final-synthesis.md"]
@@ -379,9 +383,18 @@ class TaskAudit:
     def check_verification(self) -> AuditItem:
         evidence = self._existing(["evidence/verification.md", "gates/verification.json", "state.json"])
         gate = (self.state.get("gates") or {}).get("verification")
-        if gate in {"passed", "not_required", "scoped_blocker", "blocked"}:
+        has_evidence = (self.task_dir / "evidence/verification.md").exists() or (self.task_dir / "gates/verification.json").exists()
+        if gate == "not_required":
             return self._pass("verification", "Verification passed or has a scoped blocker", f"Verification gate: {gate}", evidence)
-        if (self.task_dir / "evidence/verification.md").exists() or (self.task_dir / "gates/verification.json").exists():
+        if gate == "passed":
+            if has_evidence:
+                return self._pass("verification", "Verification passed or has a scoped blocker", f"Verification gate: {gate}", evidence)
+            return self._fail("verification", "Verification passed or has a scoped blocker", "Verification gate is passed but no verification evidence exists", evidence)
+        if gate in {"scoped_blocker", "blocked"}:
+            if has_evidence:
+                return self._pass("verification", "Verification passed or has a scoped blocker", f"Verification gate: {gate}", evidence)
+            return self._fail("verification", "Verification passed or has a scoped blocker", f"Verification gate is {gate} but no blocker evidence exists", evidence)
+        if has_evidence:
             return self._pass("verification", "Verification passed or has a scoped blocker", "Verification evidence exists", evidence)
         return self._fail("verification", "Verification passed or has a scoped blocker", "Missing verification evidence or gate", evidence)
 
@@ -405,10 +418,37 @@ class TaskAudit:
         evidence = self._existing(["state.json", "approvals/requested.jsonl", "approvals/user-decisions.jsonl"])
         gate = (self.state.get("gates") or {}).get("approval")
         approval_required = self.state.get("approval_required") or []
-        if gate in {"passed", "not_required"} and not approval_required:
-            return self._pass("approvals", "Approvals are resolved", f"Approval gate: {gate}", evidence)
+        ledger = self._approval_ledger_result()
+        if ledger["unresolved"]:
+            return self._fail(
+                "approvals",
+                "Approvals are resolved",
+                "Unresolved approval requests: " + ", ".join(ledger["unresolved"]),
+                evidence,
+            )
         if approval_required:
             return self._fail("approvals", "Approvals are resolved", "Unresolved approval_required entries exist", evidence)
+        approval_risks = classify_approval_risks(self._approval_relevant_text())
+        if approval_risks:
+            risk_names = ", ".join(risk["kind"] for risk in approval_risks)
+            if gate != "passed":
+                return self._fail(
+                    "approvals",
+                    "Approvals are resolved",
+                    f"High-risk approval required but gate is {gate or 'missing'}: {risk_names}",
+                    evidence,
+                )
+            if not ledger["approved"]:
+                return self._fail(
+                    "approvals",
+                    "Approvals are resolved",
+                    f"High-risk approval gate passed without approval decision evidence: {risk_names}",
+                    evidence,
+                )
+        if gate in {"passed", "not_required"}:
+            if ledger["requests"]:
+                return self._pass("approvals", "Approvals are resolved", f"Approval gate: {gate}; approval ledger resolved", evidence)
+            return self._pass("approvals", "Approvals are resolved", f"Approval gate: {gate}", evidence)
         if gate:
             return self._warn("approvals", "Approvals are resolved", f"Approval gate is not resolved: {gate}", evidence)
         return self._warn("approvals", "Approvals are resolved", "No approval gate recorded", evidence)
@@ -486,22 +526,6 @@ class TaskAudit:
             r"\bverified\b",
             r"\bverification passed\b",
         ]
-        evidence_markers = [
-            "```",
-            "`",
-            ".log",
-            ".json",
-            ".png",
-            ".txt",
-            "command",
-            "exit code",
-            "exit_code",
-            "stdout",
-            "stderr",
-            "evidence/",
-            "agents/",
-            "$ ",
-        ]
         unsupported: list[str] = []
         roots = [self.task_dir / "agents", self.task_dir / "evidence"]
         for root in roots:
@@ -519,10 +543,122 @@ class TaskAudit:
                 )
                 if not claim_found:
                     continue
-                if any(marker in lowered for marker in evidence_markers):
+                if self._has_concrete_claim_evidence(text):
                     continue
                 unsupported.append(f"{path.relative_to(self.task_dir)}")
         return unsupported
+
+    def _has_concrete_claim_evidence(self, text: str) -> bool:
+        if self._references_existing_evidence_path(text):
+            return True
+        has_any_command_block = False
+        has_any_result_block = False
+        for block in re.findall(r"```[a-zA-Z0-9_-]*\n(.*?)```", text, flags=re.DOTALL):
+            lowered = block.lower()
+            has_command = bool(
+                re.search(
+                    r"(^|\n)\s*(\$ )?(python|python3|pytest|npm|pnpm|yarn|node|swift|xcodebuild|cargo|go test|make|bash|sh|bin/|valp)\b",
+                    lowered,
+                )
+                or "command" in lowered
+                or "exit code" in lowered
+                or "exit_code" in lowered
+            )
+            has_result = bool(
+                re.search(r"\b(pass|passed|ok|success|succeeded|verified)\b", lowered)
+                or re.search(r"\bexit[_ ]code\s*[:=]?\s*0\b", lowered)
+            )
+            has_any_command_block = has_any_command_block or has_command
+            has_any_result_block = has_any_result_block or has_result
+            if has_command and has_result:
+                return True
+        return has_any_command_block and has_any_result_block
+
+    def _references_existing_evidence_path(self, text: str) -> bool:
+        candidates = set(re.findall(r"`([^`]+)`", text))
+        candidates.update(re.findall(r"(?<![\w/.-])((?:agents|evidence|gates|logs|screenshots)/[^\s),;:]+)", text))
+        for candidate in candidates:
+            ref = candidate.strip().strip(".,;:)")
+            if not ref or ref.startswith("/") or ".." in Path(ref).parts:
+                continue
+            if (self.task_dir / ref).exists():
+                return True
+        return False
+
+    def _approval_ledger_result(self) -> dict[str, list[str]]:
+        decisions_by_key: dict[str, list[dict[str, Any]]] = {}
+        approved: list[str] = []
+        for decision in self.approval_decisions:
+            key = self._approval_record_key(decision)
+            status = self._approval_status(decision)
+            if key:
+                decisions_by_key.setdefault(key, []).append(decision)
+            if status in {"approved", "approve", "allowed", "allow"}:
+                approved.append(key or "approval")
+
+        unresolved: list[str] = []
+        for index, request in enumerate(self.approval_requests, 1):
+            key = self._approval_record_key(request) or f"request-{index}"
+            status = self._approval_status(request)
+            if status in {"approved", "approve", "rejected", "reject", "denied", "deny", "cancelled", "canceled", "superseded"}:
+                continue
+            matching_decisions = decisions_by_key.get(key, [])
+            if any(
+                self._approval_status(decision)
+                in {"approved", "approve", "rejected", "reject", "denied", "deny", "cancelled", "canceled", "superseded"}
+                for decision in matching_decisions
+            ):
+                continue
+            unresolved.append(key)
+        return {
+            "requests": [self._approval_record_key(request) or "approval" for request in self.approval_requests],
+            "unresolved": unresolved,
+            "approved": approved,
+        }
+
+    def _approval_record_key(self, record: dict[str, Any]) -> str:
+        for field in ["request_id", "approval_id", "id"]:
+            value = record.get(field)
+            if value:
+                return str(value)
+        kind = record.get("kind") or record.get("risk") or record.get("action")
+        scope = record.get("scope") or record.get("target")
+        if kind and scope:
+            return f"{kind}:{scope}"
+        if kind:
+            return str(kind)
+        return ""
+
+    def _approval_status(self, record: dict[str, Any]) -> str:
+        for field in ["status", "decision", "result", "outcome"]:
+            value = record.get(field)
+            if value:
+                return str(value).lower()
+        return "pending"
+
+    def _approval_relevant_text(self) -> str:
+        goal = self._section_text("goal")
+        approval_risks = self._section_text("approval risks")
+        if approval_risks and not re.search(r"\b(no|none|not required|not_required|no approval-gated)\b", approval_risks, re.IGNORECASE):
+            return f"{goal}\n{approval_risks}"
+        return goal
+
+    def _section_text(self, heading: str) -> str:
+        lines = self.task_text.splitlines()
+        collecting = False
+        collected: list[str] = []
+        wanted = heading.strip().lower()
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("## "):
+                current = stripped[3:].strip().lower()
+                if collecting:
+                    break
+                collecting = current == wanted
+                continue
+            if collecting:
+                collected.append(line)
+        return "\n".join(collected).strip()
 
     def _latest_receipts_by_agent(self) -> dict[str, dict[str, Any]]:
         latest: dict[str, dict[str, Any]] = {}

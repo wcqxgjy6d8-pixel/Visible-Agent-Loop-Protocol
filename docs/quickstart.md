@@ -6,6 +6,7 @@ Prerequisites for the repository smoke check:
 Git clone of this repository
 Bash shell for scripts/verify-examples.sh
 Python 3.11 or another supported Python 3
+Python jsonschema package for schema validation
 ```
 
 VALP has three practical entry paths:
@@ -40,6 +41,7 @@ Summary: pass=13 warn=0 fail=0 skip=5
 To verify all bundled examples and CLI tests in one command:
 
 ```bash
+python -m pip install jsonschema
 scripts/verify-examples.sh
 ```
 

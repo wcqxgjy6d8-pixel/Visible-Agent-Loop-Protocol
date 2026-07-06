@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Hardens `valp audit` against weak completion evidence: approval ledgers are
+  checked, high-risk goals trigger approval requirements, verification gates
+  need concrete evidence, runtime/build/test claims need real evidence, bundled
+  examples are schema-validated in CI, and Manual Mode receipt events are now
+  covered by the receipt schema.
 - Adds `valp doctor` for non-mutating workspace health checks, JSON output, and
   optional Markdown reports.
 - Defines Auto Visible Mode as opt-in automatic, visible task intake with

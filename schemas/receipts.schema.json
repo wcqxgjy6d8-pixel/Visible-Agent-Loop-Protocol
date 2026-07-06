@@ -12,7 +12,11 @@
         "dispatch_inserted",
         "dispatch_submitted",
         "dispatch_completed",
-        "dispatch_blocked"
+        "dispatch_blocked",
+        "manual_dispatch_written",
+        "manual_delivery_attested",
+        "manual_result_attested",
+        "manual_blocked"
       ]
     },
     "exit_code": {"type": "integer"},
@@ -26,4 +30,3 @@
     "runtime": {"type": "object"}
   }
 }
-

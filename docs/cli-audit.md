@@ -181,6 +181,11 @@ approvals/...
 It does not run agents, mutate project source, submit dispatches, or call a
 runtime. It only audits recorded evidence.
 
+For approval checks, `valp audit` reads both `state.json` and task-local
+approval ledgers such as `approvals/requested.jsonl` and
+`approvals/user-decisions.jsonl`. A stale `approval: not_required` state does
+not override an unresolved approval request.
+
 ## Usage
 
 Audit a task folder directly:
@@ -271,9 +276,9 @@ The command maps the Done Criteria into these audit items:
 | `dispatch_receipts` | dispatch receipts satisfy the required gates; Full/Remote Mode completions require prior runtime submission proof |
 | `expected_evidence` | expected evidence exists and is not invalid/superseded/rejected/blocked |
 | `claim_evidence` | runtime/build/test/lint/UI claims cite command logs, screenshots, receipts, or evidence paths |
-| `verification` | verification passed or has a scoped blocker |
+| `verification` | verification passed or has a scoped blocker with concrete verification evidence unless verification is explicitly not required |
 | `review_findings` | review findings have no unresolved critical/high blockers |
-| `approvals` | approvals are resolved |
+| `approvals` | approvals are resolved, including task-local approval ledgers |
 | `final_synthesis` | final synthesis records decisions, disagreements, evidence gaps, and result |
 | `routing_feedback` | feedback record is written for non-trivial tasks when supported |
 

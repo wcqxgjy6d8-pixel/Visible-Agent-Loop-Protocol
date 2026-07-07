@@ -5,6 +5,7 @@ VALP is an open protocol for visible, evidence-backed multi-agent automation.
 Start here:
 
 - [Repository README](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/README.md)
+- [中文注解](zh-CN/README.md)
 - [Protocol specification](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SPEC.md)
 - [Quickstart](quickstart.md)
 - [Minimal audit demo](minimal-audit-demo.md)

@@ -18,6 +18,8 @@
 - Adds `correction-cycle.json` plus audit/schema coverage so rejected, retried,
   blocked, invalid, or superseded work must record a fixed correction trail
   before Done.
+- Adds Chinese explanatory notes for Chinese-speaking evaluators while keeping
+  `SPEC.md` and schemas as the normative protocol source.
 - Adds standard Python development metadata, a `requirements-dev.txt` file, and
   editable-install instructions for the reference CLI.
 - Adds `docs/visual-flow.md` with a Mermaid task timeline and task evidence map.

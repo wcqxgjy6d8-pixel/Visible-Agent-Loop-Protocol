@@ -48,6 +48,7 @@ python3 -m json.tool schemas/skill-recommendations.schema.json >/dev/null
 python3 -m json.tool schemas/trigger-policy.schema.json >/dev/null
 python3 -m json.tool schemas/attention-map.schema.json >/dev/null
 python3 -m json.tool schemas/context-selection.schema.json >/dev/null
+python3 -m json.tool schemas/correction-cycle.schema.json >/dev/null
 python3 -m json.tool schemas/mask-list.schema.json >/dev/null
 python3 -m json.tool schemas/evidence-board.schema.json >/dev/null
 python3 -m unittest tests/test_valp_audit.py tests/test_valp_workflow.py tests/test_valp_doctor.py tests/test_schema_examples.py

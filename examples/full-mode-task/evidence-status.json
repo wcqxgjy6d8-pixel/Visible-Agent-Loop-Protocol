@@ -1,6 +1,12 @@
 {
   "schema_version": "valp-evidence-status.v1",
   "evidence": {
+    "agents/codex/draft-evidence.md": {
+      "status": "superseded",
+      "reason": "Round 1 required command-backed implementation evidence instead of draft notes.",
+      "superseded_by": "agents/codex/evidence.md",
+      "updated_at": "2026-07-03T00:03:30Z"
+    },
     "agents/codex/evidence.md": {
       "status": "valid",
       "reason": "Implementation evidence includes command output."

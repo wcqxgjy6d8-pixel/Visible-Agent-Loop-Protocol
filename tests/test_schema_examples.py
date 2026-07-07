@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_SCHEMA_BY_NAME = {
     "attention-map.json": "attention-map.schema.json",
     "context-selection.json": "context-selection.schema.json",
+    "correction-cycle.json": "correction-cycle.schema.json",
     "evidence-board.json": "evidence-board.schema.json",
     "evidence-status.json": "evidence-status.schema.json",
     "local-overlay.json": "local-overlay.schema.json",

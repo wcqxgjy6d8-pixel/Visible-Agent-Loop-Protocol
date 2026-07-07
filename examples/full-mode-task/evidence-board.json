@@ -30,6 +30,16 @@
       "required_evidence": [
         "evidence/verification.md"
       ]
+    },
+    {
+      "claim": "correction cycle was fixed after draft evidence was superseded",
+      "status": "verified",
+      "required_evidence": [
+        "correction-cycle.json",
+        "agents/codex/evidence.md",
+        "evidence/verification.md",
+        "agents/claude/review.md"
+      ]
     }
   ]
 }

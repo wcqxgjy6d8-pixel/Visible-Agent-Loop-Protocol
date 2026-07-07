@@ -10,6 +10,7 @@ Done.
 
 - Codex implementation evidence and command verification are accepted.
 - Claude read-only review is accepted as review evidence.
+- One draft evidence file was superseded and fixed through `correction-cycle.json`.
 - No approval-gated action was required.
 
 ## Disagreements
@@ -28,6 +29,7 @@ None recorded for this synthetic example.
 - Implementation evidence: `agents/codex/evidence.md`
 - Review: `agents/claude/review.md`
 - Verification: `evidence/verification.md`
+- Correction cycle: `correction-cycle.json`
 - Routing feedback: `routing-feedback.json`
 
 ## Approval

@@ -41,6 +41,7 @@ It must not hard-code Desktop, macOS paths, or one user's folder names.
         visible-routing.md
         runtime-preflight.json
         evidence-status.json
+        correction-cycle.json
         timeline.jsonl
         dispatch-receipts.jsonl
         final-synthesis.md

@@ -96,6 +96,11 @@ visible.
 : Files, logs, screenshots, command outputs, reviews, findings, and synthesis
 used to prove progress or completion.
 
+`correction cycle`
+: A task-local record of rejected, blocked, invalid, or superseded work and the
+follow-up round that fixed, blocked, escalated, or cancelled it. A correction
+cycle is evidence of self-correction; it is not the self-correction engine.
+
 `provider-filtered skill recommendation`
 : A skill recommendation result generated for one target agent, using that
 agent's reachable provider or skill library filter. Provider-filtered results
@@ -639,6 +644,73 @@ each selected agent, not merely search for any historical success. A later
 success receipts from hiding a failed retry, a missed pane submission, or an
 agent that timed out before producing required evidence.
 
+## 10.1 Correction Cycle Evidence
+
+Runtimes may implement self-correcting loops, automatic retries, repair queues,
+or human review/fix rounds. VALP does not prescribe that implementation. VALP
+does require the evidence trail when work is rejected, retried, blocked, marked
+invalid, or superseded.
+
+When a task records any of these signals, the task should write:
+
+```text
+<task>/correction-cycle.json
+```
+
+Trigger signals include:
+
+```text
+dispatch_blocked
+expected_evidence_missing
+evidence_rejected
+evidence_superseded
+evidence_invalid
+review_blocker
+verification_failed
+runtime_timeout
+runtime_failure
+approval_block
+context_policy_block
+manual_retry
+```
+
+The correction cycle records:
+
+```text
+task id
+maximum allowed rounds
+round number
+trigger
+owner
+reason
+rejected or superseded refs
+required actions
+replacement evidence refs
+receipt refs
+final outcome
+```
+
+The final outcome is one of:
+
+```text
+fixed
+blocked
+escalated
+cancelled
+not_required
+```
+
+For a task to satisfy Done Criteria after a correction signal, the correction
+cycle's final outcome must be `fixed`, replacement evidence must exist, and the
+normal receipt, review, verification, approval, and final synthesis gates must
+still pass. A blocked or escalated correction cycle is useful state, but it is
+not completion proof.
+
+This keeps the protocol boundary narrow: a runtime may use rules, tests, model
+review, queues, or human operators to correct work. VALP only requires enough
+machine-readable evidence to audit what was rejected, what changed, and why the
+task is now acceptable or still blocked.
+
 ## 11. Context Compression
 
 Context compression is part of capability scanning, not a late-stage cleanup.
@@ -1027,6 +1099,8 @@ A task is done only when:
 - dispatch receipts satisfy the required gates;
 - expected evidence exists and is not marked invalid, superseded, rejected, or
   blocked;
+- correction cycle evidence is recorded and fixed when work was rejected,
+  retried, blocked, invalid, or superseded;
 - runtime/build/test/lint/UI claims cite concrete evidence;
 - verification passed or has a scoped blocker with concrete verification
   evidence unless verification is explicitly not required;

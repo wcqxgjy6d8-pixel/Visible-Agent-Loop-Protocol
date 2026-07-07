@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Correction Cycle",
+  "type": "object",
+  "required": ["schema_version", "task_id", "status", "max_rounds", "rounds", "final_outcome"],
+  "properties": {
+    "schema_version": {
+      "const": "valp-correction-cycle.v1"
+    },
+    "task_id": {"type": "string"},
+    "status": {
+      "enum": ["not_required", "active", "fixed", "blocked", "escalated", "cancelled"]
+    },
+    "max_rounds": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "rounds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["round", "trigger", "owner", "status", "started_at"],
+        "properties": {
+          "round": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "trigger": {
+            "enum": [
+              "dispatch_blocked",
+              "expected_evidence_missing",
+              "evidence_rejected",
+              "evidence_superseded",
+              "evidence_invalid",
+              "review_blocker",
+              "verification_failed",
+              "runtime_timeout",
+              "runtime_failure",
+              "approval_block",
+              "context_policy_block",
+              "manual_retry",
+              "other"
+            ]
+          },
+          "owner": {"type": "string"},
+          "status": {
+            "enum": ["open", "fixed", "blocked", "escalated", "cancelled"]
+          },
+          "started_at": {"type": "string"},
+          "ended_at": {"type": "string"},
+          "reason": {"type": "string"},
+          "rejected_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+            }
+          },
+          "required_actions": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+            }
+          },
+          "receipt_refs": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "final_outcome": {
+      "enum": ["not_required", "fixed", "blocked", "escalated", "cancelled"]
+    },
+    "final_evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+      }
+    },
+    "escalation_ref": {"type": "string"},
+    "notes": {"type": "string"}
+  },
+  "additionalProperties": true
+}

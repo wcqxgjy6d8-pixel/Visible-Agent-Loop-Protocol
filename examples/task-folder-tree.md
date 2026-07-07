@@ -30,6 +30,7 @@ ExampleProject/
         visible-routing.md
         runtime-preflight.json
         evidence-status.json
+        correction-cycle.json
         timeline.jsonl
         dispatch-receipts.jsonl
         final-synthesis.md

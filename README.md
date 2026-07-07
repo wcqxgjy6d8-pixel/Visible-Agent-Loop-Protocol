@@ -84,6 +84,12 @@ or scoped tasks in
 [good first issues](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22).
 For support routing, see [SUPPORT.md](SUPPORT.md).
 
+The best early feedback is not a generic "looks good". It is one of:
+
+- a false-done case where an agent or runtime claimed completion without proof;
+- a minimal audit run that failed or felt too ceremonial;
+- a runtime-adapter sketch that preserves receipt and evidence semantics.
+
 No-runtime first look:
 
 ```bash
@@ -97,8 +103,13 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=5
+Summary: pass=13 warn=0 fail=0 skip=6
 ```
+
+To see the audit fail when expected evidence is removed, run the
+[minimal audit demo](docs/minimal-audit-demo.md). This is the fastest way to
+understand the protocol's acceptance-system behavior before trying a live
+runtime.
 
 Proof check for this repository:
 
@@ -250,8 +261,9 @@ instructions for headless queue tasks. Use `--submit` only when the selected
 runtime is ready.
 
 `valp audit` scans a task evidence folder and checks the Done Criteria from
-`SPEC.md`, including runtime preflight, skill recommendation evidence, invalid
-evidence status, and unsupported runtime/build/test claims.
+`SPEC.md`, including runtime preflight, skill recommendation evidence,
+correction-cycle evidence, invalid evidence status, and unsupported
+runtime/build/test claims.
 
 `valp doctor` diagnoses a VALP protocol checkout without mutating by default. It
 checks local git tracking status, working tree cleanliness, ignored local
@@ -267,10 +279,10 @@ The repository includes four self-verifying task examples:
 
 | Example | What it proves | Expected audit |
 |---|---|---|
-| `examples/minimal-task/` | Manual Mode evidence can be audited without a runtime | `PASS`, `pass=13 warn=0 fail=0 skip=5` |
-| `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, review, and final synthesis audit gates | `PASS`, `pass=17 warn=0 fail=0 skip=1` |
-| `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=17 warn=0 fail=0 skip=1` |
-| `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=14 warn=0 fail=0 skip=4` |
+| `examples/minimal-task/` | Manual Mode evidence can be audited without a runtime | `PASS`, `pass=13 warn=0 fail=0 skip=6` |
+| `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, correction-cycle, review, and final synthesis audit gates | `PASS`, `pass=18 warn=0 fail=0 skip=1` |
+| `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=17 warn=0 fail=0 skip=2` |
+| `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=14 warn=0 fail=0 skip=5` |
 
 Run the complete smoke check:
 

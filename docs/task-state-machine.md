@@ -85,6 +85,13 @@ manual_cancelled
 Automatic retry is an adapter feature, not a VALP done signal. A retried task
 still needs fresh receipts and expected evidence.
 
+When a retry, rejection, blocked dispatch, invalid evidence, or superseded
+evidence affects task completion, the task should also write
+`correction-cycle.json`. The correction cycle records why work was rejected, who
+owned the fix, which evidence was replaced, and whether the final outcome was
+`fixed`, `blocked`, `escalated`, or `cancelled`. Only `fixed` can satisfy Done
+Criteria.
+
 ## Session Resume
 
 Some providers can resume prior sessions or threads. This is useful but risky.

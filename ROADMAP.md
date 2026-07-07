@@ -8,6 +8,8 @@
 - [shipped] Capability routing.
 - [shipped] Context policy scanning.
 - [shipped] Dispatch receipts.
+- [shipped] Correction cycle evidence contract for rejected, retried, blocked,
+  invalid, or superseded work.
 - [shipped] Evidence layout.
 - [shipped] Skill recommendation abstraction.
 - [shipped] Profile adapters.
@@ -41,6 +43,7 @@
 - [shipped] Validate runtime preflight gates.
 - [shipped] Validate skill recommendation evidence and dispatch surfacing.
 - [shipped] Validate invalid/superseded evidence status.
+- [shipped] Validate correction-cycle evidence when repair signals are present.
 - [shipped] Validate runtime/build/test claims have concrete evidence.
 - [shipped] Produce text and JSON task audit reports.
 - [shipped] `valp doctor` workspace health diagnostics and optional Markdown

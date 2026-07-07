@@ -1,0 +1,40 @@
+{
+  "schema_version": "valp-correction-cycle.v1",
+  "task_id": "TASK-EXAMPLE-001",
+  "status": "fixed",
+  "max_rounds": 3,
+  "rounds": [
+    {
+      "round": 1,
+      "trigger": "evidence_superseded",
+      "owner": "codex",
+      "status": "fixed",
+      "started_at": "2026-07-03T00:03:00Z",
+      "ended_at": "2026-07-03T00:04:00Z",
+      "reason": "Draft implementation notes were not enough to prove command-backed work.",
+      "rejected_refs": [
+        "agents/codex/draft-evidence.md"
+      ],
+      "required_actions": [
+        "replace draft notes with implementation evidence",
+        "record verification output",
+        "send corrected work to review"
+      ],
+      "evidence_refs": [
+        "agents/codex/evidence.md",
+        "evidence/verification.md",
+        "agents/claude/review.md"
+      ],
+      "receipt_refs": [
+        "dispatch-receipts.jsonl"
+      ]
+    }
+  ],
+  "final_outcome": "fixed",
+  "final_evidence_refs": [
+    "agents/codex/evidence.md",
+    "evidence/verification.md",
+    "agents/claude/review.md"
+  ],
+  "notes": "Synthetic example of a fixed correction cycle. The protocol records the rejection and the replacement evidence; it does not prescribe how the runtime generated the fix."
+}

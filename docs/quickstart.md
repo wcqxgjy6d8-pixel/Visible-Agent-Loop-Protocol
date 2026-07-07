@@ -36,7 +36,7 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=5
+Summary: pass=13 warn=0 fail=0 skip=6
 ```
 
 To verify all bundled examples and CLI tests in one command:
@@ -209,7 +209,7 @@ output looks like:
 
 ```text
 VALP audit: FAIL
-Summary: pass=8 warn=2 fail=5 skip=3
+Summary: pass=8 warn=2 fail=5 skip=4
 [FAIL] dispatch_receipts: latest receipt is not dispatch_completed
 [FAIL] expected_evidence: Missing expected evidence
 [FAIL] final_synthesis: Missing final synthesis
@@ -318,6 +318,7 @@ provider matrix and runtime preflight are recorded
 skill recommendations are recorded when available
 dispatch receipts satisfy gates
 expected evidence exists
+correction cycle is fixed if work was rejected or superseded
 runtime/build/test claims cite concrete evidence
 verification passed or has a scoped blocker
 review has no unresolved critical/high findings

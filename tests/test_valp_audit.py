@@ -242,6 +242,21 @@ class ValpAuditTests(unittest.TestCase):
             self.assertEqual(report.status, FAIL)
             self.assertTrue(any(item.id == "expected_evidence" and item.status == FAIL for item in report.items))
 
+    def test_missing_correction_cycle_fails_when_evidence_was_superseded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            (task / "correction-cycle.json").unlink()
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "correction_cycle" and item.status == FAIL for item in report.items))
+
+    def test_correction_cycle_passes_when_superseded_evidence_was_fixed(self) -> None:
+        report = TaskAudit(EXAMPLE).run()
+        self.assertEqual(report.status, PASS)
+        self.assertTrue(any(item.id == "correction_cycle" and item.status == PASS for item in report.items))
+
     def test_unsupported_runtime_claim_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             task = Path(tmp) / "task"

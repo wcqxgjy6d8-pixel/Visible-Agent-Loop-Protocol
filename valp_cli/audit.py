@@ -60,6 +60,7 @@ class TaskAudit:
         self.context_selection = self._load_json("context-selection.json")
         self.mask_list = self._load_json("mask-list.json")
         self.evidence_board = self._load_json("evidence-board.json")
+        self.correction_cycle = self._load_json("correction-cycle.json")
         self.receipts = self._load_jsonl("dispatch-receipts.jsonl")
         self.approval_requests = self._load_jsonl("approvals/requested.jsonl")
         self.approval_decisions = self._load_jsonl("approvals/user-decisions.jsonl")
@@ -82,6 +83,7 @@ class TaskAudit:
             self.check_squad_routing(),
             self.check_dispatch_receipts(),
             self.check_expected_evidence(),
+            self.check_correction_cycle(),
             self.check_claim_evidence(),
             self.check_verification(),
             self.check_review_findings(),
@@ -396,6 +398,88 @@ class TaskAudit:
             return self._fail("expected_evidence", "Expected evidence exists", "Expected evidence is not valid: " + ", ".join(invalid), evidence)
         return self._pass("expected_evidence", "Expected evidence exists", "All expected evidence refs exist", refs)
 
+    def check_correction_cycle(self) -> AuditItem:
+        evidence = self._existing(["correction-cycle.json", "dispatch-receipts.jsonl", "evidence-status.json"])
+        signals = self._correction_required_signals()
+        declared = (
+            self.state.get("correction_cycle")
+            or self.routing.get("correction_cycle")
+            or (self.state.get("gates") or {}).get("correction")
+        )
+        if not signals and not declared and not self.correction_cycle:
+            return self._skip(
+                "correction_cycle",
+                "Correction cycle is recorded when work is rejected, retried, blocked, or superseded",
+                "No correction cycle signals found",
+                evidence,
+            )
+        if not self.correction_cycle:
+            return self._fail(
+                "correction_cycle",
+                "Correction cycle is recorded when work is rejected, retried, blocked, or superseded",
+                "Missing correction-cycle.json for: " + ", ".join(signals or ["declared correction cycle"]),
+                evidence,
+            )
+        if self.correction_cycle.get("schema_version") != "valp-correction-cycle.v1":
+            return self._fail(
+                "correction_cycle",
+                "Correction cycle is recorded when work is rejected, retried, blocked, or superseded",
+                "correction-cycle.json has wrong or missing schema_version",
+                evidence,
+            )
+        rounds = self.correction_cycle.get("rounds")
+        if not isinstance(rounds, list):
+            return self._fail(
+                "correction_cycle",
+                "Correction cycle is recorded when work is rejected, retried, blocked, or superseded",
+                "correction-cycle.json rounds must be a list",
+                evidence,
+            )
+        outcome = str(self.correction_cycle.get("final_outcome") or "").lower()
+        if signals and not rounds:
+            return self._fail(
+                "correction_cycle",
+                "Correction cycle is recorded when work is rejected, retried, blocked, or superseded",
+                "Correction cycle has no rounds for: " + ", ".join(signals),
+                evidence,
+            )
+        if signals and outcome != "fixed":
+            return self._fail(
+                "correction_cycle",
+                "Correction cycle is recorded when work is rejected, retried, blocked, or superseded",
+                f"Correction cycle final_outcome must be fixed before Done; got {outcome or 'missing'}",
+                evidence,
+            )
+        unsafe_refs = self._unsafe_correction_refs(rounds, self.correction_cycle.get("final_evidence_refs") or [])
+        if unsafe_refs:
+            return self._fail(
+                "correction_cycle",
+                "Correction cycle is recorded when work is rejected, retried, blocked, or superseded",
+                "Correction evidence refs must be task-relative safe paths: " + ", ".join(unsafe_refs),
+                evidence,
+            )
+        missing_refs = self._missing_correction_refs(rounds, self.correction_cycle.get("final_evidence_refs") or [])
+        if outcome == "fixed" and missing_refs:
+            return self._fail(
+                "correction_cycle",
+                "Correction cycle is recorded when work is rejected, retried, blocked, or superseded",
+                "Correction evidence refs are missing: " + ", ".join(missing_refs),
+                evidence,
+            )
+        if signals:
+            return self._pass(
+                "correction_cycle",
+                "Correction cycle is recorded when work is rejected, retried, blocked, or superseded",
+                "Correction cycle recorded and fixed: " + ", ".join(signals),
+                evidence,
+            )
+        return self._pass(
+            "correction_cycle",
+            "Correction cycle is recorded when work is rejected, retried, blocked, or superseded",
+            f"Correction cycle declared with final_outcome={outcome or 'missing'}",
+            evidence,
+        )
+
     def check_claim_evidence(self) -> AuditItem:
         evidence = self._existing(["agents", "evidence", "dispatch-receipts.jsonl"])
         unsupported = self._unsupported_runtime_claims()
@@ -557,6 +641,60 @@ class TaskAudit:
                 if isinstance(item, dict) and item.get("ref") == ref:
                     return str(item.get("status") or "valid").lower()
         return "valid"
+
+    def _all_evidence_statuses(self) -> dict[str, str]:
+        statuses: dict[str, str] = {}
+        evidence = self.evidence_status.get("evidence") or self.evidence_status.get("items") or {}
+        if isinstance(evidence, dict):
+            for ref, item in evidence.items():
+                if isinstance(item, dict):
+                    statuses[str(ref)] = str(item.get("status") or "valid").lower()
+                elif isinstance(item, str):
+                    statuses[str(ref)] = item.lower()
+        elif isinstance(evidence, list):
+            for item in evidence:
+                if isinstance(item, dict) and item.get("ref"):
+                    statuses[str(item["ref"])] = str(item.get("status") or "valid").lower()
+        return statuses
+
+    def _correction_required_signals(self) -> list[str]:
+        signals: list[str] = []
+        if any(receipt.get("event") == "dispatch_blocked" for receipt in self.receipts):
+            signals.append("dispatch_blocked")
+        invalid_statuses = {
+            ref: status
+            for ref, status in self._all_evidence_statuses().items()
+            if status in {"invalid", "superseded", "rejected", "blocked"}
+        }
+        if invalid_statuses:
+            rendered = ", ".join(f"{ref}={status}" for ref, status in sorted(invalid_statuses.items()))
+            signals.append("evidence_status:" + rendered)
+        return signals
+
+    def _correction_refs(self, rounds: Any, final_refs: Any) -> list[str]:
+        refs: list[str] = []
+        if isinstance(rounds, list):
+            for round_record in rounds:
+                if not isinstance(round_record, dict):
+                    continue
+                for field in ["evidence_refs", "rejected_refs"]:
+                    values = round_record.get(field) or []
+                    if isinstance(values, list):
+                        refs.extend(str(value) for value in values)
+        if isinstance(final_refs, list):
+            refs.extend(str(value) for value in final_refs)
+        return refs
+
+    def _unsafe_correction_refs(self, rounds: Any, final_refs: Any) -> list[str]:
+        return [ref for ref in self._correction_refs(rounds, final_refs) if not self._is_safe_task_ref(ref)]
+
+    def _missing_correction_refs(self, rounds: Any, final_refs: Any) -> list[str]:
+        refs = [
+            ref
+            for ref in self._correction_refs(rounds, final_refs)
+            if self._is_safe_task_ref(ref) and not (self.task_dir / ref).exists()
+        ]
+        return sorted(set(refs))
 
     def _unsupported_runtime_claims(self) -> list[str]:
         claim_patterns = [

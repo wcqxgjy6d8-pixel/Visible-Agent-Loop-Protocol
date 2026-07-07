@@ -14,7 +14,7 @@ multi-agent platform.
 | Reference runtime | HERDR for the documented Full Mode path |
 | Other runtime adapters | Contract documented; first-class non-HERDR adapters are planned |
 | Public examples | Three bundled fixtures plus one sanitized real Manual Mode documentation case study |
-| Public release | No GitHub release yet |
+| Public release | Draft prerelease `v0.2.0-draft`; not a stable release |
 
 ## Verified In This Repository
 
@@ -41,6 +41,7 @@ platform.
 | JSON and JSONL syntax | Covered | `scripts/verify-examples.sh` |
 | JSON schema validation for bundled examples | Covered | `scripts/verify-examples.sh`, `tests/test_schema_examples.py` |
 | Audit gates and negative cases | Covered for current CLI rules | `tests/test_valp_audit.py` |
+| Correction cycle evidence | Covered for schema, audit pass, and missing-record failure | `schemas/correction-cycle.schema.json`, `examples/full-mode-task/correction-cycle.json`, `tests/test_valp_audit.py` |
 | Publish/scan/route/dispatch workflow shape | Covered for reference CLI behavior | `tests/test_valp_workflow.py` |
 | Doctor diagnostics | Covered for current diagnostics | `tests/test_valp_doctor.py` |
 | Bundled Manual Mode example | Covered by audit | `examples/minimal-task/` |
@@ -79,7 +80,7 @@ and exports the required receipts and evidence.
 | Live Full Mode E2E coverage is limited | CLI tests cannot prove a real runtime can submit, wait, collect, and audit | Keep Full Mode claims tied to adapter proof |
 | App installer behavior is not a protocol runtime | First-launch UX can accidentally hide path, preflight, and submit boundaries | First-install health gate is specified; App must expose doctor/preflight/dry-run results |
 | Windows local Full Mode is conditional | Native Windows runtime support is beta-dependent | Recommend SSH remote for stable Windows workflow |
-| No GitHub release yet | Users need a stable install/evaluation point | Planned release/tag after documentation and example calibration |
+| Draft prerelease only | Users need a stable install/evaluation point | Use `v0.2.0-draft` for evaluation; wait for a stable release before stronger install claims |
 | Small public community | Social proof is low | Avoid community-size overclaims |
 
 ## Promotion Language
@@ -93,6 +94,11 @@ evidence, review gates, approval gates, and audit checks. HERDR is the current
 reference runtime for Full Mode; other runtimes can implement the adapter
 contract.
 ```
+
+For early promotion, frame VALP as an evidence discipline or acceptance system,
+not as a productivity claim. The safest public invitation is to ask users to run
+the minimal audit, share a false-done failure case, or critique whether the
+protocol is useful or ceremony.
 
 Avoid:
 
@@ -108,4 +114,5 @@ HERDR-free automation path already shipped
 
 1. Add a public live Full Mode case study with runtime submission proof.
 2. Add the first first-class non-HERDR adapter path.
-3. Tag a public release after the evidence wording and examples are stable.
+3. Turn the draft prerelease into a stable release after the evidence wording
+   and examples are stable.

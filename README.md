@@ -4,6 +4,8 @@ Open protocol for visible, evidence-backed, multi-agent automation.
 
 [![Verify VALP Examples](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/actions/workflows/verify.yml/badge.svg)](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/actions/workflows/verify.yml)
 
+![VALP social preview: Agent says done, VALP asks for proof](docs/assets/social-preview.png)
+
 中文注解入口: [docs/zh-CN/README.md](docs/zh-CN/README.md). The Chinese pages
 are explanatory notes; `SPEC.md` and `schemas/` remain the normative protocol
 source.

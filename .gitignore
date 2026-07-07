@@ -1,5 +1,6 @@
 .DS_Store
 .herdr-loop/
+.playwright-cli/
 node_modules/
 dist/
 build/

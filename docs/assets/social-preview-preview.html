@@ -1,0 +1,753 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VALP Social Preview Concept</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #05070a;
+      --ink: #f8fafc;
+      --muted: #96a3b7;
+      --dim: #59687c;
+      --panel: rgba(8, 13, 20, 0.76);
+      --line: rgba(148, 163, 184, 0.2);
+      --line-soft: rgba(148, 163, 184, 0.11);
+      --green: #16f2a4;
+      --green-2: #10b981;
+      --cyan: #38bdf8;
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --mono: "SFMono-Regular", "JetBrains Mono", "Google Sans Code", "Cascadia Code", Menlo, Consolas, monospace;
+      --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 22% 16%, rgba(56, 189, 248, 0.12), transparent 32%),
+        radial-gradient(circle at 75% 24%, rgba(22, 242, 164, 0.12), transparent 30%),
+        #05070a;
+      color: var(--ink);
+      font-family: var(--sans);
+    }
+
+    .page {
+      min-height: 100vh;
+      padding: 32px;
+      display: grid;
+      gap: 18px;
+      align-content: center;
+      justify-items: center;
+    }
+
+    .preview-meta,
+    .readme-mock,
+    .social-card {
+      width: min(1200px, calc(100vw - 64px));
+    }
+
+    .preview-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+
+    .social-card {
+      aspect-ratio: 1200 / 630;
+      position: relative;
+      overflow: hidden;
+      isolation: isolate;
+      background:
+        linear-gradient(118deg, rgba(13, 20, 31, 0.96), rgba(3, 6, 10, 0.98) 58%, rgba(4, 12, 14, 0.98)),
+        #05070a;
+      border: 1px solid rgba(148, 163, 184, 0.26);
+      box-shadow: 0 34px 90px rgba(0, 0, 0, 0.5);
+    }
+
+    .social-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -3;
+      background-image:
+        radial-gradient(rgba(22, 242, 164, 0.22) 1px, transparent 1.6px),
+        linear-gradient(rgba(148, 163, 184, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.045) 1px, transparent 1px);
+      background-size: 23px 23px, 92px 92px, 92px 92px;
+      mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.88), rgba(0, 0, 0, 0.5) 62%, rgba(0, 0, 0, 0.96));
+    }
+
+    .social-card::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      background:
+        linear-gradient(90deg, transparent 0 56%, rgba(5, 7, 10, 0.42) 69%, rgba(5, 7, 10, 0.82)),
+        linear-gradient(180deg, rgba(5, 7, 10, 0.1), transparent 48%, rgba(5, 7, 10, 0.62));
+      pointer-events: none;
+    }
+
+    .beam {
+      position: absolute;
+      inset: -120px -80px;
+      z-index: -2;
+      background:
+        linear-gradient(101deg, transparent 0 24%, rgba(56, 189, 248, 0.12) 24.5% 25.8%, transparent 26.2% 41%),
+        linear-gradient(101deg, transparent 0 53%, rgba(22, 242, 164, 0.18) 53.3% 54.2%, transparent 54.7% 100%);
+      transform: skewX(-9deg);
+    }
+
+    .scan-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 51%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.2), rgba(22, 242, 164, 0.88), rgba(56, 189, 248, 0.2), transparent);
+      box-shadow: 0 0 22px rgba(22, 242, 164, 0.66);
+      opacity: 0.9;
+      z-index: 1;
+    }
+
+    .scan-line::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 2px;
+      height: 120px;
+      background: linear-gradient(180deg, transparent, rgba(22, 242, 164, 0.07));
+    }
+
+    .card-inner {
+      position: absolute;
+      inset: 42px 48px 38px;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: minmax(0, 1.18fr) minmax(340px, 0.82fr);
+      grid-template-rows: 38px 1fr 44px;
+      gap: 26px 36px;
+      min-height: 0;
+    }
+
+    .brand-row {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      min-width: 0;
+      font-family: var(--mono);
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 13px;
+      min-width: 0;
+      color: #dce7f5;
+      font-size: 16px;
+      font-weight: 760;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      background: #f8fafc;
+      color: #05070a;
+      font-family: "Arial Black", var(--sans);
+      font-weight: 900;
+      box-shadow: 0 0 0 1px #ffffff, 0 0 28px rgba(22, 242, 164, 0.18);
+      flex: 0 0 auto;
+    }
+
+    .brand span:last-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .mode {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .mode-dot {
+      width: 9px;
+      height: 9px;
+      background: var(--green);
+      box-shadow: 0 0 0 6px rgba(22, 242, 164, 0.13), 0 0 18px rgba(22, 242, 164, 0.8);
+    }
+
+    .hero {
+      align-self: stretch;
+      display: grid;
+      align-content: center;
+      min-width: 0;
+      min-height: 0;
+      padding-bottom: 4px;
+    }
+
+    .kicker {
+      width: fit-content;
+      margin-bottom: 18px;
+      padding: 8px 10px;
+      border-left: 3px solid var(--green);
+      background: linear-gradient(90deg, rgba(22, 242, 164, 0.13), rgba(56, 189, 248, 0.04));
+      color: #c7f9e7;
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .title-lockup {
+      position: relative;
+      width: fit-content;
+      max-width: 100%;
+    }
+
+    .hero-title {
+      margin: 0;
+      display: flex;
+      align-items: end;
+      gap: 2px;
+      color: var(--ink);
+      font-family: "Arial Black", Impact, "Helvetica Neue", Arial, sans-serif;
+      font-size: 206px;
+      font-weight: 900;
+      line-height: 0.76;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      white-space: nowrap;
+      transform: scaleX(1.05);
+      transform-origin: left bottom;
+      text-shadow: 0 20px 48px rgba(0, 0, 0, 0.52);
+    }
+
+    .letter {
+      position: relative;
+      display: inline-block;
+      filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.18));
+    }
+
+    .letter::after {
+      content: attr(data-ghost);
+      position: absolute;
+      left: 0.02em;
+      top: 0.02em;
+      color: transparent;
+      -webkit-text-stroke: 1px rgba(56, 189, 248, 0.18);
+      z-index: -1;
+    }
+
+    .letter-decrypt {
+      color: var(--green);
+      text-shadow: 0 0 22px rgba(22, 242, 164, 0.66), 0 20px 48px rgba(0, 0, 0, 0.52);
+    }
+
+    .letter-decrypt::before,
+    .letter-decrypt::after {
+      position: absolute;
+      left: 12%;
+      font-family: var(--mono);
+      font-size: 0.2em;
+      line-height: 1;
+      text-shadow: none;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .letter-decrypt::before {
+      content: "# ? /";
+      top: -0.28em;
+      color: rgba(22, 242, 164, 0.86);
+    }
+
+    .letter-decrypt::after {
+      content: "P OK";
+      bottom: -0.21em;
+      color: rgba(56, 189, 248, 0.72);
+    }
+
+    .title-cut {
+      position: absolute;
+      left: 2px;
+      right: -22px;
+      bottom: 20px;
+      height: 16px;
+      background:
+        linear-gradient(90deg, rgba(22, 242, 164, 0.98), rgba(56, 189, 248, 0.74), transparent 78%),
+        repeating-linear-gradient(90deg, rgba(248, 250, 252, 0.72) 0 12px, transparent 12px 19px);
+      background-size: 58% 4px, 100% 100%;
+      background-repeat: no-repeat;
+      background-position: left bottom, left top;
+      mix-blend-mode: screen;
+      opacity: 0.95;
+    }
+
+    .subtitle {
+      max-width: 628px;
+      margin: 30px 0 0;
+      color: var(--ink);
+      font-size: 31px;
+      line-height: 1.14;
+      font-weight: 820;
+    }
+
+    .subtitle span {
+      color: var(--muted);
+      font-weight: 560;
+    }
+
+    .micro-copy {
+      max-width: 540px;
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .side {
+      align-self: stretch;
+      display: grid;
+      grid-template-rows: 1fr 0.78fr;
+      gap: 15px;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .panel {
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: 36px 1fr;
+      background: var(--panel);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 22px 52px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(14px);
+    }
+
+    .panel.audit {
+      border-color: rgba(22, 242, 164, 0.34);
+    }
+
+    .panel.fail {
+      border-color: rgba(239, 68, 68, 0.28);
+    }
+
+    .panel-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--line-soft);
+      padding: 0 14px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+      min-width: 0;
+    }
+
+    .lights {
+      display: flex;
+      gap: 6px;
+      flex: 0 0 auto;
+    }
+
+    .light {
+      width: 8px;
+      height: 8px;
+      background: var(--line);
+    }
+
+    .red {
+      background: var(--red);
+    }
+
+    .amber {
+      background: var(--amber);
+    }
+
+    .green {
+      background: var(--green-2);
+    }
+
+    .panel-body {
+      min-width: 0;
+      overflow: hidden;
+      padding: 15px 17px;
+      color: #dce7f4;
+      font-family: var(--mono);
+      font-size: 13.5px;
+      line-height: 1.47;
+    }
+
+    .path {
+      margin-bottom: 8px;
+      color: #eff6ff;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 12px;
+      padding: 2px 0;
+      min-width: 0;
+    }
+
+    .name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .branch,
+    .dim {
+      color: var(--dim);
+    }
+
+    .token {
+      display: inline-block;
+      min-width: 50px;
+      padding: 1px 6px;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .ok,
+    .pass {
+      color: #bbf7d0;
+      background: rgba(22, 242, 164, 0.14);
+    }
+
+    .miss,
+    .fail-token {
+      color: #fecaca;
+      background: rgba(239, 68, 68, 0.16);
+    }
+
+    .prompt {
+      color: var(--cyan);
+    }
+
+    .audit-body {
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .proof-meter {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(18, 1fr);
+      gap: 4px;
+    }
+
+    .proof-meter span {
+      height: 34px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      background: rgba(148, 163, 184, 0.08);
+    }
+
+    .proof-meter .good {
+      background: linear-gradient(180deg, rgba(22, 242, 164, 0.92), rgba(16, 185, 129, 0.32));
+      box-shadow: 0 0 12px rgba(22, 242, 164, 0.16);
+    }
+
+    .proof-meter .warn {
+      background: linear-gradient(180deg, rgba(245, 158, 11, 0.9), rgba(245, 158, 11, 0.22));
+    }
+
+    .proof-meter .bad {
+      background: linear-gradient(180deg, rgba(239, 68, 68, 0.88), rgba(239, 68, 68, 0.2));
+    }
+
+    .footer-row {
+      grid-column: 1 / -1;
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 24px;
+      min-width: 0;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 14px;
+    }
+
+    .proof-points {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .pill {
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      background: rgba(15, 23, 42, 0.62);
+      padding: 8px 10px;
+      color: #cbd5e1;
+      white-space: nowrap;
+    }
+
+    .pill.hot {
+      border-color: rgba(22, 242, 164, 0.35);
+      color: #c7f9e7;
+      background: rgba(22, 242, 164, 0.1);
+    }
+
+    .repo {
+      min-width: 260px;
+      color: #dbeafe;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: right;
+    }
+
+    .readme-mock {
+      display: grid;
+      gap: 16px;
+      padding: 26px;
+      background: #0d1117;
+      border: 1px solid #30363d;
+    }
+
+    .readme-title {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 720;
+    }
+
+    .readme-hero {
+      display: grid;
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 22px;
+      padding: 24px;
+      overflow: hidden;
+      border: 1px solid #30363d;
+      background:
+        radial-gradient(rgba(22, 242, 164, 0.14) 1px, transparent 1.5px),
+        linear-gradient(120deg, rgba(56, 189, 248, 0.08), transparent 42%),
+        #010409;
+      background-size: 22px 22px, auto, auto;
+    }
+
+    .readme-hero h2 {
+      margin: 0;
+      font-family: "Arial Black", Impact, "Helvetica Neue", Arial, sans-serif;
+      font-size: 72px;
+      line-height: 0.82;
+      letter-spacing: 0;
+    }
+
+    .readme-hero p {
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.45;
+    }
+
+    .mini-ledger {
+      min-width: 0;
+      padding: 14px;
+      border: 1px solid #30363d;
+      background: rgba(13, 17, 23, 0.86);
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.48;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .scan-line {
+        animation: scan 12s linear infinite;
+      }
+
+      .letter-decrypt::before {
+        animation: symbol-cycle 1.8s steps(4, end) infinite;
+      }
+    }
+
+    @keyframes scan {
+      0% {
+        top: 18%;
+      }
+
+      100% {
+        top: 84%;
+      }
+    }
+
+    @keyframes symbol-cycle {
+      0% {
+        content: "# ? /";
+      }
+
+      33% {
+        content: "$ ! P";
+      }
+
+      66% {
+        content: "P OK";
+      }
+
+      100% {
+        content: "# ? /";
+      }
+    }
+
+    @media (max-width: 860px) {
+      .page {
+        padding: 20px;
+        justify-items: start;
+      }
+
+      .preview-meta,
+      .social-card,
+      .readme-mock {
+        width: 1200px;
+      }
+
+      .page::after {
+        content: "Horizontal artboard: scroll to inspect the full 1200x630 preview.";
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="preview-meta">
+      <span>VALP social preview concept / 1200 x 630</span>
+      <span>ReactBits-inspired decrypted proof direction</span>
+    </div>
+
+    <section class="social-card" aria-label="VALP social preview concept">
+      <div class="beam" aria-hidden="true"></div>
+      <div class="scan-line" aria-hidden="true"></div>
+
+      <div class="card-inner">
+        <div class="brand-row">
+          <div class="brand">
+            <span class="brand-mark">V</span>
+            <span>Visible Agent Loop Protocol</span>
+          </div>
+          <div class="mode">
+            <span class="mode-dot"></span>
+            <span>open protocol / receipts / audit gates</span>
+          </div>
+        </div>
+
+        <section class="hero" aria-label="Decrypted VALP title">
+          <div class="kicker">decrypted proof layer</div>
+          <div class="title-lockup">
+            <h1 class="hero-title">
+              <span class="letter" data-ghost="V">V</span>
+              <span class="letter" data-ghost="A">A</span>
+              <span class="letter" data-ghost="L">L</span>
+              <span class="letter letter-decrypt" data-ghost="P">P</span>
+            </h1>
+            <div class="title-cut" aria-hidden="true"></div>
+          </div>
+          <p class="subtitle">Agent says done. <span>VALP asks for proof.</span></p>
+          <p class="micro-copy">Visible dispatch, expected evidence, and audit gates for multi-agent work.</p>
+        </section>
+
+        <aside class="side" aria-label="Evidence and audit panels">
+          <div class="panel fail">
+            <div class="panel-bar">
+              <div class="lights"><span class="light red"></span><span class="light amber"></span><span class="light green"></span></div>
+              <span>evidence ledger</span>
+            </div>
+            <div class="panel-body">
+              <div class="path">.herdr-loop/tasks/TASK-001/</div>
+              <div class="row">
+                <span class="name"><span class="branch">|-</span> dispatch-receipts.jsonl</span>
+                <span class="token ok">OK</span>
+              </div>
+              <div class="row">
+                <span class="name"><span class="branch">|-</span> evidence/verification.md</span>
+                <span class="token miss">MISS</span>
+              </div>
+              <div class="row">
+                <span class="name"><span class="branch">`-</span> final-synthesis.md</span>
+                <span class="token miss">MISS</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel audit">
+            <div class="panel-bar">
+              <span>valp audit</span>
+              <span>fail -> proof -> pass</span>
+            </div>
+            <div class="panel-body audit-body">
+              <span class="prompt">$</span> valp audit .herdr-loop/tasks/TASK-001<br>
+              <span class="token fail-token">FAIL</span> expected_evidence<br>
+              <span class="token pass">PASS</span> proof accepted
+              <div class="proof-meter" aria-hidden="true">
+                <span class="good"></span><span class="good"></span><span class="good"></span>
+                <span class="warn"></span><span class="bad"></span><span class="warn"></span>
+                <span class="good"></span><span class="good"></span><span class="good"></span>
+                <span class="good"></span><span class="good"></span><span class="good"></span>
+                <span class="good"></span><span class="good"></span><span class="good"></span>
+                <span class="good"></span><span class="good"></span><span class="good"></span>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <div class="footer-row">
+          <div class="proof-points">
+            <span class="pill hot">decrypted proof</span>
+            <span class="pill">visible receipts</span>
+            <span class="pill">audit before trust</span>
+          </div>
+          <div class="repo">github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="readme-mock" aria-label="README hero mock">
+      <h2 class="readme-title">README first-screen mock</h2>
+      <div class="readme-hero">
+        <div>
+          <h2>VAL<span style="color: var(--green)">P</span></h2>
+          <p><strong>Agent says done. VALP asks for proof.</strong><br>Visible receipts, expected evidence, and audit gates for multi-agent automation.</p>
+        </div>
+        <div class="mini-ledger">
+          .herdr-loop/tasks/TASK-001/<br>
+          |- dispatch-receipts.jsonl <span class="token ok">OK</span><br>
+          |- evidence/verification.md <span class="token miss">MISS</span><br>
+          <br>
+          <span class="prompt">$</span> valp audit examples/minimal-task<br>
+          <span class="token pass">PASS</span> proof accepted
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

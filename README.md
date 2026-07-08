@@ -1,10 +1,30 @@
 # Visible Agent Loop Protocol
 
-Open protocol for visible, evidence-backed, multi-agent automation.
+Agent says done. VALP asks for proof.
 
 [![Verify VALP Examples](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/actions/workflows/verify.yml/badge.svg)](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/actions/workflows/verify.yml)
+![GitHub Release](https://img.shields.io/github/v/release/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol?display_name=tag)
+![License](https://img.shields.io/github/license/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 
-![VALP social preview: Agent says done, VALP asks for proof](docs/assets/social-preview.png)
+![VALP audit demo: PASS to FAIL to PASS](docs/assets/valp-audit-demo.svg)
+
+VALP is an open protocol and reference CLI for visible, evidence-backed
+multi-agent automation. It catches false completion by checking dispatch
+receipts, expected evidence, review/approval gates, and final synthesis.
+
+Try the smallest audit path:
+
+```bash
+git clone https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol.git
+cd Visible-Agent-Loop-Protocol
+python -m pip install -r requirements-dev.txt
+bin/valp audit examples/minimal-task
+```
+
+For automated Full Mode, [HERDR](https://github.com/ogulcancelik/herdr) is the
+current reference runtime. HERDR is not required by the protocol; any runtime
+can be VALP-compatible when it exports the required receipts and evidence.
 
 Languages: [English](README.md) | [中文](README.zh-CN.md)
 

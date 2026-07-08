@@ -4,6 +4,8 @@
 
 - Adds a public Pages explainer, `docs/when-agent-done-is-not-done.md`, for the
   shortest PASS -> FAIL -> PASS audit demo.
+- Adds a terminal-style hero demo asset to show PASS -> FAIL -> PASS before a
+  reader reaches the long README sections.
 - Links active RFC, adapter feedback, and good-first-issue entry points from
   README, Pages, community docs, and Chinese README.
 

@@ -17,6 +17,8 @@ Where is the proof?
 VALP exists for that gap. It turns "done" into a small evidence chain that
 another person, agent, or CI job can inspect.
 
+![VALP audit demo: PASS to FAIL to PASS](assets/valp-audit-demo.svg)
+
 ## The Smallest Demo
 
 Start with the bundled Manual Mode task:

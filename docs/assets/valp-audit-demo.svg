@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">VALP audit demo</title>
+  <desc id="desc">Terminal-style demo showing VALP audit passing, failing after expected evidence is removed, and passing after evidence is restored.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#07111f"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="24" stdDeviation="18" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="675" fill="url(#bg)"/>
+  <circle cx="1040" cy="110" r="150" fill="#1d4ed8" opacity="0.12"/>
+  <circle cx="160" cy="610" r="180" fill="#16a34a" opacity="0.10"/>
+
+  <text x="80" y="72" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="28" fill="#93c5fd" font-weight="600">
+    Agent says done. VALP asks for proof.
+  </text>
+  <text x="80" y="116" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="54" fill="#f8fafc" font-weight="700">
+    Completed is not done
+  </text>
+  <text x="80" y="153" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" fill="#cbd5e1">
+    PASS -> remove expected evidence -> FAIL -> restore proof -> PASS
+  </text>
+
+  <g filter="url(#shadow)">
+    <rect x="78" y="190" width="1044" height="395" rx="16" fill="#0b1020" stroke="#334155" stroke-width="3"/>
+    <rect x="78" y="190" width="1044" height="42" rx="16" fill="#111827"/>
+    <rect x="78" y="216" width="1044" height="16" fill="#111827"/>
+    <circle cx="108" cy="211" r="7" fill="#f87171"/>
+    <circle cx="132" cy="211" r="7" fill="#fbbf24"/>
+    <circle cx="156" cy="211" r="7" fill="#34d399"/>
+    <text x="600" y="217" text-anchor="middle" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="16" fill="#94a3b8">
+      valp-audit-demo
+    </text>
+
+    <text x="112" y="275" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="23" fill="#93c5fd">
+      $ bin/valp audit examples/minimal-task
+    </text>
+    <rect x="112" y="297" width="126" height="34" rx="6" fill="#14532d"/>
+    <text x="132" y="322" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="22" fill="#86efac" font-weight="700">
+      PASS
+    </text>
+    <text x="258" y="322" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="22" fill="#d1fae5">
+      pass=13 warn=0 fail=0 skip=7
+    </text>
+
+    <text x="112" y="382" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="23" fill="#93c5fd">
+      $ remove expected evidence
+    </text>
+    <text x="112" y="426" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="23" fill="#93c5fd">
+      $ bin/valp audit /tmp/minimal-task
+    </text>
+    <rect x="112" y="448" width="110" height="34" rx="6" fill="#7f1d1d"/>
+    <text x="132" y="473" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="22" fill="#fca5a5" font-weight="700">
+      FAIL
+    </text>
+    <text x="242" y="473" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="22" fill="#fecaca">
+      Missing expected evidence
+    </text>
+    <text x="242" y="508" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="22" fill="#fecaca">
+      agents/manual-reviewer/review.md
+    </text>
+
+    <text x="112" y="550" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="23" fill="#93c5fd">
+      $ restore evidence and audit again
+    </text>
+    <rect x="112" y="572" width="126" height="34" rx="6" fill="#14532d"/>
+    <text x="132" y="597" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="22" fill="#86efac" font-weight="700">
+      PASS
+    </text>
+    <text x="258" y="597" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="22" fill="#d1fae5">
+      proof restored
+    </text>
+  </g>
+</svg>

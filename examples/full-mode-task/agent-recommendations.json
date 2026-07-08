@@ -1,0 +1,36 @@
+{
+  "schema_version": "valp-agent-recommendations.v1",
+  "task_id": "TASK-EXAMPLE-001",
+  "status": "resolved",
+  "summary": "The coordinator reviewed selected-agent recommendations and bounded them to this synthetic example's scope.",
+  "complexity_policy": {
+    "max_recommendation_rounds": 2,
+    "max_new_dispatches_without_user_approval": 1,
+    "current_scope": "Synthetic task-folder fixture demonstrating protocol evidence shape.",
+    "stop_conditions": [
+      "Do not broaden the fixture into a real product test.",
+      "Do not add new runtime adapters from a synthetic residual-risk note.",
+      "Escalate if a recommendation requires release, deploy, secrets, or production data."
+    ]
+  },
+  "entries": [
+    {
+      "id": "rec-claude-001",
+      "agent": "claude",
+      "source_ref": "agents/claude/review.md",
+      "recommendation": "The reviewer noted that the sample demonstrates evidence shape only and is not a real product test.",
+      "coordinator_decision": "merged",
+      "decision_status": "resolved",
+      "rationale": "The note is valid and should constrain the final claim, but it should not expand this fixture into a live product-test task.",
+      "scope_boundary": "Keep the current task as a synthetic protocol fixture; record the limitation in final synthesis.",
+      "complexity_impact": "low",
+      "follow_up_refs": [
+        "evidence/final-synthesis.md"
+      ],
+      "created_at": "2026-07-03T00:06:10Z",
+      "resolved_at": "2026-07-03T00:06:30Z"
+    }
+  ],
+  "open_items": [],
+  "notes": "No additional dispatch was needed because the recommendation changed the claim boundary, not the implementation."
+}

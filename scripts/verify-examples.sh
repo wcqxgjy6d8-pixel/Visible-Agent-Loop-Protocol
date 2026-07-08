@@ -54,6 +54,7 @@ except ImportError as exc:
 root = Path(".")
 schema_by_name = {
     "attention-map.json": "attention-map.schema.json",
+    "agent-recommendations.json": "agent-recommendations.schema.json",
     "context-selection.json": "context-selection.schema.json",
     "correction-cycle.json": "correction-cycle.schema.json",
     "evidence-board.json": "evidence-board.schema.json",

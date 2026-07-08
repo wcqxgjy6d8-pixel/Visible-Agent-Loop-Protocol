@@ -36,6 +36,7 @@ new
   -> executing
   -> verifying
   -> reviewing
+  -> resolving_agent_recommendations
   -> fixing
   -> approval_required
   -> recording
@@ -92,6 +93,40 @@ owned the fix, which evidence was replaced, and whether the final outcome was
 `fixed`, `blocked`, `escalated`, or `cancelled`. Only `fixed` can satisfy Done
 Criteria.
 
+## Recommendation Resolution
+
+After selected agents produce evidence or review output, the coordinator must
+resolve meaningful next-step suggestions before recording Done.
+
+This is not an unlimited loop. The coordinator should record a task-local
+complexity policy:
+
+```text
+max_recommendation_rounds
+max_new_dispatches_without_user_approval
+current_scope
+stop_conditions
+```
+
+Each meaningful recommendation is adopted into the visible decision process as
+one of:
+
+```text
+accepted
+merged
+scoped_followup
+bounded_no_action
+escalated
+```
+
+`accepted` and `merged` can create new dispatches, correction entries,
+verification, review, or final-synthesis updates. `scoped_followup` records
+valid work outside the current task. `bounded_no_action` is only for duplicate,
+already-satisfied, non-actionable, or complexity-increasing recommendations.
+
+The important invariant is: no selected-agent recommendation disappears into
+the leader's private judgment.
+
 ## Session Resume
 
 Some providers can resume prior sessions or threads. This is useful but risky.
@@ -114,7 +149,7 @@ retries may resume when the provider supports it and context policy allows it.
 A runtime can finish a runtime work item without finishing a VALP task.
 
 VALP is done only when receipts, expected evidence, review, approval gates, and
-final synthesis are recorded.
+agent-recommendation resolution, and final synthesis are recorded.
 
 ## Routing Feedback State
 

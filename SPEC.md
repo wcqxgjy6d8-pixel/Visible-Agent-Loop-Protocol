@@ -107,6 +107,14 @@ agent's reachable provider or skill library filter. Provider-filtered results
 are preferred in dispatch prompts because task-level aggregate results can
 contain skills owned by other providers.
 
+`agent recommendation`
+: A task-local recommendation, next step, follow-up risk, or proposed action
+reported by a dispatched agent after doing its assigned work. Agent
+recommendations are not commands. The coordinator must record whether each
+meaningful recommendation is adopted into the task plan, merged into existing
+work, converted into a follow-up, explicitly bounded, or escalated. Adoption is
+not blind execution; it is visible disposition plus scope control.
+
 `trigger policy`
 : A local, workspace, or runtime rule that decides whether a user request,
 issue, queue item, scheduled run, or other signal should publish a VALP task.
@@ -165,6 +173,8 @@ EXECUTE
   -> VERIFY
 REVIEW
   -> REVIEW
+  -> COLLECT AGENT RECOMMENDATIONS
+  -> RESOLVE / MERGE / REDISPATCH
   -> FIX
   -> REVIEW AGAIN
   -> APPROVAL GATE, IF NEEDED
@@ -203,6 +213,7 @@ new
   -> executing
   -> verifying
   -> reviewing
+  -> resolving_agent_recommendations
   -> fixing
   -> approval_required
   -> recording
@@ -974,6 +985,80 @@ a workspace-level routing memory:
 Do not store secrets, raw private data, or full hidden conversations in routing
 feedback. Record evidence paths and short summaries instead.
 
+## 16.1 Agent Recommendation Resolution
+
+VALP loops are evidence-driven, not fixed-count. A small task may need one
+dispatch round. A larger or higher-risk task may need repeated dispatch,
+review, fix, review, and recommendation-resolution rounds until the evidence
+gates pass or the task is blocked. The coordinator should set a task-local
+iteration budget so the loop improves quality without expanding the task
+indefinitely.
+
+The coordinator or leader agent must not silently ignore meaningful suggestions
+from dispatched agents. Every meaningful recommendation must be adopted into the
+visible decision process, but the coordinator controls how far it is executed in
+the current task. When a selected agent produces next steps, follow-up risks,
+implementation suggestions, review suggestions, or explicit "no further action"
+guidance, the task should write:
+
+```text
+<task>/agent-recommendations.json
+```
+
+The record should include:
+
+```text
+task id
+agent
+source evidence ref
+recommendation or no-action statement
+coordinator adoption decision
+rationale
+scope boundary
+complexity impact
+follow-up dispatch or evidence refs, when accepted or merged
+deferred owner or escalation ref, when deferred or escalated
+```
+
+Allowed coordinator adoption decisions are:
+
+```text
+accepted
+merged
+scoped_followup
+bounded_no_action
+escalated
+```
+
+`accepted` or `merged` recommendations that change the current task must create
+normal evidence: a new dispatch, correction-cycle entry, verification record,
+review record, approval request, or final synthesis entry. `scoped_followup`
+means the recommendation is valid but belongs outside the current task boundary;
+it must name the follow-up owner or record why it is intentionally parked.
+`bounded_no_action` is allowed only for duplicate, already-satisfied,
+non-actionable, or complexity-increasing recommendations; it must state the
+reason and cite the evidence that made no action acceptable. High-risk
+recommendations still require approval before execution.
+
+The coordinator should also record a complexity policy, normally:
+
+```text
+max_recommendation_rounds
+max_new_dispatches_without_user_approval
+current_scope
+stop_conditions
+```
+
+If applying a recommendation would materially broaden scope, increase risk, or
+start another project, the coordinator should stop, defer it to a follow-up, or
+ask for user approval rather than keep looping.
+
+For non-trivial routed tasks, Done Criteria require either a resolved
+`agent-recommendations.json` record or an explicit `not_required` record that
+explains why no selected agent produced meaningful follow-up recommendations.
+This keeps the loop from collapsing into "leader dispatches once, then ignores
+everyone and finishes alone."
+
 ## 17. Schema And Protocol Versioning
 
 The protocol version and JSON schema versions are related but independent.
@@ -1101,6 +1186,8 @@ A task is done only when:
   blocked;
 - correction cycle evidence is recorded and fixed when work was rejected,
   retried, blocked, invalid, or superseded;
+- agent recommendations and next-step suggestions from selected agents are
+  recorded and resolved for non-trivial routed tasks;
 - runtime/build/test/lint/UI claims cite concrete evidence;
 - verification passed or has a scoped blocker with concrete verification
   evidence unless verification is explicitly not required;

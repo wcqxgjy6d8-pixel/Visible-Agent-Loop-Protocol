@@ -257,6 +257,36 @@ class ValpAuditTests(unittest.TestCase):
         self.assertEqual(report.status, PASS)
         self.assertTrue(any(item.id == "correction_cycle" and item.status == PASS for item in report.items))
 
+    def test_missing_agent_recommendations_fails_for_non_trivial_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            (task / "agent-recommendations.json").unlink()
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(
+                any(
+                    item.id == "agent_recommendations"
+                    and item.status == FAIL
+                    and "Missing agent-recommendations.json" in item.message
+                    for item in report.items
+                )
+            )
+
+    def test_pending_agent_recommendation_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            recommendations = json.loads((task / "agent-recommendations.json").read_text(encoding="utf-8"))
+            recommendations["status"] = "pending"
+            recommendations["entries"][0]["decision_status"] = "pending"
+            (task / "agent-recommendations.json").write_text(json.dumps(recommendations), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "agent_recommendations" and item.status == FAIL for item in report.items))
+
     def test_unsupported_runtime_claim_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             task = Path(tmp) / "task"

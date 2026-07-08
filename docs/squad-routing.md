@@ -41,6 +41,7 @@ The leader agent must:
 - decide whether to delegate, do nothing, or escalate;
 - state the reason briefly;
 - create visible delegation when assigning work to a member;
+- resolve member recommendations with an explicit scope and complexity decision;
 - stop after routing unless explicitly assigned implementation or review work.
 
 The leader must not silently become the implementer unless the routing record
@@ -83,6 +84,7 @@ approval gates
 receipt gates
 expected evidence
 review/fix/review
+agent recommendation resolution
 ```
 
 Squad routing is a routing mechanism, not a completion mechanism.

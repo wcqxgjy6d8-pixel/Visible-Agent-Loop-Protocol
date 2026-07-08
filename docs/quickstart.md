@@ -36,7 +36,7 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=6
+Summary: pass=13 warn=0 fail=0 skip=7
 ```
 
 To verify all bundled examples and CLI tests in one command:

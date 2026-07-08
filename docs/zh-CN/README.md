@@ -52,7 +52,7 @@ bin/valp audit examples/minimal-task
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=6
+Summary: pass=13 warn=0 fail=0 skip=7
 ```
 
 再看这个演示：
@@ -104,4 +104,3 @@ VALP 关心的是：这个完成状态能不能被另一个人、另一个 Agent
 - [Runtime adapters](../runtime-adapters.md)
 - [Dispatch receipts](../dispatch-receipts.md)
 - [Correction cycle evidence](../correction-cycle.md)
-

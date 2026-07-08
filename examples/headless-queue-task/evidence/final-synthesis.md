@@ -10,11 +10,14 @@ Done.
 
 - Codex implementation evidence and command verification are accepted.
 - Claude read-only review is accepted as review evidence.
+- Claude's residual-risk note is merged as a scope boundary in
+  `agent-recommendations.json`.
 - No approval-gated action was required.
 
 ## Disagreements
 
-None recorded for this synthetic example.
+The task remains a synthetic headless queue fixture. It proves adapter evidence
+shape, not real queue-runtime product coverage.
 
 ## Evidence Gaps
 
@@ -28,6 +31,7 @@ None recorded for this synthetic example.
 - Implementation evidence: `agents/codex/evidence.md`
 - Review: `agents/claude/review.md`
 - Verification: `evidence/verification.md`
+- Agent recommendations: `agent-recommendations.json`
 - Routing feedback: `routing-feedback.json`
 
 ## Approval

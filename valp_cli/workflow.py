@@ -1603,6 +1603,8 @@ Use your routed capability profile for this task. Local profiles are hints, not 
 ## Required Response
 
 Write concise evidence to the expected path. Include blockers, confidence limits, and any handoff needed for the next agent.
+
+Also include a `## Recommendations` section. List concrete next steps, risks, or follow-up suggestions, or state `No further action recommended.` The coordinator must resolve these recommendations before Done.
 """
         (agent_dir / "dispatch.md").write_text(dispatch, encoding="utf-8")
 

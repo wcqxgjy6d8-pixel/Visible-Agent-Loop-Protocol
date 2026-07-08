@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Agent Recommendations",
+  "type": "object",
+  "required": ["schema_version", "task_id", "status", "entries"],
+  "properties": {
+    "schema_version": {
+      "const": "valp-agent-recommendations.v1"
+    },
+    "task_id": {"type": "string"},
+    "status": {
+      "enum": ["not_required", "pending", "resolved", "blocked", "escalated"]
+    },
+    "summary": {"type": "string"},
+    "complexity_policy": {
+      "type": "object",
+      "properties": {
+        "max_recommendation_rounds": {"type": "integer", "minimum": 1},
+        "max_new_dispatches_without_user_approval": {"type": "integer", "minimum": 0},
+        "current_scope": {"type": "string"},
+        "stop_conditions": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "agent",
+          "source_ref",
+          "recommendation",
+          "coordinator_decision",
+          "rationale",
+          "scope_boundary",
+          "complexity_impact"
+        ],
+        "properties": {
+          "id": {"type": "string"},
+          "agent": {"type": "string"},
+          "source_ref": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+          },
+          "recommendation": {"type": "string"},
+          "coordinator_decision": {
+            "enum": [
+              "accepted",
+              "merged",
+              "scoped_followup",
+              "bounded_no_action",
+              "escalated"
+            ]
+          },
+          "rationale": {"type": "string"},
+          "scope_boundary": {"type": "string"},
+          "complexity_impact": {
+            "enum": ["none", "low", "medium", "high", "unknown"]
+          },
+          "decision_status": {
+            "enum": ["pending", "resolved", "blocked", "escalated"]
+          },
+          "follow_up_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+            }
+          },
+          "follow_up_dispatch_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+            }
+          },
+          "owner": {"type": "string"},
+          "approval_ref": {"type": "string"},
+          "created_at": {"type": "string"},
+          "resolved_at": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "open_items": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "notes": {"type": "string"}
+  },
+  "additionalProperties": true
+}

@@ -56,6 +56,7 @@ class TaskAudit:
         self.feedback = self._load_json("routing-feedback.json")
         self.evidence_status = self._load_json("evidence-status.json")
         self.skill_recommendations = self._load_json("skill-recommendations.json")
+        self.agent_recommendations = self._load_json("agent-recommendations.json")
         self.attention_map = self._load_json("attention-map.json")
         self.context_selection = self._load_json("context-selection.json")
         self.mask_list = self._load_json("mask-list.json")
@@ -84,6 +85,7 @@ class TaskAudit:
             self.check_dispatch_receipts(),
             self.check_expected_evidence(),
             self.check_correction_cycle(),
+            self.check_agent_recommendations(),
             self.check_claim_evidence(),
             self.check_verification(),
             self.check_review_findings(),
@@ -480,6 +482,162 @@ class TaskAudit:
             evidence,
         )
 
+    def check_agent_recommendations(self) -> AuditItem:
+        evidence = self._existing(["agent-recommendations.json", "routing.json", "state.json"])
+        if not self._agent_recommendations_required():
+            if not self.agent_recommendations:
+                return self._skip(
+                    "agent_recommendations",
+                    "Agent recommendations are recorded and resolved",
+                    "Simple task without agent recommendation resolution requirement",
+                    evidence,
+                )
+        if not self.agent_recommendations:
+            return self._fail(
+                "agent_recommendations",
+                "Agent recommendations are recorded and resolved",
+                "Missing agent-recommendations.json for non-trivial routed task",
+                evidence,
+            )
+        if self.agent_recommendations.get("schema_version") != "valp-agent-recommendations.v1":
+            return self._fail(
+                "agent_recommendations",
+                "Agent recommendations are recorded and resolved",
+                "agent-recommendations.json has wrong or missing schema_version",
+                evidence,
+            )
+        status = str(self.agent_recommendations.get("status") or "").lower()
+        entries = self.agent_recommendations.get("entries")
+        if not isinstance(entries, list):
+            return self._fail(
+                "agent_recommendations",
+                "Agent recommendations are recorded and resolved",
+                "agent-recommendations.json entries must be a list",
+                evidence,
+            )
+        if status in {"pending", "blocked", "escalated"}:
+            return self._fail(
+                "agent_recommendations",
+                "Agent recommendations are recorded and resolved",
+                f"Agent recommendations are not resolved: {status}",
+                evidence,
+            )
+        if status == "not_required":
+            if entries:
+                return self._fail(
+                    "agent_recommendations",
+                    "Agent recommendations are recorded and resolved",
+                    "status not_required must not include recommendation entries",
+                    evidence,
+                )
+            if not self.agent_recommendations.get("summary") and not self.agent_recommendations.get("notes"):
+                return self._fail(
+                    "agent_recommendations",
+                    "Agent recommendations are recorded and resolved",
+                    "status not_required needs a summary or notes explaining why",
+                    evidence,
+                )
+            return self._pass(
+                "agent_recommendations",
+                "Agent recommendations are recorded and resolved",
+                "No agent recommendations required; reason recorded",
+                evidence,
+            )
+        if status != "resolved":
+            return self._fail(
+                "agent_recommendations",
+                "Agent recommendations are recorded and resolved",
+                f"Unknown or missing recommendation status: {status or 'missing'}",
+                evidence,
+            )
+        complexity_policy = self.agent_recommendations.get("complexity_policy") or {}
+        if not isinstance(complexity_policy, dict) or not complexity_policy.get("current_scope") or not complexity_policy.get("stop_conditions"):
+            return self._fail(
+                "agent_recommendations",
+                "Agent recommendations are recorded and resolved",
+                "Resolved recommendation record needs complexity_policy.current_scope and stop_conditions",
+                evidence,
+            )
+        if not entries:
+            return self._fail(
+                "agent_recommendations",
+                "Agent recommendations are recorded and resolved",
+                "Resolved recommendation record has no entries",
+                evidence,
+            )
+        allowed_decisions = {"accepted", "merged", "scoped_followup", "bounded_no_action", "escalated"}
+        unresolved: list[str] = []
+        unsafe_refs: list[str] = []
+        missing_refs: list[str] = []
+        missing_fields: list[str] = []
+        for index, entry in enumerate(entries, 1):
+            if not isinstance(entry, dict):
+                missing_fields.append(f"entry-{index}:not_object")
+                continue
+            entry_id = str(entry.get("id") or f"entry-{index}")
+            required_fields = [
+                "agent",
+                "source_ref",
+                "recommendation",
+                "coordinator_decision",
+                "rationale",
+                "scope_boundary",
+                "complexity_impact",
+            ]
+            missing = [field for field in required_fields if not entry.get(field)]
+            if missing:
+                missing_fields.append(f"{entry_id}:{','.join(missing)}")
+            decision = str(entry.get("coordinator_decision") or "").lower()
+            if decision not in allowed_decisions:
+                missing_fields.append(f"{entry_id}:invalid_decision")
+            decision_status = str(entry.get("decision_status") or "resolved").lower()
+            if decision_status in {"pending", "blocked", "escalated"}:
+                unresolved.append(f"{entry_id}={decision_status}")
+            refs = [str(entry.get("source_ref") or "")]
+            refs.extend(str(ref) for ref in entry.get("follow_up_refs") or [])
+            refs.extend(str(ref) for ref in entry.get("follow_up_dispatch_refs") or [])
+            for ref in refs:
+                if not ref:
+                    continue
+                if not self._is_safe_task_ref(ref):
+                    unsafe_refs.append(f"{entry_id}:{ref}")
+                elif not (self.task_dir / ref).exists():
+                    missing_refs.append(f"{entry_id}:{ref}")
+        if missing_fields:
+            return self._fail(
+                "agent_recommendations",
+                "Agent recommendations are recorded and resolved",
+                "Recommendation entries are incomplete: " + "; ".join(missing_fields[:5]),
+                evidence,
+            )
+        if unresolved:
+            return self._fail(
+                "agent_recommendations",
+                "Agent recommendations are recorded and resolved",
+                "Recommendation entries are unresolved: " + ", ".join(unresolved),
+                evidence,
+            )
+        if unsafe_refs:
+            return self._fail(
+                "agent_recommendations",
+                "Agent recommendations are recorded and resolved",
+                "Recommendation refs must be task-relative safe paths: " + ", ".join(unsafe_refs[:5]),
+                evidence,
+            )
+        if missing_refs:
+            return self._fail(
+                "agent_recommendations",
+                "Agent recommendations are recorded and resolved",
+                "Recommendation refs are missing: " + ", ".join(missing_refs[:5]),
+                evidence,
+            )
+        return self._pass(
+            "agent_recommendations",
+            "Agent recommendations are recorded and resolved",
+            f"Resolved recommendation entries: {len(entries)}",
+            evidence,
+        )
+
     def check_claim_evidence(self) -> AuditItem:
         evidence = self._existing(["agents", "evidence", "dispatch-receipts.jsonl"])
         unsupported = self._unsupported_runtime_claims()
@@ -605,6 +763,13 @@ class TaskAudit:
     def _selected_agents(self) -> list[str]:
         agents = self.routing.get("selected_agents") or self.state.get("selected_agents") or []
         return [str(a) for a in agents]
+
+    def _agent_recommendations_required(self) -> bool:
+        profile = str(self.routing.get("profile") or self.state.get("profile") or "")
+        agents = self._selected_agents()
+        if len(agents) > 1:
+            return True
+        return profile in VISIBLE_ATTENTION_REQUIRED_PROFILES
 
     def _expected_evidence_refs(self) -> list[str]:
         refs: set[str] = set()

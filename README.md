@@ -24,8 +24,8 @@ What this repository proves today:
 
 - schemas, unit tests, and bundled examples pass `scripts/verify-examples.sh`;
 - CI runs the repository smoke check on Linux, macOS, and Windows runners;
-- `valp audit` enforces receipt, evidence, review, approval, and final
-  synthesis gates for the included task folders.
+- `valp audit` enforces receipt, evidence, review, agent-recommendation,
+  approval, and final synthesis gates for the included task folders.
 
 What it does not prove yet:
 
@@ -109,7 +109,7 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=6
+Summary: pass=13 warn=0 fail=0 skip=7
 ```
 
 To see the audit fail when expected evidence is removed, run the
@@ -285,10 +285,10 @@ The repository includes four self-verifying task examples:
 
 | Example | What it proves | Expected audit |
 |---|---|---|
-| `examples/minimal-task/` | Manual Mode evidence can be audited without a runtime | `PASS`, `pass=13 warn=0 fail=0 skip=6` |
-| `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, correction-cycle, review, and final synthesis audit gates | `PASS`, `pass=18 warn=0 fail=0 skip=1` |
-| `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=17 warn=0 fail=0 skip=2` |
-| `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=14 warn=0 fail=0 skip=5` |
+| `examples/minimal-task/` | Manual Mode evidence can be audited without a runtime | `PASS`, `pass=13 warn=0 fail=0 skip=7` |
+| `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, correction-cycle, recommendation, review, and final synthesis audit gates | `PASS`, `pass=19 warn=0 fail=0 skip=1` |
+| `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=18 warn=0 fail=0 skip=2` |
+| `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=14 warn=0 fail=0 skip=6` |
 
 Run the complete smoke check:
 
@@ -329,6 +329,7 @@ Full Mode is the intended VALP experience for automated multi-agent work:
 - receipt ledger;
 - evidence gates;
 - review/fix/review loop;
+- selected-agent recommendation resolution;
 - approval gates for high-risk actions;
 - final synthesis record.
 
@@ -357,6 +358,7 @@ publish task
   -> map runtime task states
   -> verify with real artifacts
   -> review/fix/review
+  -> resolve selected-agent recommendations with scope control
   -> record final synthesis
 ```
 
@@ -466,6 +468,7 @@ Visible-Agent-Loop-Protocol/
     receipts.schema.json
     evidence-status.schema.json
     skill-recommendations.schema.json
+    agent-recommendations.schema.json
     trigger-policy.schema.json
     attention-map.schema.json
     context-selection.schema.json
@@ -491,6 +494,8 @@ Visible-Agent-Loop-Protocol/
 - Dispatch completion requires receipts and expected evidence.
 - Full/Remote Mode completion also requires prior runtime submission proof; dry
   runs and local sub-agent simulations do not count as live dispatch.
+- Selected-agent recommendations must be visibly resolved; adoption means
+  explicit disposition and scope control, not unlimited task expansion.
 - High-risk actions require explicit user approval.
 - Auto Visible Mode is automatic visible intake, not silent execution.
 - Long context is a reliability risk and must be scanned before dispatch.

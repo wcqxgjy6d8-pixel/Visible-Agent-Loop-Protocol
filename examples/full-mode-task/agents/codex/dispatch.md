@@ -62,3 +62,9 @@ minimal. Run the relevant test command and write verification evidence.
 
 - Any build, test, lint, runtime, UI, or verification claim must cite a concrete command log, screenshot, receipt, or evidence file path.
 - Do not write "verified", "tests passed", "build passed", or equivalent claims unless the evidence path exists or the blocker is explicit.
+
+## Required Response
+
+Write concise evidence to the expected path. Include blockers, confidence limits, and any handoff needed for the next agent.
+
+Also include a `## Recommendations` section. List concrete next steps, risks, or follow-up suggestions, or state `No further action recommended.` The coordinator must resolve these recommendations before Done.

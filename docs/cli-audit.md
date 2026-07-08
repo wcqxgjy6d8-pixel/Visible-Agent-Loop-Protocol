@@ -178,6 +178,7 @@ dispatch-receipts.jsonl
 routing-feedback.json
 agents/<agent>/...
 evidence/...
+agent-recommendations.json
 findings/...
 approvals/...
 ```
@@ -280,6 +281,7 @@ The command maps the Done Criteria into these audit items:
 | `dispatch_receipts` | dispatch receipts satisfy the required gates; Full/Remote Mode completions require prior runtime submission proof |
 | `expected_evidence` | expected evidence refs exist, are task-relative safe paths, and are not invalid/superseded/rejected/blocked |
 | `correction_cycle` | correction cycle evidence is recorded and fixed when work was rejected, retried, blocked, invalid, or superseded |
+| `agent_recommendations` | selected-agent recommendations and next-step suggestions are resolved with coordinator scope control |
 | `claim_evidence` | runtime/build/test/lint/UI claims, including final synthesis claims, cite command logs, screenshots, receipts, or evidence paths |
 | `verification` | verification passed or has a scoped blocker with concrete verification evidence unless verification is explicitly not required |
 | `review_findings` | review findings have no unresolved critical/high blockers |
@@ -292,7 +294,7 @@ The command maps the Done Criteria into these audit items:
 ```text
 VALP audit: PASS
 Task: /path/to/Visible-Agent-Loop-Protocol/examples/full-mode-task
-Summary: pass=18 warn=0 fail=0 skip=1
+Summary: pass=19 warn=0 fail=0 skip=1
 ```
 
 The example has one skip because it does not use squad routing.

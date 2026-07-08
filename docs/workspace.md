@@ -34,6 +34,7 @@ It must not hard-code Desktop, macOS paths, or one user's folder names.
         routing.json
         routing-feedback.json
         skill-recommendations.json
+        agent-recommendations.json
         attention-map.json
         context-selection.json
         mask-list.json

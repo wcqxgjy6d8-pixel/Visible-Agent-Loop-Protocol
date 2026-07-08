@@ -1,8 +1,8 @@
 # Visible Agent Loop Protocol
 
-VALP is an open protocol for visible, evidence-backed multi-agent automation.
+Agent says done. VALP asks for proof.
 
-![VALP social preview: Agent says done, VALP asks for proof](assets/social-preview.png)
+VALP is an open protocol for visible, evidence-backed multi-agent automation.
 
 ![VALP audit demo: PASS to FAIL to PASS](assets/valp-audit-demo.svg)
 

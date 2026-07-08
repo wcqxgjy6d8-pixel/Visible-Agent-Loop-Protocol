@@ -1,20 +1,20 @@
 # Project Status And Evidence
 
-VALP is currently an early open protocol draft plus a reference CLI. Treat it as
-a portable evidence standard and coordination shape, not as a finished
+VALP is currently an early open protocol release plus a reference CLI. Treat it
+as a portable evidence standard and coordination shape, not as a finished
 multi-agent platform.
 
 ## Current Package
 
 | Area | Current state |
 |---|---|
-| Protocol | `0.2.0-draft` |
+| Protocol | `0.2.0` |
 | Repository license | MIT |
 | Reference CLI | `bin/valp` with `publish`, `scan`, `route`, `dispatch`, `preflight`, `audit`, and `doctor` |
 | Reference runtime | HERDR for the documented Full Mode path |
 | Other runtime adapters | Contract documented; first-class non-HERDR adapters are planned |
 | Public examples | Three bundled fixtures plus one sanitized real Manual Mode documentation case study |
-| Public release | Draft prerelease `v0.2.0-draft`; not a stable release |
+| Public release | Stable evaluation release `v0.2.0` |
 
 ## Verified In This Repository
 
@@ -80,7 +80,7 @@ and exports the required receipts and evidence.
 | Live Full Mode E2E coverage is limited | CLI tests cannot prove a real runtime can submit, wait, collect, and audit | Keep Full Mode claims tied to adapter proof |
 | App installer behavior is not a protocol runtime | First-launch UX can accidentally hide path, preflight, and submit boundaries | First-install health gate is specified; App must expose doctor/preflight/dry-run results |
 | Windows local Full Mode is conditional | Native Windows runtime support is beta-dependent | Recommend SSH remote for stable Windows workflow |
-| Draft prerelease only | Users need a stable install/evaluation point | Use `v0.2.0-draft` for evaluation; wait for a stable release before stronger install claims |
+| Stable release is early | Users need clear limits around runtime proof and adapter coverage | Use `v0.2.0` for protocol and CLI evaluation; keep live-runtime claims tied to adapter proof |
 | Small public community | Social proof is low | Avoid community-size overclaims |
 
 ## Promotion Language
@@ -88,11 +88,10 @@ and exports the required receipts and evidence.
 Use:
 
 ```text
-VALP is an early open protocol draft and reference CLI for visible,
-evidence-backed multi-agent work. It defines dispatch receipts, expected
-evidence, review gates, approval gates, and audit checks. HERDR is the current
-reference runtime for Full Mode; other runtimes can implement the adapter
-contract.
+VALP is an early open protocol and reference CLI for visible, evidence-backed
+multi-agent work. It defines dispatch receipts, expected evidence, review gates,
+approval gates, and audit checks. HERDR is the current reference runtime for
+Full Mode; other runtimes can implement the adapter contract.
 ```
 
 For early promotion, frame VALP as an evidence discipline or acceptance system,
@@ -114,5 +113,4 @@ HERDR-free automation path already shipped
 
 1. Add a public live Full Mode case study with runtime submission proof.
 2. Add the first first-class non-HERDR adapter path.
-3. Turn the draft prerelease into a stable release after the evidence wording
-   and examples are stable.
+3. Grow RFCs, failure cases, and adapter feedback around the `v0.2.0` release.

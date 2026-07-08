@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- No unreleased changes yet.
+
+## 0.2.0
+
+- Promotes the `0.2.0-draft` work into the first stable evaluation release.
+- Adds a root `README.zh-CN.md` Chinese entry point.
+- Adds a failure gallery that shows concrete false-done failure shapes and the
+  VALP evidence that catches them.
+- Adds a runtime adapter checklist for adapter authors evaluating Full Mode,
+  Remote Mode, or Manual Mode compatibility.
+- Adds a GitHub Discussions RFC template for protocol, evidence, schema,
+  adapter, and governance proposals.
+- Documents that dispatch payloads are a coordinator/leader responsibility:
+  concise worker prompts should cite task-local refs instead of pasting long
+  context or full skill-router output.
+
 - Adds a project status and evidence matrix that separates current repository
   proof from unproven live-runtime, adapter, case-study, and production claims.
 - Clarifies that HERDR is the public reference runtime and not a VALP protocol

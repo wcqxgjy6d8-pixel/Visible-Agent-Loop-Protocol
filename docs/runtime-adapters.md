@@ -3,6 +3,10 @@
 VALP is a protocol. A runtime adapter is the bridge from a concrete execution
 system into VALP receipts and evidence.
 
+If you are evaluating a new runtime, start with the
+[runtime adapter checklist](adapter-checklist.md), then use this page for the
+detailed contract.
+
 The adapter exists so the protocol can work across pane-based tools, daemon
 queues, hosted dashboards, remote SSH hosts, and manual workflows without
 pretending they provide the same guarantees.

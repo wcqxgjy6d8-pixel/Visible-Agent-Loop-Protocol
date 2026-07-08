@@ -26,6 +26,8 @@ scripts/verify-examples.sh
 Use GitHub Discussions for open-ended feedback:
 
 - whether VALP is useful reliability engineering or unnecessary ceremony;
+- RFCs for protocol semantics, schema, evidence, adapter, or governance
+  changes;
 - runtime adapter ideas before they are ready for an issue;
 - task folder or audit experiments that need interpretation;
 - workflow stories where a runtime said "completed" before evidence existed.
@@ -45,6 +47,7 @@ The most useful community feedback is concrete:
 - a runtime adapter that can or cannot export VALP receipts and evidence;
 - an example task folder that passes or fails audit for a clear reason;
 - schema or documentation wording that produces the wrong mental model;
+- an RFC with a small evidence-changing proposal and a testable artifact;
 - first-install friction found by running `valp doctor`, preflight, or the
   quickstart.
 
@@ -54,14 +57,17 @@ Good first contributions usually fit one of these shapes:
 
 - improve quickstart or install wording;
 - add a small Manual Mode example;
-- add a runtime adapter capability checklist;
+- add or refine a runtime adapter capability checklist;
+- add a failure gallery entry with receipts, expected evidence, and audit
+  behavior;
 - improve `valp doctor` or audit messages;
 - tighten schema/example consistency;
 - document a comparison against a real agent workflow.
 
-For broad ideas, use GitHub Discussions. For concrete bugs or scoped changes,
-open an issue. For code or doc changes, open a pull request and include the
-verification command you ran.
+For broad ideas, use GitHub Discussions. Use the RFC template when the proposal
+changes protocol semantics, evidence contracts, schemas, adapter requirements,
+or governance. For concrete bugs or scoped changes, open an issue. For code or
+doc changes, open a pull request and include the verification command you ran.
 
 ## Ground Rules
 

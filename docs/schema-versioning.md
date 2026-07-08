@@ -4,11 +4,11 @@ VALP has two version layers:
 
 | Layer | Example | Meaning |
 |---|---|---|
-| protocol version | `0.2.0-draft` | Human-readable contract: lifecycle, receipts, adapters, gates, Done Criteria |
+| protocol version | `0.2.0` | Human-readable contract: lifecycle, receipts, adapters, gates, Done Criteria |
 | schema version | `valp-capability-routing.v1` | Machine-readable artifact shape for one JSON/JSONL file |
 
-Schema versions are independent from protocol versions. A protocol draft can
-move from `0.1.0-draft` to `0.2.0-draft` while a schema remains `v1`, as long as
+Schema versions are independent from protocol versions. A protocol release can
+move from `0.1.0-draft` to `0.2.0` while a schema remains `v1`, as long as
 the artifact shape stays backward-compatible.
 
 ## Compatibility Rules

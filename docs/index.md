@@ -11,7 +11,9 @@ Start here:
 - [Protocol specification](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SPEC.md)
 - [Quickstart](quickstart.md)
 - [Minimal audit demo](minimal-audit-demo.md)
+- [Failure gallery](failure-gallery.md)
 - [Correction cycle evidence](correction-cycle.md)
+- [Runtime adapter checklist](adapter-checklist.md)
 - [Runtime adapters](runtime-adapters.md)
 - [Community](community.md)
 - [Support](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SUPPORT.md)
@@ -20,7 +22,7 @@ The core idea is narrow: a runtime saying `completed` is not enough. VALP
 completion requires dispatch receipts, expected evidence, verification/review,
 approval gates when needed, and a final synthesis that points to proof.
 
-VALP is currently `0.2.0-draft`. It is a protocol draft plus a reference CLI,
+VALP is currently `0.2.0`. It is an open protocol release plus a reference CLI,
 not a hosted production platform.
 
 First useful actions:
@@ -28,6 +30,9 @@ First useful actions:
 - Run `bin/valp audit examples/minimal-task` to inspect the evidence shape.
 - Run the [minimal audit demo](minimal-audit-demo.md) to see PASS -> FAIL ->
   PASS when expected evidence is removed and restored.
+- Read the [failure gallery](failure-gallery.md) to see what VALP catches.
+- Use the [adapter checklist](adapter-checklist.md) before claiming runtime
+  compatibility.
 - Share a real false-done failure case in GitHub Discussions.
 - Request or prototype a runtime adapter only after the receipt/evidence gates
   are clear.

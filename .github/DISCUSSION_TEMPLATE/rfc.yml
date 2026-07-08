@@ -1,0 +1,43 @@
+name: RFC
+description: Propose a protocol, evidence, adapter, or governance change for review.
+title: "[RFC] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use RFCs for changes that affect protocol semantics, evidence contracts, runtime adapter expectations, schemas, or public governance. Use issues for scoped bugs.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What real agent workflow failure, adapter gap, or evidence ambiguity motivates this RFC?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should change in SPEC, docs, schemas, CLI behavior, examples, or community process?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence impact
+      description: Which receipts, expected evidence, audit gates, approval gates, recommendation resolution, or adapter fields are affected?
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility
+      description: Is this backwards-compatible? Does it affect Full Mode, Remote Mode, Manual Mode, or existing examples?
+    validations:
+      required: true
+  - type: textarea
+    id: smallest
+    attributes:
+      label: Smallest testable artifact
+      description: What is the smallest doc patch, schema fixture, task folder, or CLI test that would prove the proposal?
+    validations:
+      required: false

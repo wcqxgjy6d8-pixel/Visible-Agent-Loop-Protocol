@@ -1,5 +1,7 @@
 # VALP 中文注解
 
+根目录中文入口见 [../../README.zh-CN.md](../../README.zh-CN.md)。
+
 本页是中文注解，不是协议规范原文。若本页与 `SPEC.md`、`schemas/` 或
 `valp audit` 行为冲突，以英文规范和机器可验证规则为准。
 
@@ -97,10 +99,12 @@ VALP 关心的是：这个完成状态能不能被另一个人、另一个 Agent
 2. 跑 `bin/valp audit examples/minimal-task`。
 3. 读 [glossary.md](glossary.md)。
 4. 读 [../minimal-audit-demo.md](../minimal-audit-demo.md)。
-5. 再读英文 [SPEC.md](../../SPEC.md)。
+5. 读 [../failure-gallery.md](../failure-gallery.md)。
+6. 再读英文 [SPEC.md](../../SPEC.md)。
 
 如果要实现 Runtime adapter，直接读英文：
 
+- [Adapter checklist](../adapter-checklist.md)
 - [Runtime adapters](../runtime-adapters.md)
 - [Dispatch receipts](../dispatch-receipts.md)
 - [Correction cycle evidence](../correction-cycle.md)

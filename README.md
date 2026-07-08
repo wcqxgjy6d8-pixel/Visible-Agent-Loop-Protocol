@@ -6,8 +6,11 @@ Open protocol for visible, evidence-backed, multi-agent automation.
 
 ![VALP social preview: Agent says done, VALP asks for proof](docs/assets/social-preview.png)
 
-中文注解入口: [docs/zh-CN/README.md](docs/zh-CN/README.md). The Chinese pages
-are explanatory notes; `SPEC.md` and `schemas/` remain the normative protocol
+Languages: [English](README.md) | [中文](README.zh-CN.md)
+
+中文注解入口: [README.zh-CN.md](README.zh-CN.md) and
+[docs/zh-CN/README.md](docs/zh-CN/README.md). The Chinese pages are
+explanatory notes; `SPEC.md` and `schemas/` remain the normative protocol
 source.
 
 The protocol is designed for terminal-based AI coding agents, review agents,
@@ -16,9 +19,9 @@ single project, operating system, terminal emulator, or model provider.
 
 ## Current Status
 
-VALP is a `0.2.0-draft` open protocol plus an MIT-licensed reference CLI. It is
-not a mature hosted platform and should not be described as production-ready by
-itself.
+VALP is a `0.2.0` open protocol release plus an MIT-licensed reference CLI. It
+is not a mature hosted platform and should not be described as production-ready
+by itself.
 
 What this repository proves today:
 
@@ -71,7 +74,8 @@ Choose the path that matches why you are here:
 | Try automated multi-agent work | Install HERDR, the current reference runtime | Yes |
 | Enable automatic visible task intake | Read [docs/auto-visible-mode.md](docs/auto-visible-mode.md) | For dispatch, yes |
 | Inspect a headless runtime shape | Audit `examples/headless-queue-task/` | No |
-| Implement a new runtime | Read [docs/runtime-adapters.md](docs/runtime-adapters.md) | Depends on your adapter |
+| See what failures VALP catches | Read [docs/failure-gallery.md](docs/failure-gallery.md) | No |
+| Implement a new runtime | Read [docs/adapter-checklist.md](docs/adapter-checklist.md) and [docs/runtime-adapters.md](docs/runtime-adapters.md) | Depends on your adapter |
 
 ## Community
 
@@ -81,6 +85,7 @@ runtime evidence. The project is looking for:
 - runtime adapter feedback from queues, hosted agent systems, terminal
   controllers, and manual review workflows;
 - small audited examples that show where visible receipts help or fail;
+- RFCs for protocol, evidence, schema, adapter, or governance changes;
 - documentation improvements that make first install and first audit easier;
 - skeptical critiques of whether the protocol is useful or just ceremony.
 
@@ -95,6 +100,7 @@ The best early feedback is not a generic "looks good". It is one of:
 - a false-done case where an agent or runtime claimed completion without proof;
 - a minimal audit run that failed or felt too ceremonial;
 - a runtime-adapter sketch that preserves receipt and evidence semantics.
+- an RFC that proposes the smallest evidence-changing protocol improvement.
 
 No-runtime first look:
 
@@ -424,6 +430,7 @@ receipt ledger
 ```text
 Visible-Agent-Loop-Protocol/
   README.md
+  README.zh-CN.md
   SPEC.md
   INSTALL.md
   ROADMAP.md
@@ -447,6 +454,8 @@ Visible-Agent-Loop-Protocol/
     quickstart.md
     faq.md
     comparison.md
+    failure-gallery.md
+    adapter-checklist.md
     runtime-adapters.md
     community.md
     project-status.md
@@ -520,5 +529,5 @@ Visible-Agent-Loop-Protocol/
 ## Status
 
 Open protocol draft with reference CLI version `0.2.0`. The protocol draft is
-`0.2.0-draft`; HERDR remains the current reference runtime, not a protocol
-requirement.
+released as `v0.2.0`; HERDR remains the current reference runtime, not a
+protocol requirement.

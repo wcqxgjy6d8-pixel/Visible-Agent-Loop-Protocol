@@ -59,9 +59,21 @@ evidence、state mapping 和 audit 数据，也可以实现 VALP。
 1. [英文 README](README.md)
 2. [协议规范 SPEC.md](SPEC.md)
 3. [中文注解](docs/zh-CN/README.md)
-4. [失败案例图鉴](docs/failure-gallery.md)
-5. [Runtime adapter checklist](docs/adapter-checklist.md)
-6. [社区参与说明](docs/community.md)
+4. [When Agent "Done" Is Not Done](docs/when-agent-done-is-not-done.md)
+5. [失败案例图鉴](docs/failure-gallery.md)
+6. [Runtime adapter checklist](docs/adapter-checklist.md)
+7. [社区参与说明](docs/community.md)
+
+当前讨论入口：
+
+- [RFC: Phase 0 public evaluation](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/discussions/8)
+- [Runtime adapter checklist feedback](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/discussions/9)
+
+适合新贡献者的任务：
+
+- [Run the adapter checklist against one runtime](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/issues/10)
+- [Add one false-done case to the failure gallery](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/issues/11)
+- [Improve the Pages demo for Agent done is not done](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/issues/12)
 
 如果你要实现 Runtime adapter，优先读：
 

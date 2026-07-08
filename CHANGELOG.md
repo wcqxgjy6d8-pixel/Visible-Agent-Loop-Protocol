@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-- No unreleased changes yet.
+- Adds a public Pages explainer, `docs/when-agent-done-is-not-done.md`, for the
+  shortest PASS -> FAIL -> PASS audit demo.
+- Links active RFC, adapter feedback, and good-first-issue entry points from
+  README, Pages, community docs, and Chinese README.
 
 ## 0.2.0
 

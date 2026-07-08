@@ -71,6 +71,7 @@ Choose the path that matches why you are here:
 | Goal | Start here | Runtime required? |
 |---|---|---|
 | Understand the protocol | Read [SPEC.md](SPEC.md) and audit `examples/minimal-task/` | No |
+| See the shortest public demo | Read [When Agent "Done" Is Not Done](docs/when-agent-done-is-not-done.md) | No |
 | Try automated multi-agent work | Install HERDR, the current reference runtime | Yes |
 | Enable automatic visible task intake | Read [docs/auto-visible-mode.md](docs/auto-visible-mode.md) | For dispatch, yes |
 | Inspect a headless runtime shape | Audit `examples/headless-queue-task/` | No |
@@ -94,6 +95,17 @@ Start with [docs/community.md](docs/community.md), open-ended feedback in
 or scoped tasks in
 [good first issues](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22).
 For support routing, see [SUPPORT.md](SUPPORT.md).
+
+Active cold-start discussions:
+
+- [RFC: Phase 0 public evaluation](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/discussions/8)
+- [Runtime adapter checklist feedback](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/discussions/9)
+
+Good first GitHub-native tasks:
+
+- [Run the adapter checklist against one runtime](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/issues/10)
+- [Add one false-done case to the failure gallery](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/issues/11)
+- [Improve the Pages demo for Agent done is not done](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/issues/12)
 
 The best early feedback is not a generic "looks good". It is one of:
 
@@ -122,6 +134,9 @@ To see the audit fail when expected evidence is removed, run the
 [minimal audit demo](docs/minimal-audit-demo.md). This is the fastest way to
 understand the protocol's acceptance-system behavior before trying a live
 runtime.
+
+For a shorter public-facing explanation, read
+[When Agent "Done" Is Not Done](docs/when-agent-done-is-not-done.md).
 
 Proof check for this repository:
 
@@ -452,6 +467,7 @@ Visible-Agent-Loop-Protocol/
     runtime-preflight.md
     platform-support.md
     quickstart.md
+    when-agent-done-is-not-done.md
     faq.md
     comparison.md
     failure-gallery.md

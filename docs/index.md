@@ -10,6 +10,7 @@ Start here:
 - [中文注解](zh-CN/README.md)
 - [Protocol specification](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SPEC.md)
 - [Quickstart](quickstart.md)
+- [When Agent "Done" Is Not Done](when-agent-done-is-not-done.md)
 - [Minimal audit demo](minimal-audit-demo.md)
 - [Failure gallery](failure-gallery.md)
 - [Correction cycle evidence](correction-cycle.md)
@@ -28,6 +29,8 @@ not a hosted production platform.
 First useful actions:
 
 - Run `bin/valp audit examples/minimal-task` to inspect the evidence shape.
+- Read [When Agent "Done" Is Not Done](when-agent-done-is-not-done.md) for the
+  shortest public explanation.
 - Run the [minimal audit demo](minimal-audit-demo.md) to see PASS -> FAIL ->
   PASS when expected evidence is removed and restored.
 - Read the [failure gallery](failure-gallery.md) to see what VALP catches.
@@ -36,3 +39,14 @@ First useful actions:
 - Share a real false-done failure case in GitHub Discussions.
 - Request or prototype a runtime adapter only after the receipt/evidence gates
   are clear.
+
+Active discussions:
+
+- [RFC: Phase 0 public evaluation](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/discussions/8)
+- [Runtime adapter checklist feedback](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/discussions/9)
+
+Good first tasks:
+
+- [Run the adapter checklist against one runtime](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/issues/10)
+- [Add one false-done case to the failure gallery](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/issues/11)
+- [Improve the Pages demo](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/issues/12)

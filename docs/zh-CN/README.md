@@ -99,8 +99,9 @@ VALP 关心的是：这个完成状态能不能被另一个人、另一个 Agent
 2. 跑 `bin/valp audit examples/minimal-task`。
 3. 读 [glossary.md](glossary.md)。
 4. 读 [../minimal-audit-demo.md](../minimal-audit-demo.md)。
-5. 读 [../failure-gallery.md](../failure-gallery.md)。
-6. 再读英文 [SPEC.md](../../SPEC.md)。
+5. 读 [../when-agent-done-is-not-done.md](../when-agent-done-is-not-done.md)。
+6. 读 [../failure-gallery.md](../failure-gallery.md)。
+7. 再读英文 [SPEC.md](../../SPEC.md)。
 
 如果要实现 Runtime adapter，直接读英文：
 

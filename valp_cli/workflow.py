@@ -86,6 +86,8 @@ AGENT_MIN_TERMINAL_SIZE = {
     "agy": {"width": 70, "height": 24},
 }
 RUNTIME_CHOICES = {"auto", "manual", "herdr", "queue"}
+DISPATCH_BRIEF_CHAR_LIMIT = 700
+SKILL_TASK_LABEL_CHAR_LIMIT = 120
 
 
 def now_iso() -> str:
@@ -319,6 +321,27 @@ def extract_goal_text(task_text: str) -> str:
             collected.append(line)
     goal = "\n".join(collected).strip()
     return goal or task_text.strip()
+
+
+def compact_text(value: str) -> str:
+    return " ".join(str(value or "").split())
+
+
+def bounded_text(value: str, limit: int) -> str:
+    text = compact_text(value)
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def task_brief_for_dispatch(task_text: str) -> str:
+    goal = extract_goal_text(task_text)
+    return bounded_text(goal, DISPATCH_BRIEF_CHAR_LIMIT)
+
+
+def skill_task_label(task: str, index: int) -> str:
+    label = bounded_text(task, SKILL_TASK_LABEL_CHAR_LIMIT)
+    return label or f"work-item-{index}"
 
 
 def decompose_execution_tasks(prompt: str, profile: str) -> list[str]:
@@ -1540,6 +1563,19 @@ def write_dispatches(
     skill_recommendations: dict[str, Any],
     visible_attention: dict[str, Any],
 ) -> None:
+    task_brief = task_brief_for_dispatch(prompt)
+    task_refs = "\n".join(
+        f"- `{relative_ref(directory / ref, root)}`"
+        for ref in [
+            "task.md",
+            "routing.json",
+            "visible-routing.md",
+            "context-selection.json",
+            "mask-list.json",
+            "evidence-board.json",
+            "skill-recommendations.json",
+        ]
+    )
     for agent in selected_agents:
         agent_dir = directory / "agents" / agent
         agent_dir.mkdir(parents=True, exist_ok=True)
@@ -1573,9 +1609,23 @@ Use your routed capability profile for this task. Local profiles are hints, not 
 
 {reasons}
 
-## User Request
+## Task Brief
 
-{prompt}
+{task_brief}
+
+## Task References
+
+The coordinator/leader is responsible for sending a precise, concise dispatch.
+Use this brief first. Load full context only from task-local refs when your role
+requires it:
+
+{task_refs}
+
+## Payload Budget
+
+- Treat this dispatch as the working prompt, not as a dump of all coordinator context.
+- Do not ask the coordinator to paste hidden chat context; use the referenced task files and evidence refs.
+- Keep your output scoped to expected evidence plus actionable recommendations.
 
 ## Visible Attention Slice
 
@@ -1620,13 +1670,15 @@ def format_skill_recommendations_for_dispatch(agent: str, skill_recommendations:
         return f"- Skill router status: `{source.get('status', 'unknown')}`. Proceed without assuming hidden skill recommendations."
     lines = [
         "- Skill recommendations are routing aids, not permission grants.",
+        "- Full recommendation records remain in `skill-recommendations.json`; dispatch only carries short labels.",
         "- Load or invoke an installed skill only when it matches your role and materially improves this task.",
     ]
     if source is not skill_recommendations:
         lines.append(f"- These recommendations were filtered for `{agent}` with the recommender's provider filter.")
     count = 0
-    for result in source.get("results") or []:
+    for result_index, result in enumerate(source.get("results") or [], start=1):
         task = str(result.get("task") or "").strip()
+        label = skill_task_label(task, result_index)
         routing = result.get("routing") or {}
         for match in result.get("matches") or []:
             if not match.get("installed"):
@@ -1635,8 +1687,9 @@ def format_skill_recommendations_for_dispatch(agent: str, skill_recommendations:
                 continue
             count += 1
             lines.append(
-                "- Task `{}` -> skill `{}` ({}, confidence {}, mode {}, path `{}`).".format(
-                    task,
+                "- Work item {} `{}` -> skill `{}` ({}, confidence {}, mode {}, path `{}`).".format(
+                    result_index,
+                    label,
                     match.get("skill", "unknown"),
                     routing.get("decision", "unknown"),
                     match.get("confidence", "unknown"),

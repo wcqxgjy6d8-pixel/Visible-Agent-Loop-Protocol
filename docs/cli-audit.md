@@ -123,6 +123,12 @@ For Manual Mode tasks this prints copy instructions and expected evidence refs.
 For HERDR-routed tasks it prints HERDR reference-adapter submit commands. For
 queue-routed tasks it prints queue enqueue instructions.
 
+The generated `agents/<agent>/dispatch.md` files are concise assignments. They
+should contain the task brief, role, boundaries, expected evidence, visible
+attention slice, short skill labels, and refs to the full task artifacts. Long
+context remains in task-local files and should not be expanded into every worker
+prompt.
+
 Submit through the selected reference adapter:
 
 ```bash

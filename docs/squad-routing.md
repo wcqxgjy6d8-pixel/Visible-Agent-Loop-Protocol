@@ -40,7 +40,8 @@ The leader agent must:
 - read the task and routing context;
 - decide whether to delegate, do nothing, or escalate;
 - state the reason briefly;
-- create visible delegation when assigning work to a member;
+- create precise, concise visible delegation when assigning work to a member;
+- cite task-local refs instead of pasting full context into member dispatches;
 - resolve member recommendations with an explicit scope and complexity decision;
 - stop after routing unless explicitly assigned implementation or review work.
 

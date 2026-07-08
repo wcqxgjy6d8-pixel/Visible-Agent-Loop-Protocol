@@ -152,6 +152,12 @@ submission proof for each selected agent. Dry-run dispatch output, local
 sub-agent analysis, or a manually appended `dispatch_completed` receipt is not
 HERDR/live agent proof.
 
+Generated dispatches are concise worker assignments. The coordinator or leader
+is responsible for sending the short task brief, role, boundaries, expected
+evidence, visible attention slice, and refs to full task evidence. Long context,
+full task history, and detailed skill recommendation records should stay in
+task-local files such as `task.md` and `skill-recommendations.json`.
+
 Auto Visible Mode is the opt-in version of this entry path: a local policy or
 runtime watcher can decide that a user request should publish a VALP task
 without requiring the user to type the exact command. It must still show the
@@ -496,6 +502,8 @@ Visible-Agent-Loop-Protocol/
   runs and local sub-agent simulations do not count as live dispatch.
 - Selected-agent recommendations must be visibly resolved; adoption means
   explicit disposition and scope control, not unlimited task expansion.
+- Dispatch payloads must be concise; long context and full recommendation
+  records are cited by file reference, not pasted into every worker prompt.
 - High-risk actions require explicit user approval.
 - Auto Visible Mode is automatic visible intake, not silent execution.
 - Long context is a reliability risk and must be scanned before dispatch.

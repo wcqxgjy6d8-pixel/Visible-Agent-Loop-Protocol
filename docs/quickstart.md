@@ -199,6 +199,13 @@ bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug a
 .herdr-loop/tasks/TASK-001/agents/<agent>/dispatch.md
 ```
 
+Each generated `dispatch.md` is meant to be a concise worker prompt. It should
+carry the short task brief, role, boundaries, expected evidence, visible
+attention slice, and refs to the full task files. Do not judge dispatch quality
+by whether it pasted the whole conversation; the full context belongs in
+task-local evidence such as `task.md`, `routing.json`, and
+`skill-recommendations.json`.
+
 This is the start of the loop, not the end. The task should fail audit until the
 selected agents or manual operator produce the expected evidence and the receipt
 ledger is advanced to a completion state.

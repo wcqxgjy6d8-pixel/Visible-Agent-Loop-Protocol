@@ -64,6 +64,32 @@ re-read task state and evidence
 rerun routing if the task, project, or tools changed
 ```
 
+## Dispatch Payload Budget
+
+The coordinator or leader must keep worker dispatches short. A good dispatch is
+not a transcript; it is a precise assignment with file refs.
+
+Dispatch should contain:
+
+- short task brief;
+- role and permission boundary;
+- expected evidence paths;
+- visible attention slice;
+- short skill recommendation labels;
+- refs to `task.md`, `routing.json`, `context-selection.json`,
+  `mask-list.json`, `evidence-board.json`, and `skill-recommendations.json`.
+
+Dispatch should not paste:
+
+- the full conversation;
+- full task history when `task.md` is available;
+- long repeated skill-router task text;
+- stale memory without evidence.
+
+HTML can render dashboards or reports, but the canonical worker dispatch should
+remain readable plain text or Markdown unless the runtime exports the same
+concise assignment and receipt evidence.
+
 ## Required Handoff
 
 ```markdown

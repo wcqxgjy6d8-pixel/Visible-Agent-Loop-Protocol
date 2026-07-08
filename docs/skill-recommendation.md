@@ -114,17 +114,23 @@ one agent from being asked to load another agent's private skill.
 Each dispatch prompt should include a `Recommended Skills` section with:
 
 ```text
-runtime work item
+short runtime work-item label
 skill name
 installed/missing status
 confidence
 mode/decision
 path or install hint
+ref to skill-recommendations.json for full records
 ```
 
 The target agent must treat this as execution guidance. If the skill exists in
 that agent's reachable library and fits the assigned role, it should load or use
 the skill. If it does not use the skill, it should state why in its evidence.
+
+Do not paste a long raw task or full recommendation record into every dispatch.
+The complete recommendation output belongs in `skill-recommendations.json`.
+Dispatches should carry compact labels such as `Work item 1` plus enough text
+for the worker to recognize the assigned item.
 
 Dispatch generation should filter recommendations by the target agent's
 reachable skill libraries when that information is known. For example, a Codex

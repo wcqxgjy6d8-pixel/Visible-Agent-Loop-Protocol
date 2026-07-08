@@ -17,10 +17,30 @@ Write evidence exactly to:
 
 - `.herdr-loop/tasks/TASK-QUEUE-001/agents/claude/review.md`
 
-## Request
+## Task Brief
 
 Review the implementation evidence and verification output. Report
 critical/high findings first. Do not edit source.
+
+## Task References
+
+The coordinator/leader is responsible for sending a precise, concise dispatch.
+Use this brief first. Load full context only from task-local refs when your role
+requires it:
+
+- `.herdr-loop/tasks/TASK-QUEUE-001/task.md`
+- `.herdr-loop/tasks/TASK-QUEUE-001/routing.json`
+- `.herdr-loop/tasks/TASK-QUEUE-001/visible-routing.md`
+- `.herdr-loop/tasks/TASK-QUEUE-001/context-selection.json`
+- `.herdr-loop/tasks/TASK-QUEUE-001/mask-list.json`
+- `.herdr-loop/tasks/TASK-QUEUE-001/evidence-board.json`
+- `.herdr-loop/tasks/TASK-QUEUE-001/skill-recommendations.json`
+
+## Payload Budget
+
+- Treat this dispatch as the working prompt, not as a dump of all coordinator context.
+- Do not ask the coordinator to paste hidden chat context; use the referenced task files and evidence refs.
+- Keep your output scoped to expected evidence plus actionable recommendations.
 
 ## Visible Attention Slice
 
@@ -45,6 +65,7 @@ critical/high findings first. Do not edit source.
 ## Recommended Skills
 
 - Skill recommendations are routing aids, not permission grants.
+- Full recommendation records remain in `skill-recommendations.json`; dispatch only carries short labels.
 - These recommendations were filtered for `claude` with the recommender's provider filter.
 - No installed skill matched strongly enough for this dispatch.
 

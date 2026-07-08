@@ -22,10 +22,17 @@ checkpoint_interval_minutes=45; compression_target_pct=15-25
 Context to inspect:
 task.md, routing.json, codex verification evidence, changed files
 
-Question:
+Task brief:
 Review the implementation for correctness, architecture risk, and missing
 verification. Report critical/high findings first.
 
+Task refs:
+task.md, routing.json, visible-routing.md, context-selection.json,
+mask-list.json, evidence-board.json, skill-recommendations.json
+
+Payload budget:
+The leader sends a concise assignment. Do not paste or request the full
+conversation unless a cited task file is insufficient for the role.
+
 Expected output:
 agents/claude/visible-review.md
-

@@ -89,6 +89,11 @@ visible.
 `dispatch`
 : A visible assignment sent to an agent.
 
+`dispatch payload budget`
+: The constraint that a dispatch is a concise, role-specific assignment with
+task-local references for long context, not a pasted transcript or a full
+context dump.
+
 `receipt`
 : A machine-readable record of dispatch state.
 
@@ -510,6 +515,7 @@ scan current runtime/tool/skill/context state
 run runtime preflight for selected or high-relevance agents
 rank candidate agents for each runtime work item
 select a coordinator from current capability evidence
+write precise, concise dispatch payloads with refs for long context
 record confidence and risk for selected agents
 record missing capability or uncertainty
 route discovery/review before implementation when confidence is low
@@ -522,6 +528,12 @@ but the final
 selection must be justified by current capability, tool, context, permission,
 availability, profile, and evidence scans. If a user has a stronger coordinator
 agent, the open protocol should let that agent own state and gates.
+
+Whoever is selected as coordinator or leader owns dispatch precision. The
+coordinator must break work into short, role-specific assignments and cite
+task-local files for detail. It must not shift context-management work onto
+workers by pasting the full conversation, full task history, or broad skill
+router output into every dispatch.
 
 Coordinator selection patterns:
 
@@ -755,6 +767,45 @@ is at or above `hard_compression_pct`, or if the runtime marks
 be sent until the agent writes a compression handoff and the task state is
 revalidated.
 
+### 11.1 Dispatch Payload Budget
+
+Dispatch generation is a coordinator/leader responsibility. The selected leader
+must send each worker a precise, concise assignment and use task-local file refs
+for context expansion. This applies to direct routing, squad routing, hosted
+runtimes, pane runtimes, queues, and Manual Mode.
+
+A dispatch should include:
+
+```text
+short task brief
+role and capability match
+permission boundary
+expected evidence refs
+visible attention slice
+recommended skills as short work-item labels
+refs to full task, routing, context selection, masks, evidence board, and skill recommendations
+```
+
+A dispatch should not include:
+
+```text
+full chat transcript
+full task history when a brief plus task.md ref is enough
+repeated long skill recommendation task text
+stale memory without file-backed evidence
+hidden coordinator reasoning
+```
+
+The full `task.md` and `skill-recommendations.json` remain task evidence. They
+are not required to be copied into every worker prompt. Skill recommendations in
+dispatch should use short work-item labels and point to the full recommendation
+record when more detail is needed.
+
+Plain text or Markdown is the canonical worker dispatch format. HTML or other
+rich formats may render reports, dashboards, or evidence summaries, but they
+must not replace the concise canonical dispatch unless the runtime exports the
+same readable assignment and receipt evidence.
+
 ## 12. Provider Matrix
 
 Every routed agent should have a current provider capability record before work
@@ -841,12 +892,13 @@ Dispatch prompts must surface relevant installed skills to the target agent.
 They should include:
 
 ```text
-runtime work item
+short runtime work-item label
 recommended skill name
 installed or missing status
 confidence/mode/decision
 skill path or install hint
 instruction that recommendations are aids, not permission grants
+ref to the full skill-recommendations.json record
 ```
 
 An agent should use or load a recommended skill only when it matches the agent's

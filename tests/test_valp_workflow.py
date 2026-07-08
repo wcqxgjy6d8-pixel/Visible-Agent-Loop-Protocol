@@ -205,6 +205,44 @@ class ValpWorkflowTests(unittest.TestCase):
                     self.assertIn(f".herdr-loop/tasks/TASK-SMOKE/{expected_ref}", dispatch)
                 self.assertIn("## Visible Attention Slice", dispatch)
 
+    def test_dispatch_payload_uses_concise_brief_and_task_refs(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-08T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "code_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["edits files", "runs tests", "writes verification evidence"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
+        long_tail = "UNIQUE_LONG_CONTEXT_TAIL_SHOULD_STAY_ONLY_IN_TASK_SOURCE"
+        long_prompt = "Fix the routing bug and verify it. " + ("background detail " * 150) + long_tail
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    task_dir = publish_task(root, "TASK-BRIEF", long_prompt)
+
+            task_text = (task_dir / "task.md").read_text(encoding="utf-8")
+            dispatch = (task_dir / "agents" / "codex" / "dispatch.md").read_text(encoding="utf-8")
+
+        self.assertIn(long_tail, task_text)
+        self.assertNotIn(long_tail, dispatch)
+        self.assertNotIn("## User Request", dispatch)
+        self.assertIn("## Task Brief", dispatch)
+        self.assertIn("## Task References", dispatch)
+        self.assertIn("## Payload Budget", dispatch)
+        self.assertIn("coordinator/leader is responsible", dispatch)
+        self.assertIn(".herdr-loop/tasks/TASK-BRIEF/task.md", dispatch)
+        self.assertIn(".herdr-loop/tasks/TASK-BRIEF/skill-recommendations.json", dispatch)
+
     def test_scan_and_route_existing_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -232,12 +270,17 @@ class ValpWorkflowTests(unittest.TestCase):
                 }
             },
         }
+        long_skill_task = (
+            "run tests and write verification evidence "
+            + ("with repeated implementation context " * 40)
+            + "UNIQUE_SKILL_RECOMMENDATION_TAIL"
+        )
         router_payload = {
             "batch": True,
             "num_tasks": 1,
             "results": [
                 {
-                    "task": "run tests and write verification evidence",
+                    "task": long_skill_task,
                     "routing": {
                         "priority": "P1",
                         "decision": "auto-load",
@@ -268,7 +311,7 @@ class ValpWorkflowTests(unittest.TestCase):
             "num_tasks": 1,
             "results": [
                 {
-                    "task": "run tests and write verification evidence",
+                    "task": long_skill_task,
                     "routing": {
                         "priority": "P1",
                         "decision": "auto-load",
@@ -340,6 +383,7 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertEqual(recommendations["results"][0]["matches"][0]["skill"], "verification-before-completion")
             self.assertIn("per_agent", recommendations)
             self.assertEqual(recommendations["per_agent"]["codex"]["results"][0]["matches"][0]["skill"], "tdd")
+            self.assertIn("UNIQUE_SKILL_RECOMMENDATION_TAIL", recommendations["per_agent"]["codex"]["results"][0]["task"])
 
             routing = read_json(task_dir / "routing.json")
             for agent in routing["selected_agents"]:
@@ -349,6 +393,9 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertIn("filtered for `codex`", codex_dispatch)
             self.assertIn("tdd", codex_dispatch)
             self.assertNotIn("verification-before-completion", codex_dispatch)
+            self.assertIn("Full recommendation records remain in `skill-recommendations.json`", codex_dispatch)
+            self.assertIn("Work item 1", codex_dispatch)
+            self.assertNotIn("UNIQUE_SKILL_RECOMMENDATION_TAIL", codex_dispatch)
 
 
 if __name__ == "__main__":

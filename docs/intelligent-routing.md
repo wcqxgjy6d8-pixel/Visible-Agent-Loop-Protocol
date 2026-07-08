@@ -21,6 +21,7 @@ evaluate trigger policy, when Auto Visible Mode is enabled
   -> select coordinator and execution roles from current evidence
   -> build visible attention map
   -> record selected context, masked inputs, and evidence board
+  -> write concise dispatch payloads with refs for long context
   -> route selected agents
   -> record rejected high-relevance candidates
   -> require receipts and evidence
@@ -57,6 +58,14 @@ visible.
 | high | dispatch normal work with expected evidence |
 | medium | dispatch smaller scoped work, require review, or ask for approval before mutation |
 | low | route discovery/setup work, use a squad leader, or stop with missing capabilities |
+
+## Coordinator Responsibility
+
+Whoever is selected as coordinator or leader owns the quality of task
+assignment. The dispatch should be short, role-specific, and evidence-oriented.
+It should point workers to `task.md`, routing records, visible attention records,
+and skill recommendation records instead of pasting full chat history or broad
+recommendation output into every worker prompt.
 
 ## Low Confidence Rules
 

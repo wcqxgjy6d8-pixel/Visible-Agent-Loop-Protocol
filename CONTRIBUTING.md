@@ -29,6 +29,10 @@ want to support and the evidence your runtime can actually export.
 
 ## Pull Requests
 
+Maintainers and administrators should use the same pull request path as external
+contributors for all non-trivial changes. Direct pushes to `main` remove the
+public review trail that VALP is meant to encourage.
+
 Before opening a pull request:
 
 1. State whether the change is protocol semantics, docs, schemas, examples, or
@@ -44,6 +48,10 @@ scripts/verify-examples.sh
 
 Docs-only changes can explain why the smoke check was not run, but protocol,
 schema, CLI, and example changes should include verification output.
+
+See [docs/maintainer-governance.md](docs/maintainer-governance.md) for the
+maintainer PR policy and the retrospective audit of early direct-to-main
+changes.
 
 ## Change Checklist
 

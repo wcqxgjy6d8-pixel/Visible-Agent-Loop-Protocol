@@ -13,7 +13,7 @@ multi-agent platform.
 | Reference CLI | `bin/valp` with `publish`, `scan`, `route`, `dispatch`, `preflight`, `audit`, and `doctor` |
 | Reference runtime | HERDR for the documented Full Mode path |
 | Other runtime adapters | Contract documented; first-class non-HERDR adapters are planned |
-| Public examples | Three bundled fixtures plus one sanitized real Manual Mode documentation case study |
+| Public examples | Three bundled fixtures, one sanitized real Manual Mode documentation case study, and one visible dispatch process video |
 | Public release | Stable evaluation release `v0.2.0` |
 
 ## Verified In This Repository
@@ -48,7 +48,8 @@ platform.
 | Bundled synthetic Full Mode fixture | Covered by audit | `examples/full-mode-task/` |
 | Bundled synthetic headless queue fixture | Covered by audit | `examples/headless-queue-task/` |
 | Sanitized real Manual Mode documentation case study | Covered by audit | `examples/real-doc-calibration-task/` |
-| Live HERDR dispatch E2E | Not covered in repository CI | Requires installed runtime and live agent sessions |
+| Visible HERDR publish-and-dispatch process | Covered as process proof, not CI | `docs/case-studies/visible-dispatch-process-proof.md` |
+| Live HERDR dispatch E2E completion case study | Not covered in repository CI | Requires sanitized task folder plus runtime submission and final audit evidence |
 | Non-HERDR real adapter E2E | Not covered | First-class adapter implementation is planned |
 | Full state-machine transition suite | Partially covered | State vocabulary is specified; full transition suite is planned |
 | Context compression runtime integration | Partially covered | Semantics are documented; live adapter enforcement is not yet covered |
@@ -75,7 +76,7 @@ and exports the required receipts and evidence.
 
 | Gap | Why it matters | Current handling |
 |---|---|---|
-| No public live Full Mode case study | Manual Mode case studies prove task evidence, not live runtime dispatch | Planned before stronger Full Mode promotion |
+| No standalone public live Full Mode completion case study | The visible dispatch video proves publish and runtime dispatch behavior, but not a complete sanitized Full Mode run by itself | Planned before stronger Full Mode promotion |
 | Non-HERDR adapters are not first-class | Runtime-neutral protocol claims need at least one credible non-HERDR implementation | Adapter contract and synthetic queue fixture exist; implementation planned |
 | Live Full Mode E2E coverage is limited | CLI tests cannot prove a real runtime can submit, wait, collect, and audit | Keep Full Mode claims tied to adapter proof |
 | App installer behavior is not a protocol runtime | First-launch UX can accidentally hide path, preflight, and submit boundaries | First-install health gate is specified; App must expose doctor/preflight/dry-run results |
@@ -111,6 +112,7 @@ HERDR-free automation path already shipped
 
 ## Near-Term Credibility Work
 
-1. Add a public live Full Mode case study with runtime submission proof.
+1. Turn the visible dispatch process proof into a full sanitized live Full Mode
+   completion case study with runtime submission proof and final audit output.
 2. Add the first first-class non-HERDR adapter path.
 3. Grow RFCs, failure cases, and adapter feedback around the `v0.2.0` release.

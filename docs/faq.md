@@ -145,8 +145,10 @@ Mostly no, with one exception. The minimal, Full Mode, and headless queue
 examples are synthetic fixtures. `examples/real-doc-calibration-task/` is a
 sanitized real Manual Mode documentation case study.
 
-There is still no public live Full Mode case study with runtime submission
-proof.
+There is also a short
+[visible dispatch process proof](case-studies/visible-dispatch-process-proof.md)
+showing a real VALP/HERDR publish-and-dispatch run. It is process proof, not a
+standalone public live Full Mode completion case study.
 
 ## What test coverage exists today?
 

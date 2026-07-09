@@ -48,11 +48,14 @@ What this repository proves today:
 - schemas, unit tests, and bundled examples pass `scripts/verify-examples.sh`;
 - CI runs the repository smoke check on Linux, macOS, and Windows runners;
 - `valp audit` enforces receipt, evidence, review, agent-recommendation,
-  approval, and final synthesis gates for the included task folders.
+  approval, and final synthesis gates for the included task folders;
+- a short [visible dispatch process proof](docs/case-studies/visible-dispatch-process-proof.md)
+  shows a real VALP/HERDR publish-and-dispatch run.
 
 What it does not prove yet:
 
-- a public live Full Mode case study using a runtime end to end;
+- a standalone public live Full Mode completion case study using a runtime end
+  to end;
 - first-class non-HERDR runtime adapters beyond the synthetic queue fixture;
 - native Full Mode guarantees on every local operating system;
 - production deployment reliability for a third-party runtime.
@@ -92,6 +95,7 @@ Choose the path that matches why you are here:
 |---|---|---|
 | Understand the protocol | Read [SPEC.md](SPEC.md) and audit `examples/minimal-task/` | No |
 | See the shortest public demo | Read [When Agent "Done" Is Not Done](docs/when-agent-done-is-not-done.md) | No |
+| Watch live dispatch process proof | Watch the [visible dispatch process proof](docs/case-studies/visible-dispatch-process-proof.md) | No |
 | Try automated multi-agent work | Install HERDR, the current reference runtime | Yes |
 | Enable automatic visible task intake | Read [docs/auto-visible-mode.md](docs/auto-visible-mode.md) | For dispatch, yes |
 | Inspect a headless runtime shape | Audit `examples/headless-queue-task/` | No |
@@ -336,6 +340,7 @@ The repository includes four self-verifying task examples:
 | `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, correction-cycle, recommendation, review, and final synthesis audit gates | `PASS`, `pass=19 warn=0 fail=0 skip=1` |
 | `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=18 warn=0 fail=0 skip=2` |
 | `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=14 warn=0 fail=0 skip=6` |
+| `docs/case-studies/visible-dispatch-process-proof.md` | Short public video of a real VALP/HERDR publish-and-dispatch process; not a standalone Full Mode completion case study | Process proof only |
 
 Run the complete smoke check:
 

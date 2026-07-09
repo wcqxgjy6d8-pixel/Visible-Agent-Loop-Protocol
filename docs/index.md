@@ -14,6 +14,7 @@ Start here:
 - [Quickstart](quickstart.md)
 - [When Agent "Done" Is Not Done](when-agent-done-is-not-done.md)
 - [Minimal audit demo](minimal-audit-demo.md)
+- [Visible dispatch process proof](case-studies/visible-dispatch-process-proof.md)
 - [Failure gallery](failure-gallery.md)
 - [Correction cycle evidence](correction-cycle.md)
 - [Runtime adapter checklist](adapter-checklist.md)
@@ -35,6 +36,8 @@ First useful actions:
   shortest public explanation.
 - Run the [minimal audit demo](minimal-audit-demo.md) to see PASS -> FAIL ->
   PASS when expected evidence is removed and restored.
+- Watch the [visible dispatch process proof](case-studies/visible-dispatch-process-proof.md)
+  to see a real VALP/HERDR publish-and-dispatch run.
 - Read the [failure gallery](failure-gallery.md) to see what VALP catches.
 - Use the [adapter checklist](adapter-checklist.md) before claiming runtime
   compatibility.

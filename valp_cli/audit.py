@@ -1145,7 +1145,7 @@ class TaskAudit:
         records = self.evidence_status.get("evidence") or self.evidence_status.get("items") or {}
         if not isinstance(records, dict):
             return False
-        ref = str(path.relative_to(self.task_dir))
+        ref = path.relative_to(self.task_dir).as_posix()
         record = records.get(ref)
         if not isinstance(record, dict) or record.get("status") != "valid":
             return False

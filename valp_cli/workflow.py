@@ -634,6 +634,75 @@ def context_selection_for(root: Path, directory: Path, profile: str, loop_layer:
     }
 
 
+def safe_history_task_id(task_id: str) -> bool:
+    return bool(task_id) and task_id not in {".", ".."} and "/" not in task_id and "\\" not in task_id
+
+
+def safe_task_evidence_ref(ref: str) -> bool:
+    path = Path(ref)
+    return bool(ref) and not path.is_absolute() and "\\" not in ref and ".." not in path.parts
+
+
+def task_evidence_exists(directory: Path, ref: str) -> bool:
+    if not safe_task_evidence_ref(ref):
+        return False
+    try:
+        candidate = (directory / ref).resolve()
+        candidate.relative_to(directory.resolve())
+    except (OSError, ValueError):
+        return False
+    return candidate.exists()
+
+
+def trusted_routing_feedback(root: Path, indexed: dict[str, Any]) -> dict[str, Any]:
+    task_id = str(indexed.get("task_id") or "")
+    if indexed.get("schema_version") != "valp-routing-feedback.v1" or not safe_history_task_id(task_id):
+        return {}
+
+    tasks_root = root / ".herdr-loop" / "tasks"
+    directory = tasks_root / task_id
+    try:
+        directory.resolve().relative_to(tasks_root.resolve())
+    except (OSError, ValueError):
+        return {}
+    task_feedback = read_json(directory / "routing-feedback.json")
+    state = read_json(directory / "state.json")
+    if not task_feedback or not state:
+        return {}
+
+    identity_fields = ["schema_version", "task_id", "profile", "result", "selected_agents"]
+    if any(indexed.get(field) != task_feedback.get(field) for field in identity_fields):
+        return {}
+    if state.get("task_id") != task_id:
+        return {}
+
+    result = str(task_feedback.get("result") or "").lower()
+    if result == "done":
+        gates = state.get("gates") or {}
+        required_gates = {
+            "dispatch_receipts": "passed",
+            "expected_evidence": "passed",
+            "verification": "passed",
+            "review": "passed",
+        }
+        if state.get("status") != "done" or any(gates.get(name) != status for name, status in required_gates.items()):
+            return {}
+        if gates.get("approval") not in {"passed", "not_required"}:
+            return {}
+        if task_feedback.get("verification_result") != "passed" or task_feedback.get("review_result") != "passed":
+            return {}
+        actual_evidence = task_feedback.get("actual_evidence") or []
+        if not isinstance(actual_evidence, list) or not actual_evidence:
+            return {}
+        for raw_ref in actual_evidence:
+            if not task_evidence_exists(directory, str(raw_ref)):
+                return {}
+
+    trusted = dict(task_feedback)
+    trusted["_history_source_ref"] = f".herdr-loop/tasks/{task_id}/routing-feedback.json"
+    return trusted
+
+
 def load_routing_feedback_history(root: Path, limit: int = 40) -> list[dict[str, Any]]:
     feedback_path = root / ".herdr-loop" / "routing-feedback.jsonl"
     if not feedback_path.exists():
@@ -647,7 +716,9 @@ def load_routing_feedback_history(root: Path, limit: int = 40) -> list[dict[str,
         except json.JSONDecodeError:
             continue
         if isinstance(data, dict):
-            records.append(data)
+            trusted = trusted_routing_feedback(root, data)
+            if trusted:
+                records.append(trusted)
     return records[-limit:]
 
 
@@ -664,12 +735,12 @@ def feedback_prior_for_agent(agent: str, profile: str, feedback_history: list[di
         same_profile = record.get("profile") == profile
         weight = 0.08 if same_profile else 0.03
         result = str(record.get("result") or "").lower()
-        task_id = str(record.get("task_id") or "")
-        if task_id:
-            refs.append(f".herdr-loop/tasks/{task_id}/routing-feedback.json")
+        source_ref = str(record.get("_history_source_ref") or "")
+        if source_ref:
+            refs.append(source_ref)
         if result == "done":
             score += weight
-            notes.append(f"{agent} has prior done feedback" + (" for this profile" if same_profile else ""))
+            notes.append(f"{agent} has evidence-backed prior done feedback" + (" for this profile" if same_profile else ""))
         elif result in {"failed", "blocked", "partial"}:
             score -= weight * 1.5
             notes.append(f"{agent} has prior {result} feedback" + (" for this profile" if same_profile else ""))

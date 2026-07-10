@@ -13,7 +13,9 @@ from valp_cli.workflow import (
     classify_approval_risks,
     decompose_execution_tasks,
     dispatch_task,
+    feedback_prior_for_agent,
     load_local_capabilities,
+    load_routing_feedback_history,
     publish_task,
     read_json,
     route_task,
@@ -22,6 +24,43 @@ from valp_cli.workflow import (
 
 
 class ValpWorkflowTests(unittest.TestCase):
+    def write_done_feedback_history(self, root: Path, task_id: str = "OLD-DONE") -> Path:
+        directory = root / ".herdr-loop" / "tasks" / task_id
+        evidence_ref = "evidence/verification.md"
+        (directory / "evidence").mkdir(parents=True)
+        (directory / evidence_ref).write_text("verified\n", encoding="utf-8")
+        state = {
+            "schema_version": "valp-visible-loop-state.v1",
+            "task_id": task_id,
+            "profile": "software-code",
+            "status": "done",
+            "selected_agents": ["codex"],
+            "gates": {
+                "dispatch_receipts": "passed",
+                "expected_evidence": "passed",
+                "verification": "passed",
+                "review": "passed",
+                "approval": "not_required",
+            },
+        }
+        feedback = {
+            "schema_version": "valp-routing-feedback.v1",
+            "task_id": task_id,
+            "profile": "software-code",
+            "selected_agents": ["codex"],
+            "actual_evidence": [evidence_ref],
+            "verification_result": "passed",
+            "review_result": "passed",
+            "result": "done",
+            "updated_at": "2026-07-09T00:00:00Z",
+        }
+        (directory / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (directory / "routing-feedback.json").write_text(json.dumps(feedback), encoding="utf-8")
+        history = root / ".herdr-loop" / "routing-feedback.jsonl"
+        history.parent.mkdir(parents=True, exist_ok=True)
+        history.write_text(json.dumps(feedback) + "\n", encoding="utf-8")
+        return directory
+
     def test_cli_version_flag(self) -> None:
         output = io.StringIO()
         with self.assertRaises(SystemExit) as raised:
@@ -267,22 +306,7 @@ class ValpWorkflowTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            history = root / ".herdr-loop" / "routing-feedback.jsonl"
-            history.parent.mkdir(parents=True)
-            history.write_text(
-                json.dumps(
-                    {
-                        "schema_version": "valp-routing-feedback.v1",
-                        "task_id": "OLD-DONE",
-                        "profile": "software-code",
-                        "selected_agents": ["codex"],
-                        "result": "done",
-                        "updated_at": "2026-07-09T00:00:00Z",
-                    }
-                )
-                + "\n",
-                encoding="utf-8",
-            )
+            self.write_done_feedback_history(root)
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
                     task_dir = publish_task(root, "TASK-PRIOR", "Fix a bug and run tests", runtime="manual")
@@ -292,6 +316,76 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertGreater(score["evidence_history"], 0.6)
             self.assertTrue(score["evidence_history_refs"])
             self.assertIn("OLD-DONE", score["evidence_history_refs"][0])
+
+    def test_unbacked_feedback_index_does_not_affect_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = root / ".herdr-loop" / "routing-feedback.jsonl"
+            history.parent.mkdir(parents=True)
+            history.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-routing-feedback.v1",
+                        "task_id": "MISSING-TASK",
+                        "profile": "software-code",
+                        "selected_agents": ["codex"],
+                        "result": "done",
+                        "updated_at": "2026-07-09T00:00:00Z",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            loaded = load_routing_feedback_history(root)
+            self.assertEqual(loaded, [])
+            self.assertEqual(feedback_prior_for_agent("codex", "software-code", loaded)["score"], 0.6)
+
+    def test_done_feedback_with_failed_task_gate_does_not_affect_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = self.write_done_feedback_history(root)
+            state = read_json(directory / "state.json")
+            state["gates"]["review"] = "needs_evidence"
+            (directory / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+            self.assertEqual(load_routing_feedback_history(root), [])
+
+    def test_altered_feedback_index_does_not_affect_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_done_feedback_history(root)
+            history = root / ".herdr-loop" / "routing-feedback.jsonl"
+            indexed = json.loads(history.read_text(encoding="utf-8"))
+            indexed["selected_agents"] = ["claude"]
+            history.write_text(json.dumps(indexed) + "\n", encoding="utf-8")
+
+            self.assertEqual(load_routing_feedback_history(root), [])
+
+    def test_divergent_task_local_result_does_not_affect_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = self.write_done_feedback_history(root)
+            task_feedback = read_json(directory / "routing-feedback.json")
+            task_feedback["result"] = "blocked"
+            (directory / "routing-feedback.json").write_text(json.dumps(task_feedback), encoding="utf-8")
+
+            self.assertEqual(load_routing_feedback_history(root), [])
+
+    def test_feedback_evidence_symlink_cannot_escape_task_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = self.write_done_feedback_history(root)
+            evidence = directory / "evidence" / "verification.md"
+            evidence.unlink()
+            outside = root / "outside-proof.md"
+            outside.write_text("not task-local\n", encoding="utf-8")
+            try:
+                evidence.symlink_to(outside)
+            except OSError:
+                self.skipTest("Symlink creation is unavailable on this platform")
+
+            self.assertEqual(load_routing_feedback_history(root), [])
 
     def test_scan_and_route_existing_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

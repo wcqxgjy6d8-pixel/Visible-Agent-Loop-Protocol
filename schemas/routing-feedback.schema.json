@@ -58,5 +58,26 @@
     },
     "privacy_notes": {"type": "array", "items": {"type": "string"}},
     "updated_at": {"type": "string"}
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "result": {"const": "done"}
+        },
+        "required": ["result"]
+      },
+      "then": {
+        "required": ["selected_agents", "actual_evidence", "verification_result", "review_result", "privacy_notes"],
+        "properties": {
+          "selected_agents": {"minItems": 1},
+          "actual_evidence": {"minItems": 1},
+          "verification_result": {"const": "passed"},
+          "review_result": {"const": "passed"},
+          "privacy_notes": {"minItems": 1}
+        }
+      }
+    }
+  ],
+  "additionalProperties": true
 }

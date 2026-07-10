@@ -59,6 +59,10 @@ local overlay, skill, runtime adapter, or memory updates are proposed.
 
 Learning feedback is a prior, not authority.
 
+Workspace feedback indexes are also not authority. A positive history entry
+must resolve to matching task-local feedback, passed completion gates, and
+existing evidence before it can influence routing.
+
 ```text
 old success + missing current tool -> do not route
 old success + approval risk -> stop for approval

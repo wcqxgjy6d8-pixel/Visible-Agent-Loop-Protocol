@@ -1155,6 +1155,14 @@ a workspace-level routing memory:
 <workspace>/.herdr-loop/routing-feedback.jsonl
 ```
 
+The workspace-level file is an index, not an independent source of truth. A
+reference implementation must not change routing scores from an index entry
+unless the corresponding task-local `routing-feedback.json` exists and matches
+the indexed task identity. Positive `done` feedback additionally requires the
+task state and dispatch, expected-evidence, verification, review, and approval
+gates to be resolved, plus existing task-local `actual_evidence` refs. Unbacked,
+malformed, stale-copy, or path-unsafe index entries must be ignored.
+
 Do not store secrets, raw private data, or full hidden conversations in routing
 feedback. Record evidence paths and short summaries instead.
 
@@ -1348,6 +1356,11 @@ completion evidence.
 Agents must not make runtime/build/test/lint/UI verification claims without
 concrete evidence. Claims such as "build passed", "tests passed", "UI verified",
 or equivalent must cite a command log, screenshot, receipt, or evidence path.
+When a claim document cannot embed the full command output, its `valid`
+`evidence-status.json` entry may record task-local `supporting_refs`. At least
+one supporting ref must contain concrete command/result, screenshot, receipt,
+or equivalent verification evidence; a self-reference or missing ref does not
+support the claim.
 
 ## 19. Approval Gates
 

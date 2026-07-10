@@ -360,7 +360,7 @@ class TaskAudit:
                 ref = str(ref)
                 if not self._is_safe_task_ref(ref):
                     unsafe_refs.append(ref)
-                elif not self._ref_exists(ref):
+                elif not self._ref_exists(ref) and not self._workspace_ref_exists(ref):
                     missing_refs.append(ref)
         if unsafe_refs:
             return self._fail("context_pack", "Context pack records compact visible worker context", "Context pack refs must be safe paths: " + ", ".join(unsafe_refs[:5]), evidence)
@@ -843,6 +843,38 @@ class TaskAudit:
                 ]
                 if quality_missing:
                     return self._fail("routing_feedback", "Feedback record is written for non-trivial tasks when supported", "Routing feedback missing learning fields: " + ", ".join(quality_missing), evidence)
+            if self.feedback.get("result") == "done":
+                if self.feedback.get("verification_result") != "passed" or self.feedback.get("review_result") != "passed":
+                    return self._fail(
+                        "routing_feedback",
+                        "Feedback record is written for non-trivial tasks when supported",
+                        "Done routing feedback requires passed verification_result and review_result",
+                        evidence,
+                    )
+                actual_evidence = self.feedback.get("actual_evidence") or []
+                if not isinstance(actual_evidence, list) or not actual_evidence:
+                    return self._fail(
+                        "routing_feedback",
+                        "Feedback record is written for non-trivial tasks when supported",
+                        "Done routing feedback requires actual_evidence refs",
+                        evidence,
+                    )
+                unsafe_refs = [str(ref) for ref in actual_evidence if not self._is_safe_task_ref(str(ref))]
+                if unsafe_refs:
+                    return self._fail(
+                        "routing_feedback",
+                        "Feedback record is written for non-trivial tasks when supported",
+                        "Routing feedback evidence refs must be task-relative safe paths: " + ", ".join(unsafe_refs[:5]),
+                        evidence,
+                    )
+                missing_refs = [str(ref) for ref in actual_evidence if not self._task_local_ref_exists(str(ref))]
+                if missing_refs:
+                    return self._fail(
+                        "routing_feedback",
+                        "Feedback record is written for non-trivial tasks when supported",
+                        "Routing feedback evidence refs are missing: " + ", ".join(missing_refs[:5]),
+                        evidence,
+                    )
             return self._pass("routing_feedback", "Feedback record is written for non-trivial tasks when supported", "Routing feedback exists with required fields", evidence)
         return self._fail("routing_feedback", "Feedback record is written for non-trivial tasks when supported", f"Missing routing feedback ref: {ref}", evidence)
 
@@ -1002,7 +1034,7 @@ class TaskAudit:
             )
             if not claim_found:
                 continue
-            if self._has_concrete_claim_evidence(text):
+            if self._has_concrete_claim_evidence(text) or self._claim_has_status_support(path):
                 continue
             unsupported.append(f"{path.relative_to(self.task_dir)}")
         return unsupported
@@ -1051,15 +1083,18 @@ class TaskAudit:
             ref = candidate.strip().strip(".,;:)")
             if not self._is_safe_task_ref(ref):
                 continue
-            if (self.task_dir / ref).exists():
-                return True
+            try:
+                if (self.task_dir / ref).exists():
+                    return True
+            except OSError:
+                continue
         return False
 
     def _is_safe_task_ref(self, ref: str) -> bool:
         if not isinstance(ref, str):
             return False
         ref = ref.strip()
-        if not ref or ref.startswith("/") or "\\" in ref:
+        if not ref or ref.startswith("/") or "\\" in ref or "\n" in ref or "\r" in ref:
             return False
         path = PurePosixPath(ref)
         if path.is_absolute():
@@ -1070,11 +1105,64 @@ class TaskAudit:
         if not self._is_safe_task_ref(ref):
             return False
         task_relative = self.task_dir / ref
-        if task_relative.exists():
-            return True
+        try:
+            if task_relative.exists():
+                return True
+        except OSError:
+            return False
         if ref.startswith(".herdr-loop/tasks/") and self.task_dir.parent.name == "tasks" and self.task_dir.parent.parent.name == ".herdr-loop":
             workspace_root = self.task_dir.parent.parent.parent
-            return (workspace_root / ref).exists()
+            try:
+                return (workspace_root / ref).exists()
+            except OSError:
+                return False
+        return False
+
+    def _workspace_ref_exists(self, ref: str) -> bool:
+        if not self._is_safe_task_ref(ref):
+            return False
+        if self.task_dir.parent.name != "tasks" or self.task_dir.parent.parent.name != ".herdr-loop":
+            return False
+        workspace_root = self.task_dir.parent.parent.parent.resolve()
+        try:
+            candidate = (workspace_root / ref).resolve()
+            candidate.relative_to(workspace_root)
+        except (OSError, ValueError):
+            return False
+        return candidate.exists()
+
+    def _task_local_ref_exists(self, ref: str) -> bool:
+        if not self._is_safe_task_ref(ref):
+            return False
+        try:
+            candidate = (self.task_dir / ref).resolve()
+            candidate.relative_to(self.task_dir.resolve())
+        except (OSError, ValueError):
+            return False
+        return candidate.exists()
+
+    def _claim_has_status_support(self, path: Path) -> bool:
+        records = self.evidence_status.get("evidence") or self.evidence_status.get("items") or {}
+        if not isinstance(records, dict):
+            return False
+        ref = str(path.relative_to(self.task_dir))
+        record = records.get(ref)
+        if not isinstance(record, dict) or record.get("status") != "valid":
+            return False
+        supporting_refs = record.get("supporting_refs") or []
+        if not isinstance(supporting_refs, list):
+            return False
+        for supporting_ref in supporting_refs:
+            supporting_ref = str(supporting_ref)
+            if supporting_ref == ref or not self._task_local_ref_exists(supporting_ref):
+                continue
+            supporting_path = self.task_dir / supporting_ref
+            try:
+                supporting_text = supporting_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if self._has_concrete_claim_evidence(supporting_text):
+                return True
         return False
 
     def _approval_ledger_result(self) -> dict[str, list[str]]:

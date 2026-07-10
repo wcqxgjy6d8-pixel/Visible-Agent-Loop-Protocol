@@ -108,6 +108,116 @@ class ValpAuditTests(unittest.TestCase):
                 )
             )
 
+    def test_done_routing_feedback_requires_passed_verification_and_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            feedback = json.loads((task / "routing-feedback.json").read_text(encoding="utf-8"))
+            feedback["review_result"] = "failed"
+            (task / "routing-feedback.json").write_text(json.dumps(feedback), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(
+                any(
+                    item.id == "routing_feedback"
+                    and item.status == FAIL
+                    and "passed verification_result and review_result" in item.message
+                    for item in report.items
+                )
+            )
+
+    def test_done_routing_feedback_requires_existing_actual_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            feedback = json.loads((task / "routing-feedback.json").read_text(encoding="utf-8"))
+            feedback["actual_evidence"].append("evidence/missing-proof.md")
+            (task / "routing-feedback.json").write_text(json.dumps(feedback), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(
+                any(
+                    item.id == "routing_feedback"
+                    and item.status == FAIL
+                    and "refs are missing" in item.message
+                    for item in report.items
+                )
+            )
+
+    def test_done_routing_feedback_rejects_cross_task_actual_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            task = workspace / ".herdr-loop" / "tasks" / "current"
+            other_evidence = workspace / ".herdr-loop" / "tasks" / "other" / "evidence.md"
+            shutil.copytree(EXAMPLE, task)
+            other_evidence.parent.mkdir(parents=True)
+            other_evidence.write_text("other task proof\n", encoding="utf-8")
+            feedback = json.loads((task / "routing-feedback.json").read_text(encoding="utf-8"))
+            feedback["actual_evidence"].append(".herdr-loop/tasks/other/evidence.md")
+            (task / "routing-feedback.json").write_text(json.dumps(feedback), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(
+                any(
+                    item.id == "routing_feedback"
+                    and item.status == FAIL
+                    and "refs are missing" in item.message
+                    for item in report.items
+                )
+            )
+
+    def test_long_fenced_code_in_review_does_not_crash_claim_evidence_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            review = task / "agents" / "claude" / "review.md"
+            review.write_text(
+                review.read_text(encoding="utf-8")
+                + "\n```python\n"
+                + ("long_non_path_code = True  # padding\n" * 30)
+                + "```\n",
+                encoding="utf-8",
+            )
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, PASS)
+
+    def test_context_pack_can_resolve_contained_workspace_context_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            task = workspace / ".herdr-loop" / "tasks" / "current"
+            shutil.copytree(EXAMPLE, task)
+            (workspace / "AGENTS.md").write_text("# Rules\n", encoding="utf-8")
+            context_pack = json.loads((task / "context-pack.json").read_text(encoding="utf-8"))
+            context_pack["items"][0]["evidence_refs"] = ["AGENTS.md"]
+            (task / "context-pack.json").write_text(json.dumps(context_pack), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, PASS)
+
+    def test_structured_supporting_ref_can_back_review_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            review = task / "agents" / "claude" / "review.md"
+            review.write_text("Tests passed according to coordinator verification evidence.\n", encoding="utf-8")
+            verification = task / "evidence" / "verification.md"
+            verification.write_text(
+                "```text\n$ python3 -m unittest tests/test_valp_audit.py\nRan 1 test\nOK\nexit_code: 0\n```\n",
+                encoding="utf-8",
+            )
+            evidence_status = json.loads((task / "evidence-status.json").read_text(encoding="utf-8"))
+            evidence_status["evidence"]["agents/claude/review.md"]["supporting_refs"] = [
+                "evidence/verification.md"
+            ]
+            (task / "evidence-status.json").write_text(json.dumps(evidence_status), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, PASS)
+
     def test_unsafe_expected_evidence_ref_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             task = Path(tmp) / "task"

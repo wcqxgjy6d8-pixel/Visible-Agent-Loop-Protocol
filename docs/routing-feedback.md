@@ -71,6 +71,13 @@ Optional workspace memory:
 The workspace memory is an index of prior outcomes. It should contain summaries
 and evidence references, not raw private data or hidden conversations.
 
+The index cannot establish trust by itself. Before an entry affects routing,
+the reference CLI resolves it back to the task-local `routing-feedback.json`
+and checks that the task identity matches. Positive `done` feedback is eligible
+only when the task is `done`, completion gates passed, approval is resolved,
+verification and review passed, and every `actual_evidence` ref exists inside
+the task folder. An index-only or altered entry is ignored.
+
 Task-local learning feedback:
 
 ```text

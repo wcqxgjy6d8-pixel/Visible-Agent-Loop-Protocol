@@ -36,7 +36,7 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=7
+Summary: pass=13 warn=0 fail=0 skip=10
 ```
 
 To verify all bundled examples and CLI tests in one command:
@@ -189,9 +189,11 @@ bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug a
 .herdr-loop/tasks/TASK-001/task.md
 .herdr-loop/tasks/TASK-001/state.json
 .herdr-loop/tasks/TASK-001/routing.json
+.herdr-loop/tasks/TASK-001/automation-policy.json
 .herdr-loop/tasks/TASK-001/skill-recommendations.json
 .herdr-loop/tasks/TASK-001/attention-map.json
 .herdr-loop/tasks/TASK-001/context-selection.json
+.herdr-loop/tasks/TASK-001/context-pack.json
 .herdr-loop/tasks/TASK-001/mask-list.json
 .herdr-loop/tasks/TASK-001/evidence-board.json
 .herdr-loop/tasks/TASK-001/visible-routing.md
@@ -203,7 +205,7 @@ Each generated `dispatch.md` is meant to be a concise worker prompt. It should
 carry the short task brief, role, boundaries, expected evidence, visible
 attention slice, and refs to the full task files. Do not judge dispatch quality
 by whether it pasted the whole conversation; the full context belongs in
-task-local evidence such as `task.md`, `routing.json`, and
+task-local evidence such as `task.md`, `routing.json`, `context-pack.json`, and
 `skill-recommendations.json`.
 
 This is the start of the loop, not the end. The task should fail audit until the
@@ -401,11 +403,13 @@ Auto Visible Mode should write:
 
 ```text
 .herdr-loop/tasks/<task-id>/trigger-policy.json
+.herdr-loop/tasks/<task-id>/automation-policy.json
 ```
 
-That file records why VALP started, which rule matched, risk classification,
-whether approval is required, and where the user can inspect routing, skill
-recommendations, dispatch receipts, final report, and audit evidence.
+Those files record why VALP started, which rule matched, risk classification,
+how far automation may proceed, whether approval is required, and where the user
+can inspect routing, skill recommendations, dispatch receipts, final report, and
+audit evidence.
 
 Do not use Auto Visible Mode as a hidden autopilot. High-risk actions still
 require explicit user approval before execution.

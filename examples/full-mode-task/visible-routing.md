@@ -18,6 +18,14 @@ Design contract: not_applicable
 - `routing.json`: candidate scores and selected agents
 - `skill-recommendations.json`: recommended installed skills
 
+## Context Pack
+
+- project: Use the task-local evidence folder as the source of truth; do not rely on hidden chat context.
+- task_scope: Complete only the scoped example task and write the expected evidence refs.
+- verification: Completion claims require expected evidence, verification evidence, review evidence, and receipts.
+- permission_boundary: No release, auth, secrets, destructive, privacy, signing, migration, memory, or agent-configuration work is approved by this example.
+- routing_prior: Historical feedback is a prior only; current runtime preflight, tools, permissions, context, and evidence gates decide this task.
+
 ## Masked Inputs
 
 - old chat memory without file-backed evidence: stale context is not valid routing or completion evidence

@@ -30,13 +30,16 @@ It must not hard-code Desktop, macOS paths, or one user's folder names.
       <task-id>/
         task.md
         trigger-policy.json
+        automation-policy.json
         state.json
         routing.json
         routing-feedback.json
+        learning-feedback.json
         skill-recommendations.json
         agent-recommendations.json
         attention-map.json
         context-selection.json
+        context-pack.json
         mask-list.json
         evidence-board.json
         visible-routing.md

@@ -4,8 +4,13 @@ Version: 0.2.0-draft
 
 ## 1. Purpose
 
-Visible Agent Loop defines a visible, auditable, evidence-backed workflow for
-multi-agent collaboration.
+Visible Agent Loop defines a visible, auditable, evidence-backed control
+protocol for autonomous and multi-agent work.
+
+The protocol starts from a first-principles question: when an intelligent
+system claims a task is done, what evidence makes that claim trustworthy?
+VALP answers by making intent, routing, execution, evidence, correction,
+approval, and learning visible.
 
 The protocol is generic. It can be used for software engineering, research,
 frontend work, Apple apps, documents, operations, prototypes, and future task
@@ -75,6 +80,41 @@ review, use a squad, or route a discovery task first.
 quality, review outcomes, blockers, completion result, and lessons for future
 routing. Feedback records improve future routing but do not replace current
 capability scans.
+
+`control loop`
+: The full closed loop from intent to routing, execution, evidence, review,
+correction, approval, synthesis, audit, and learning. A runtime may automate
+parts of the loop, but the protocol boundary is the evidence trail that proves
+which parts ran and which gates stopped.
+
+`automation policy`
+: A task-local record of which phases may continue automatically, which phases
+must stop, the risk classification, the approval requirement, and the audit
+grade needed for the task. Automation policy allows low-risk progress; it does
+not grant permission for high-risk work.
+
+`context pack`
+: A compact, task-local package of selected project rules, operator
+preferences, known pitfalls, task scope, verification expectations, and
+permission boundaries. It is derived from visible refs and is included in
+dispatch prompts by reference, not by copying private transcripts.
+
+`learning feedback`
+: A post-task record of evidence-backed observations and proposed updates for
+future routing, context selection, automation policy, docs, schemas, adapters,
+or local overlays. Learning feedback is a prior for future tasks, not proof
+that the same route is valid now.
+
+`audit grade`
+: The evidence standard claimed for a task or example. Common grades are
+`demo`, `local`, `runtime`, and `public-proof`. A higher grade requires stronger
+external proof; a lower grade must not be marketed as deployment reliability.
+
+`evidence-based prior`
+: A routing or automation hint derived from previous task evidence. It may
+increase or decrease confidence, but current runtime status, tool availability,
+permission boundaries, context policy, approval gates, and expected evidence
+always win.
 
 `provider matrix`
 : A current capability table for agent backends, including CLI availability,
@@ -156,6 +196,7 @@ Expanded sub-steps:
 ```text
 INTAKE
   -> PUBLISH
+  -> SELECT AUTOMATION POLICY
 SCAN
   -> SCAN CAPABILITIES, CONTEXT POLICIES, AND LOCAL OVERLAY
   -> SELECT RUNTIME ADAPTER
@@ -168,6 +209,7 @@ ROUTE
   -> PREFLIGHT RUNTIME AND AGENT SESSIONS
   -> SCORE AND ROUTE AGENTS
   -> ROUTE SQUAD, IF USED
+  -> BUILD CONTEXT PACK
 DISPATCH
   -> WRITE VISIBLE DISPATCH
   -> SUBMIT DISPATCH
@@ -185,6 +227,7 @@ REVIEW
   -> APPROVAL GATE, IF NEEDED
 RECORD
   -> RECORD
+  -> WRITE LEARNING FEEDBACK
   -> DONE / BLOCKED / FAILED / CANCELLED
 ```
 
@@ -199,6 +242,7 @@ attention evidence.
 ```text
 new
   -> published
+  -> selecting_automation_policy
   -> scanning_capabilities
   -> scanning_context
   -> loading_local_overlay
@@ -212,6 +256,7 @@ new
   -> scoring_routes
   -> routing_capabilities
   -> routing_squad
+  -> building_context_pack
   -> dispatching
   -> planned
   -> locked
@@ -222,6 +267,7 @@ new
   -> fixing
   -> approval_required
   -> recording
+  -> writing_learning_feedback
   -> done | blocked | failed | cancelled
 ```
 
@@ -296,6 +342,7 @@ no_valp
 publish_only
 publish_and_route
 publish_route_and_dispatch
+continue_until_gate
 block_for_approval
 ```
 
@@ -314,7 +361,59 @@ watcher must export the source event, rule, task id, and approval state into
 VALP evidence before dispatching work. A watcher that cannot export this proof
 is not an Auto Visible Mode implementation.
 
-### 4.3 First-Install Health Gate
+### 4.3 Automation Policy
+
+Automation policy is the control surface for "full automation". It records which
+parts of the loop may continue automatically, which parts must stop, and why.
+The goal is not silent execution. The goal is automatic progress until the next
+evidence, approval, context, runtime, or scope gate.
+
+Recommended task evidence:
+
+```text
+<task>/automation-policy.json
+```
+
+The policy should include:
+
+```text
+mode
+risk_classification
+selected_action
+approval_required
+allowed_automatic_phases
+blocked_automatic_phases
+audit_grade
+basis refs
+stop_conditions
+```
+
+The `audit_grade` states the proof level being claimed:
+
+| Grade | Meaning |
+|---|---|
+| `demo` | Static or synthetic example; useful for understanding protocol shape |
+| `local` | Local task evidence exists, but no Full Mode runtime proof is claimed |
+| `runtime` | Adapter-exported dispatch submission, runtime state, expected evidence, and audit proof exist |
+| `public-proof` | Sanitized, shareable task folder or case study proves the claim without private context |
+
+Automation policy must be conservative:
+
+- low-risk work may continue through publish, scan, route, dispatch, evidence
+  collection, verification, review, synthesis, audit, and learning when each
+  step writes evidence;
+- high-risk work must stop before side effects and record approval evidence;
+- runtime completion without expected evidence is a stop condition, not Done;
+- missing context, stale memory, failed preflight, unresolved review findings,
+  unresolved agent recommendations, or unresolved approvals must stop the loop;
+- a local overlay may make automation stricter, but it cannot make approval,
+  receipt, evidence, or context gates weaker.
+
+This is the protocol boundary for autonomous work: the system can move quickly
+when the control loop is healthy, and it must stop visibly when the loop cannot
+prove safety or completion.
+
+### 4.4 First-Install Health Gate
 
 A first install, including an App-managed install, must prove environment health
 before real dispatch. The installer or App should run an explicit health gate in
@@ -922,16 +1021,18 @@ Required task evidence:
 ```text
 <task>/attention-map.json
 <task>/context-selection.json
+<task>/context-pack.json
 <task>/mask-list.json
 <task>/evidence-board.json
 <task>/visible-routing.md
 ```
 
-The four JSON artifacts must all carry `schema_version`, `profile`, and
+The five JSON artifacts must all carry `schema_version`, `profile`, and
 `loop_layer`. `attention-map.json` additionally carries `task_id` and attention
 heads. `context-selection.json` carries selected and not-selected context.
-`mask-list.json` carries excluded inputs and reasons. `evidence-board.json`
-carries claims and required evidence.
+`context-pack.json` carries the compact context given to workers. `mask-list.json`
+carries excluded inputs and reasons. `evidence-board.json` carries claims and
+required evidence.
 
 The attention map records:
 
@@ -956,6 +1057,23 @@ excluded by default. The mask-list records inputs that must not influence the
 decision, such as stale chat memory, hidden votes, prototype-as-production-proof,
 unapproved release operations, or invalid/superseded evidence.
 
+The context pack is the dispatch-facing compression artifact. It should include
+only task-relevant summaries backed by visible refs:
+
+```text
+project rules
+operator preferences, when a local overlay exposes them
+known pitfalls from prior evidence-backed feedback
+task scope and out-of-scope boundaries
+verification expectations
+permission boundaries
+routing priors and their evidence refs
+```
+
+The context pack must not include secrets, raw private transcripts, hidden
+votes, unverified memory, or broad personal preferences that are not relevant to
+the current task. It is a compact working packet, not a memory dump.
+
 The evidence board turns claims into evidence requirements before execution.
 For example, a UI claim should require a build/test log and a real screenshot,
 not just code inspection.
@@ -966,6 +1084,7 @@ Dispatch prompts should include the recipient's visible attention slice:
 loop layer
 the recipient's attention head
 selected context paths
+context pack ref
 masked inputs
 design contract status, when relevant
 ```
@@ -1022,9 +1141,11 @@ blockers and failure reasons
 what should change next time
 ```
 
-Feedback may update future capability profiles, but future tasks must still run
-a fresh capability, provider, context, and permission scan. Historical success
-is a useful prior, not proof that the agent can do the current task.
+Feedback may update future capability profiles, context-pack generation,
+automation policy defaults, adapter warnings, docs, schemas, or audit checks,
+but future tasks must still run a fresh capability, provider, context, and
+permission scan. Historical success is a useful prior, not proof that the agent
+can do the current task.
 
 Feedback should be stored in a task-local evidence file and optionally copied to
 a workspace-level routing memory:
@@ -1036,6 +1157,57 @@ a workspace-level routing memory:
 
 Do not store secrets, raw private data, or full hidden conversations in routing
 feedback. Record evidence paths and short summaries instead.
+
+Non-trivial tasks should also write a learning feedback record when the runtime
+supports it:
+
+```text
+<task>/learning-feedback.json
+```
+
+Learning feedback records the compound-engineering part of the loop:
+
+```text
+learning item kind
+observation
+evidence refs
+confidence
+next effect
+proposed update target layer
+proposal
+disposition
+approval requirement
+```
+
+Allowed target layers are:
+
+```text
+protocol
+schema
+audit
+docs
+local_overlay
+skill
+runtime_adapter
+memory
+none
+```
+
+Learning feedback does not directly patch the target layer. It records a
+proposal and its disposition. Updates to protocol, schemas, audit gates, local
+overlays, skills, memory, runtime adapters, or agent configuration must follow
+the relevant approval, review, and change-control path. This keeps compound
+learning inspectable instead of turning old memory into hidden authority.
+
+For routing, learning feedback becomes an evidence-based prior. A current scan
+still wins over old feedback:
+
+```text
+old success + missing current tool -> do not route
+old success + current approval risk -> stop for approval
+old failure + current repaired capability -> route only with lower confidence
+old context gap + similar new task -> include the missing context in context-pack
+```
 
 ## 16.1 Agent Recommendation Resolution
 
@@ -1222,6 +1394,7 @@ approved, and which scope the approval covered.
 A task is done only when:
 
 - profile and routing are recorded;
+- automation policy is recorded when automation or a runtime adapter is used;
 - runtime adapter and task state mapping are recorded;
 - local overlay inputs are recorded when used;
 - selected agents and context policies are recorded;
@@ -1230,6 +1403,7 @@ A task is done only when:
   selected agent checks;
 - routing confidence, missing capabilities, and rejected high-relevance
   candidates are recorded when they affect the decision;
+- context pack is recorded for non-trivial routed tasks and uses visible refs;
 - skill recommendation backend result is recorded when a backend is available,
   and relevant recommendations are surfaced in dispatch prompts;
 - squad routing evidence is recorded when a squad is used;
@@ -1247,7 +1421,8 @@ A task is done only when:
 - approvals are resolved, including any task-local approval request and user
   decision ledger;
 - final synthesis records decisions, disagreements, evidence gaps, and result.
-- feedback record is written for non-trivial tasks when the runtime supports it.
+- feedback and learning records are written for non-trivial tasks when the
+  runtime supports them.
 
 The reference CLI command `valp audit` maps these bullets into executable audit
 items. The CLI is not required by the protocol, but it is the reference quality

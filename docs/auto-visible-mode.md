@@ -31,19 +31,25 @@ result is shown to the user before real `--submit` is enabled.
 user task or runtime signal
   -> evaluate trigger policy
   -> classify risk
+  -> write automation-policy.json
   -> publish VALP task when policy allows
   -> record trigger-policy.json
   -> scan runtime, tools, skills, and context
   -> run skill recommendation when available
+  -> build context-pack.json
   -> write visible routing and dispatches
   -> execute only within approval boundaries
   -> verify, review, and record final report
+  -> write routing-feedback.json and learning-feedback.json
   -> audit the task evidence
 ```
 
 The task may proceed automatically only as far as the evidence and approval
 gates allow. If the trigger policy chooses `publish_only` or
 `block_for_approval`, the runtime must stop there.
+
+`trigger-policy.json` explains why the task entered VALP. `automation-policy.json`
+explains how far it may proceed automatically and which stop conditions apply.
 
 ## Trigger Evidence
 
@@ -122,6 +128,7 @@ verification commands or artifacts
 review findings and fixes
 known gaps or blockers
 audit result
+routing and learning feedback refs
 ```
 
 This makes automatic work inspectable: the user can see why VALP ran, what it

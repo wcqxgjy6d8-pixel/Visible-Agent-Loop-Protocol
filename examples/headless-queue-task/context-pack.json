@@ -1,0 +1,104 @@
+{
+  "schema_version": "valp-context-pack.v1",
+  "task_id": "TASK-QUEUE-001",
+  "profile": "software-code",
+  "loop_layer": "agentic_coding_loop",
+  "generated_at": "2026-07-03T00:00:00Z",
+  "budget": {
+    "target_tokens": 500,
+    "target_chars": 2400
+  },
+  "sources": [
+    {
+      "ref": "task.md",
+      "reason": "active task brief"
+    },
+    {
+      "ref": "routing.json",
+      "reason": "selected agents and routing basis"
+    },
+    {
+      "ref": "automation-policy.json",
+      "reason": "automatic progress and stop conditions"
+    },
+    {
+      "ref": "evidence-board.json",
+      "reason": "required proof for claims"
+    }
+  ],
+  "items": [
+    {
+      "section": "project",
+      "summary": "Use the task-local evidence folder as the source of truth; do not rely on hidden chat context.",
+      "evidence_refs": [
+        "task.md",
+        "routing.json"
+      ],
+      "recipient_agents": [
+        "codex",
+        "claude"
+      ]
+    },
+    {
+      "section": "task_scope",
+      "summary": "Complete only the scoped example task and write the expected evidence refs.",
+      "evidence_refs": [
+        "task.md",
+        "visible-routing.md"
+      ],
+      "recipient_agents": [
+        "codex",
+        "claude"
+      ]
+    },
+    {
+      "section": "verification",
+      "summary": "Completion claims require expected evidence, verification evidence, review evidence, and receipts.",
+      "evidence_refs": [
+        "evidence-board.json",
+        "dispatch-receipts.jsonl",
+        "evidence/verification.md"
+      ],
+      "recipient_agents": [
+        "codex",
+        "claude"
+      ]
+    },
+    {
+      "section": "permission_boundary",
+      "summary": "No release, auth, secrets, destructive, privacy, signing, migration, memory, or agent-configuration work is approved by this example.",
+      "evidence_refs": [
+        "automation-policy.json",
+        "state.json"
+      ],
+      "recipient_agents": [
+        "codex",
+        "claude"
+      ]
+    },
+    {
+      "section": "routing_prior",
+      "summary": "Historical feedback is a prior only; current runtime preflight, tools, permissions, context, and evidence gates decide this task.",
+      "evidence_refs": [
+        "routing-feedback.json"
+      ],
+      "recipient_agents": [
+        "codex",
+        "claude"
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "item": "raw private transcript",
+      "reason": "not task-local evidence"
+    },
+    {
+      "item": "stale memory without evidence refs",
+      "reason": "cannot override current scan"
+    }
+  ],
+  "privacy_notes": [
+    "Context pack stores summaries and refs, not secrets or hidden conversations."
+  ]
+}

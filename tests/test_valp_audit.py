@@ -475,6 +475,7 @@ class ValpAuditTests(unittest.TestCase):
             for name in [
                 "attention-map.json",
                 "context-selection.json",
+                "context-pack.json",
                 "mask-list.json",
                 "evidence-board.json",
                 "visible-routing.md",
@@ -484,6 +485,26 @@ class ValpAuditTests(unittest.TestCase):
             report = TaskAudit(task).run()
             self.assertEqual(report.status, FAIL)
             self.assertTrue(any(item.id == "visible_attention" and item.status == FAIL for item in report.items))
+
+    def test_missing_context_pack_fails_for_non_trivial_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            (task / "context-pack.json").unlink()
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "context_pack" and item.status == FAIL for item in report.items))
+
+    def test_missing_learning_feedback_fails_for_non_trivial_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            (task / "learning-feedback.json").unlink()
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "learning_feedback" and item.status == FAIL for item in report.items))
 
     def test_manual_mode_accepts_manual_result_attested(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

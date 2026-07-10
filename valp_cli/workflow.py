@@ -634,6 +634,204 @@ def context_selection_for(root: Path, directory: Path, profile: str, loop_layer:
     }
 
 
+def load_routing_feedback_history(root: Path, limit: int = 40) -> list[dict[str, Any]]:
+    feedback_path = root / ".herdr-loop" / "routing-feedback.jsonl"
+    if not feedback_path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in feedback_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            records.append(data)
+    return records[-limit:]
+
+
+def feedback_prior_for_agent(agent: str, profile: str, feedback_history: list[dict[str, Any]]) -> dict[str, Any]:
+    score = 0.6
+    notes: list[str] = []
+    refs: list[str] = []
+    relevant = [
+        record
+        for record in feedback_history
+        if agent in [str(item) for item in (record.get("selected_agents") or [])]
+    ]
+    for record in relevant[-8:]:
+        same_profile = record.get("profile") == profile
+        weight = 0.08 if same_profile else 0.03
+        result = str(record.get("result") or "").lower()
+        task_id = str(record.get("task_id") or "")
+        if task_id:
+            refs.append(f".herdr-loop/tasks/{task_id}/routing-feedback.json")
+        if result == "done":
+            score += weight
+            notes.append(f"{agent} has prior done feedback" + (" for this profile" if same_profile else ""))
+        elif result in {"failed", "blocked", "partial"}:
+            score -= weight * 1.5
+            notes.append(f"{agent} has prior {result} feedback" + (" for this profile" if same_profile else ""))
+        if record.get("context_gaps"):
+            score -= 0.02
+            notes.append(f"{agent} had prior context gaps")
+    return {
+        "score": round(max(0.2, min(0.9, score)), 2),
+        "notes": list(dict.fromkeys(notes[-5:])),
+        "refs": list(dict.fromkeys(refs[-5:])),
+    }
+
+
+def context_pack_for(
+    root: Path,
+    directory: Path,
+    task_id: str,
+    profile: str,
+    loop_layer: str,
+    selected_agents: list[str],
+    context_selection: dict[str, Any],
+    feedback_history: list[dict[str, Any]],
+) -> dict[str, Any]:
+    selected_refs = [str(item.get("path")) for item in (context_selection.get("selected") or []) if item.get("path")]
+    items: list[dict[str, Any]] = [
+        {
+            "section": "project",
+            "summary": "Load the active task and project operating rules from selected task-local refs; do not rely on hidden chat context.",
+            "evidence_refs": [ref for ref in selected_refs if ref.endswith("task.md") or ref == "AGENTS.md"][:4],
+            "recipient_agents": selected_agents,
+        },
+        {
+            "section": "task_scope",
+            "summary": "Stay inside the task brief, expected evidence refs, visible routing, and permission boundary recorded for this task.",
+            "evidence_refs": [
+                relative_ref(directory / "task.md", root),
+                relative_ref(directory / "visible-routing.md", root),
+            ],
+            "recipient_agents": selected_agents,
+        },
+        {
+            "section": "verification",
+            "summary": "Completion claims require concrete files, command output, screenshots, receipts, reviews, or gate evidence.",
+            "evidence_refs": [
+                relative_ref(directory / "evidence-board.json", root),
+                relative_ref(directory / "dispatch-receipts.jsonl", root),
+            ],
+            "recipient_agents": selected_agents,
+        },
+        {
+            "section": "permission_boundary",
+            "summary": "Do not bypass approval gates or expand into release, auth, secrets, destructive, privacy, signing, migration, memory, or agent-configuration changes.",
+            "evidence_refs": [relative_ref(directory / "automation-policy.json", root), relative_ref(directory / "state.json", root)],
+            "recipient_agents": selected_agents,
+        },
+    ]
+    recent_context_gaps: list[str] = []
+    recent_refs: list[str] = []
+    for record in feedback_history[-10:]:
+        gaps = [str(item) for item in (record.get("context_gaps") or [])]
+        if gaps:
+            recent_context_gaps.extend(gaps)
+            task_id_ref = record.get("task_id")
+            if task_id_ref:
+                recent_refs.append(f".herdr-loop/tasks/{task_id_ref}/routing-feedback.json")
+    if recent_context_gaps:
+        items.append(
+            {
+                "section": "known_pitfalls",
+                "summary": "Prior feedback reported context gaps: " + "; ".join(list(dict.fromkeys(recent_context_gaps))[:3]),
+                "evidence_refs": list(dict.fromkeys(recent_refs))[:5],
+                "recipient_agents": selected_agents,
+            }
+        )
+    items.append(
+        {
+            "section": "routing_prior",
+            "summary": "Historical feedback is a routing prior only; current scan, tools, permissions, context, approvals, and expected evidence override it.",
+            "evidence_refs": list(dict.fromkeys(recent_refs))[:5],
+            "recipient_agents": selected_agents,
+        }
+    )
+    return {
+        "schema_version": "valp-context-pack.v1",
+        "task_id": task_id,
+        "profile": profile,
+        "loop_layer": loop_layer,
+        "generated_at": now_iso(),
+        "budget": {"target_tokens": 500, "target_chars": 2400},
+        "sources": [
+            {"ref": ref, "reason": "selected visible context"}
+            for ref in selected_refs[:10]
+        ],
+        "items": items,
+        "excluded": [
+            {"item": "raw private transcript", "reason": "not task-local evidence"},
+            {"item": "stale memory without evidence refs", "reason": "cannot override current scan"},
+        ],
+        "privacy_notes": ["Context pack stores summaries and refs, not secrets or hidden conversations."],
+    }
+
+
+def automation_policy_for(
+    task_id: str,
+    runtime_adapter: dict[str, Any],
+    approval_risks: list[dict[str, Any]],
+    trigger_policy_ref: str | None = None,
+) -> dict[str, Any]:
+    runtime_class = str(runtime_adapter.get("class") or "")
+    mode = "manual" if runtime_class == "manual" else "runtime_auto"
+    risk_classification = "high" if approval_risks else "low"
+    approval_required = bool(approval_risks)
+    selected_action = "block_for_approval" if approval_required else "continue_until_gate"
+    allowed = ["publish", "scan", "route", "build_context_pack"]
+    if not approval_required:
+        allowed.extend(["dispatch", "collect_evidence", "verify", "review", "synthesize", "audit", "write_learning_feedback"])
+    blocked = []
+    if approval_required:
+        blocked.extend(["dispatch_side_effects", "release", "auth", "secrets", "destructive_changes", "memory_or_agent_config"])
+    audit_grade = "local" if runtime_class == "manual" else "runtime"
+    basis: list[dict[str, Any]] = [
+        {
+            "kind": "runtime",
+            "ref": "routing.json#runtime_adapter",
+            "summary": f"Runtime adapter class is {runtime_class or 'unknown'}.",
+        },
+        {
+            "kind": "risk",
+            "ref": "state.json#risk",
+            "summary": "Approval risks detected." if approval_risks else "No approval-gated risks detected.",
+        },
+    ]
+    if trigger_policy_ref:
+        basis.append({"kind": "trigger", "ref": trigger_policy_ref, "summary": "Trigger policy selected task intake."})
+    return {
+        "schema_version": "valp-automation-policy.v1",
+        "task_id": task_id,
+        "mode": mode,
+        "trigger_policy_ref": trigger_policy_ref,
+        "risk_classification": risk_classification,
+        "selected_action": selected_action,
+        "approval_required": approval_required,
+        "approval_refs": ["approvals/requested.jsonl"] if approval_required else [],
+        "allowed_automatic_phases": allowed,
+        "blocked_automatic_phases": blocked,
+        "audit_grade": audit_grade,
+        "basis": basis,
+        "stop_conditions": [
+            "runtime preflight failure",
+            "missing expected evidence",
+            "unresolved approval request",
+            "unresolved critical/high review finding",
+            "unresolved agent recommendation",
+            "context compression required",
+        ],
+        "notes": [
+            "Automation may continue only while each phase writes auditable evidence.",
+            "Automation policy does not grant high-risk approval.",
+        ],
+    }
+
+
 def mask_list_for(profile: str, loop_layer: str, design_contract: dict[str, Any]) -> dict[str, Any]:
     masked = [
         {
@@ -776,10 +974,12 @@ def write_visible_attention(
     candidate_scores: dict[str, dict[str, Any]],
     skill_recommendations: dict[str, Any],
     role_assignments: dict[str, str],
+    feedback_history: list[dict[str, Any]],
 ) -> dict[str, Any]:
     loop_layer = classify_loop_layer(prompt, profile)
     design_contract = find_design_contract(root)
     context_selection = context_selection_for(root, directory, profile, loop_layer)
+    context_pack = context_pack_for(root, directory, task_id, profile, loop_layer, selected_agents, context_selection, feedback_history)
     mask_list = mask_list_for(profile, loop_layer, design_contract)
     evidence_board = evidence_board_for(profile, loop_layer, selected_agents, design_contract)
     heads = attention_heads_for(loop_layer, profile, selected_agents, candidate_scores, design_contract, role_assignments)
@@ -798,13 +998,15 @@ def write_visible_attention(
             "ref": "skill-recommendations.json",
         },
         "context_selection_ref": "context-selection.json",
+        "context_pack_ref": "context-pack.json",
         "mask_list_ref": "mask-list.json",
         "evidence_board_ref": "evidence-board.json",
         "visible_summary_ref": "visible-routing.md",
     }
-    visible_routing = format_visible_routing(attention_map, context_selection, mask_list, evidence_board, design_contract)
+    visible_routing = format_visible_routing(attention_map, context_selection, context_pack, mask_list, evidence_board, design_contract)
     write_json(directory / "attention-map.json", attention_map)
     write_json(directory / "context-selection.json", context_selection)
+    write_json(directory / "context-pack.json", context_pack)
     write_json(directory / "mask-list.json", mask_list)
     write_json(directory / "evidence-board.json", evidence_board)
     (directory / "visible-routing.md").write_text(visible_routing, encoding="utf-8")
@@ -814,12 +1016,14 @@ def write_visible_attention(
         "refs": {
             "attention_map": "attention-map.json",
             "context_selection": "context-selection.json",
+            "context_pack": "context-pack.json",
             "mask_list": "mask-list.json",
             "evidence_board": "evidence-board.json",
             "visible_routing": "visible-routing.md",
         },
         "attention_map": attention_map,
         "context_selection": context_selection,
+        "context_pack": context_pack,
         "mask_list": mask_list,
     }
 
@@ -827,6 +1031,7 @@ def write_visible_attention(
 def format_visible_routing(
     attention_map: dict[str, Any],
     context_selection: dict[str, Any],
+    context_pack: dict[str, Any],
     mask_list: dict[str, Any],
     evidence_board: dict[str, Any],
     design_contract: dict[str, Any],
@@ -840,6 +1045,10 @@ def format_visible_routing(
     context_lines = [
         f"- `{item.get('path')}`: {item.get('reason')}"
         for item in (context_selection.get("selected") or [])[:10]
+    ]
+    context_pack_lines = [
+        f"- {item.get('section')}: {item.get('summary')}"
+        for item in (context_pack.get("items") or [])[:8]
     ]
     mask_lines = [
         f"- {item.get('item')}: {item.get('reason')}"
@@ -864,6 +1073,10 @@ Design contract: {design_status}{design_path}
 
 {context}
 
+## Context Pack
+
+{context_pack}
+
 ## Masked Inputs
 
 {masks}
@@ -879,6 +1092,7 @@ Design contract: {design_status}{design_path}
         design_path=f" ({design_contract.get('path')})" if design_contract.get("path") else "",
         heads="\n".join(head_lines) or "- none",
         context="\n".join(context_lines) or "- none",
+        context_pack="\n".join(context_pack_lines) or "- none",
         masks="\n".join(mask_lines) or "- none",
         claims="\n".join(claim_lines) or "- none",
     )
@@ -887,6 +1101,7 @@ Design contract: {design_status}{design_path}
 def attention_slice_for_agent(agent: str, visible_attention: dict[str, Any]) -> str:
     attention_map = visible_attention.get("attention_map") or {}
     context_selection = visible_attention.get("context_selection") or {}
+    context_pack = visible_attention.get("context_pack") or {}
     mask_list = visible_attention.get("mask_list") or {}
     heads = attention_map.get("heads") or {}
     matching_heads = [
@@ -898,6 +1113,11 @@ def attention_slice_for_agent(agent: str, visible_attention: dict[str, Any]) -> 
         f"- `{item.get('path')}`: {item.get('reason')}"
         for item in (context_selection.get("selected") or [])[:8]
     ]
+    context_pack_lines = [
+        f"- {item.get('section')}: {item.get('summary')}"
+        for item in (context_pack.get("items") or [])
+        if agent in (item.get("recipient_agents") or []) or not item.get("recipient_agents")
+    ][:6]
     mask_lines = [
         f"- {item.get('item')}: {item.get('reason')}"
         for item in (mask_list.get("masked") or [])[:6]
@@ -908,6 +1128,8 @@ def attention_slice_for_agent(agent: str, visible_attention: dict[str, Any]) -> 
 - Design contract: `{design_status}`{design_path}
 - Context selected for this round:
 {context}
+- Context pack (`context-pack.json`):
+{context_pack}
 - Inputs masked out:
 {masks}
 """.format(
@@ -916,6 +1138,7 @@ def attention_slice_for_agent(agent: str, visible_attention: dict[str, Any]) -> 
         design_status=design.get("status", "unknown"),
         design_path=f" (`{design.get('path')}`)" if design.get("path") else "",
         context="\n".join(context_lines) or "  - none",
+        context_pack="\n".join(context_pack_lines) or "  - none",
         masks="\n".join(mask_lines) or "  - none",
     )
 
@@ -1009,10 +1232,14 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
     capabilities = scan_workspace(root, task_id, runtime=runtime)
     overlay = load_local_overlay(root)
     agents = capabilities.get("agents") or {}
-    candidate_scores = score_candidates(profile, agents)
+    feedback_history = load_routing_feedback_history(root)
+    candidate_scores = score_candidates(profile, agents, feedback_history)
     selected_agents = select_agents(profile, agents, candidate_scores)
     role_assignments = role_assignments_for(profile, selected_agents, agents, candidate_scores)
     preflight = collect_runtime_preflight(selected_agents, runtime=runtime)
+    runtime_adapter = runtime_adapter_record(preflight, runtime=runtime)
+    automation_policy = automation_policy_for(task_id, runtime_adapter, approval_risks)
+    write_json(directory / "automation-policy.json", automation_policy)
     skill_recommendations = run_skill_recommendations(root, task_id, profile, prompt)
     skill_recommendations = add_per_agent_skill_recommendations(skill_recommendations, selected_agents)
     write_json(directory / "skill-recommendations.json", skill_recommendations)
@@ -1026,6 +1253,7 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         candidate_scores,
         skill_recommendations,
         role_assignments,
+        feedback_history,
     )
     context_policies = {
         agent: context_policy_for(agent, agents.get(agent, {}), overlay)
@@ -1036,7 +1264,7 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         "schema_version": "valp-capability-routing.v1",
         "task_id": task_id,
         "profile": profile,
-        "runtime_adapter": runtime_adapter_record(preflight, runtime=runtime),
+        "runtime_adapter": runtime_adapter,
         "risk": state["risk"],
         "local_overlay": {
             "used": bool(overlay),
@@ -1059,6 +1287,18 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         "routing_confidence": routing_confidence(candidate_scores, selected_agents),
         "rejected_candidates": rejected_candidates(candidate_scores, selected_agents),
         "selected_agent_context_policies": context_policies,
+        "automation_policy": {
+            "schema_version": "valp-automation-policy.v1",
+            "status": "recorded",
+            "ref": "automation-policy.json",
+            "selected_action": automation_policy.get("selected_action"),
+            "audit_grade": automation_policy.get("audit_grade"),
+        },
+        "context_pack": {
+            "schema_version": "valp-context-pack.v1",
+            "status": "recorded",
+            "ref": "context-pack.json",
+        },
         "skill_recommendations": {
             "schema_version": "valp-skill-recommendations.v1",
             "status": skill_recommendations.get("status"),
@@ -1078,6 +1318,7 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         "runtime_task_state_mapping": RUNTIME_TASK_STATE_MAPPING,
         "squad_routing": {"used": False},
         "routing_feedback_ref": "routing-feedback.json",
+        "learning_feedback_ref": "learning-feedback.json",
         "capabilities_missing": [],
     }
     write_json(directory / "routing.json", routing)
@@ -1098,6 +1339,13 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             "capabilities_needed": routing["capabilities_needed"],
             "capabilities_missing": [],
             "context_policies": context_policies,
+            "automation_policy": {
+                "status": "recorded",
+                "ref": "automation-policy.json",
+                "selected_action": automation_policy.get("selected_action"),
+                "audit_grade": automation_policy.get("audit_grade"),
+            },
+            "context_pack": {"status": "recorded", "ref": "context-pack.json"},
             "skill_recommendations": {
                 "status": skill_recommendations.get("status"),
                 "backend": skill_recommendations.get("backend"),
@@ -1110,6 +1358,7 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             },
             "routing_confidence": routing["routing_confidence"],
             "routing_feedback": {"status": "expected", "ref": "routing-feedback.json"},
+            "learning_feedback": {"status": "expected", "ref": "learning-feedback.json"},
             "updated_at": now_iso(),
         }
     )
@@ -1117,8 +1366,9 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
     return routing
 
 
-def score_candidates(profile: str, agents: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def score_candidates(profile: str, agents: dict[str, Any], feedback_history: list[dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
     required_roles = PROFILE_ROLE_REQUIREMENTS.get(profile, PROFILE_ROLE_REQUIREMENTS["generic-analysis"])
+    history = feedback_history or []
     scores: dict[str, dict[str, Any]] = {}
     for agent, info in agents.items():
         active = bool(info.get("active", True))
@@ -1131,7 +1381,8 @@ def score_candidates(profile: str, agents: dict[str, Any]) -> dict[str, dict[str
         skill_fit = min(0.95, 0.45 + skill_count / 80)
         permission_fit = 0 if not active else 1
         context_fit = 0.85
-        evidence_history = 0.6
+        feedback_prior = feedback_prior_for_agent(agent, profile, history)
+        evidence_history = feedback_prior["score"]
         availability = 1 if runtime_status == "idle" else 0.75 if runtime_status in {"working", "focused"} else 0.65
         if not active:
             availability = 0
@@ -1152,6 +1403,8 @@ def score_candidates(profile: str, agents: dict[str, Any]) -> dict[str, dict[str
             "confidence": confidence,
             "role_fit": role_fit,
             "routing_basis": "capability_roles",
+            "evidence_history_notes": feedback_prior["notes"],
+            "evidence_history_refs": feedback_prior["refs"],
         }
     return scores
 
@@ -1568,9 +1821,11 @@ def write_dispatches(
         f"- `{relative_ref(directory / ref, root)}`"
         for ref in [
             "task.md",
+            "automation-policy.json",
             "routing.json",
             "visible-routing.md",
             "context-selection.json",
+            "context-pack.json",
             "mask-list.json",
             "evidence-board.json",
             "skill-recommendations.json",

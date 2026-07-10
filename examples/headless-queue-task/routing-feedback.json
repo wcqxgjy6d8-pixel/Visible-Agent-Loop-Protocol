@@ -2,8 +2,15 @@
   "schema_version": "valp-routing-feedback.v1",
   "task_id": "TASK-QUEUE-001",
   "profile": "software-code",
-  "selected_agents": ["codex", "claude"],
-  "candidate_agents": ["codex", "claude", "agy"],
+  "selected_agents": [
+    "codex",
+    "claude"
+  ],
+  "candidate_agents": [
+    "codex",
+    "claude",
+    "agy"
+  ],
   "routing_confidence": {
     "overall": "high",
     "notes": [
@@ -39,5 +46,13 @@
   "privacy_notes": [
     "No secrets or hidden transcripts are stored; evidence paths only."
   ],
-  "updated_at": "2026-07-03T00:00:00Z"
+  "updated_at": "2026-07-03T00:00:00Z",
+  "worked": [
+    "Implementation and review were separated into different evidence refs.",
+    "Expected evidence was available before dispatch completion was accepted."
+  ],
+  "did_not_work": [],
+  "context_gaps": [],
+  "learning_feedback_ref": "learning-feedback.json",
+  "rule_change_proposals": []
 }

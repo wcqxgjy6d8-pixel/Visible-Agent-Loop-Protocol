@@ -1,0 +1,49 @@
+{
+  "schema_version": "valp-automation-policy.v1",
+  "task_id": "TASK-EXAMPLE-001",
+  "mode": "runtime_auto",
+  "trigger_policy_ref": null,
+  "risk_classification": "low",
+  "selected_action": "continue_until_gate",
+  "approval_required": false,
+  "approval_refs": [],
+  "allowed_automatic_phases": [
+    "publish",
+    "scan",
+    "route",
+    "build_context_pack",
+    "dispatch",
+    "collect_evidence",
+    "verify",
+    "review",
+    "synthesize",
+    "audit",
+    "write_learning_feedback"
+  ],
+  "blocked_automatic_phases": [],
+  "audit_grade": "runtime",
+  "basis": [
+    {
+      "kind": "runtime",
+      "ref": "routing.json#runtime_adapter",
+      "summary": "Runtime adapter class is pane_controller."
+    },
+    {
+      "kind": "risk",
+      "ref": "state.json#risk",
+      "summary": "No approval-gated risks are present in this example."
+    }
+  ],
+  "stop_conditions": [
+    "runtime preflight failure",
+    "missing expected evidence",
+    "unresolved approval request",
+    "unresolved critical/high review finding",
+    "unresolved agent recommendation",
+    "context compression required"
+  ],
+  "notes": [
+    "This example can continue automatically only because each phase exports auditable evidence.",
+    "Automation policy does not grant high-risk approval."
+  ]
+}

@@ -248,7 +248,8 @@
     "context_selection": "context-selection.json",
     "mask_list": "mask-list.json",
     "evidence_board": "evidence-board.json",
-    "visible_routing": "visible-routing.md"
+    "visible_routing": "visible-routing.md",
+    "context_pack": "context-pack.json"
   },
   "runtime_task_state_mapping": {
     "queued": "accepted_by_runtime_not_delivery",
@@ -262,5 +263,18 @@
     "used": false
   },
   "routing_feedback_ref": "routing-feedback.json",
-  "capabilities_missing": []
+  "capabilities_missing": [],
+  "automation_policy": {
+    "schema_version": "valp-automation-policy.v1",
+    "status": "recorded",
+    "ref": "automation-policy.json",
+    "selected_action": "continue_until_gate",
+    "audit_grade": "runtime"
+  },
+  "context_pack": {
+    "schema_version": "valp-context-pack.v1",
+    "status": "recorded",
+    "ref": "context-pack.json"
+  },
+  "learning_feedback_ref": "learning-feedback.json"
 }

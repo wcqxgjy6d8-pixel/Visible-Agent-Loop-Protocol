@@ -42,8 +42,13 @@ Small single-agent tasks may skip feedback if the runtime would add noise.
   "approval_outcomes": [],
   "blockers": [],
   "result": "done",
+  "worked": ["Codex implementation and Claude review stayed separate."],
+  "did_not_work": [],
+  "context_gaps": [],
   "lessons": ["Keep reviewer read-only for this profile."],
   "next_routing_hints": ["Codex remains a good implementer when tools are available."],
+  "learning_feedback_ref": "learning-feedback.json",
+  "rule_change_proposals": [],
   "privacy_notes": ["No secrets stored; evidence paths only."],
   "updated_at": "2026-07-03T00:00:00Z"
 }
@@ -65,6 +70,17 @@ Optional workspace memory:
 
 The workspace memory is an index of prior outcomes. It should contain summaries
 and evidence references, not raw private data or hidden conversations.
+
+Task-local learning feedback:
+
+```text
+<workspace>/.herdr-loop/tasks/<task-id>/learning-feedback.json
+```
+
+`routing-feedback.json` records the outcome. `learning-feedback.json` records
+evidence-backed observations and proposed updates. Proposed updates are not
+automatically applied to protocol files, local overlays, skills, memory, or
+runtime adapter configuration.
 
 ## Learning Rule
 
@@ -92,6 +108,8 @@ Record these clearly because they change future routes:
 | reviewer found high-risk issue | add review earlier for similar profile |
 | missing tool/MCP | route setup task before execution |
 | repeated blocker | shrink scope or ask user before another loop |
+| missing dispatch context | add evidence-backed summary to the next context pack |
+| over-broad automatic action | tighten automation policy stop conditions |
 
 ## Privacy Rule
 

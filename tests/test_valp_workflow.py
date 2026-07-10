@@ -175,8 +175,10 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertTrue((task_dir / "task.md").exists())
             self.assertTrue((task_dir / "state.json").exists())
             self.assertTrue((task_dir / "routing.json").exists())
+            self.assertTrue((task_dir / "automation-policy.json").exists())
             self.assertTrue((task_dir / "attention-map.json").exists())
             self.assertTrue((task_dir / "context-selection.json").exists())
+            self.assertTrue((task_dir / "context-pack.json").exists())
             self.assertTrue((task_dir / "mask-list.json").exists())
             self.assertTrue((task_dir / "evidence-board.json").exists())
             self.assertTrue((task_dir / "visible-routing.md").exists())
@@ -186,6 +188,8 @@ class ValpWorkflowTests(unittest.TestCase):
             routing = read_json(task_dir / "routing.json")
             self.assertEqual(routing["profile"], "software-code")
             self.assertIn("selected_agents", routing)
+            self.assertEqual(routing["automation_policy"]["status"], "recorded")
+            self.assertEqual(routing["context_pack"]["status"], "recorded")
             self.assertEqual(routing["visible_attention"]["status"], "recorded")
             self.assertTrue(routing["selected_agents"])
             self.assertIn("Mode: Selected during routing", (task_dir / "task.md").read_text(encoding="utf-8"))
@@ -204,6 +208,7 @@ class ValpWorkflowTests(unittest.TestCase):
                 }.get(agent, [f"agents/{agent}/evidence.md"]):
                     self.assertIn(f".herdr-loop/tasks/TASK-SMOKE/{expected_ref}", dispatch)
                 self.assertIn("## Visible Attention Slice", dispatch)
+                self.assertIn("context-pack.json", dispatch)
 
     def test_dispatch_payload_uses_concise_brief_and_task_refs(self) -> None:
         capabilities = {
@@ -241,7 +246,52 @@ class ValpWorkflowTests(unittest.TestCase):
         self.assertIn("## Payload Budget", dispatch)
         self.assertIn("coordinator/leader is responsible", dispatch)
         self.assertIn(".herdr-loop/tasks/TASK-BRIEF/task.md", dispatch)
+        self.assertIn(".herdr-loop/tasks/TASK-BRIEF/context-pack.json", dispatch)
         self.assertIn(".herdr-loop/tasks/TASK-BRIEF/skill-recommendations.json", dispatch)
+
+    def test_routing_feedback_history_changes_evidence_prior_without_overriding_scan(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-10T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "code_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["edits files", "runs tests", "writes verification evidence"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = root / ".herdr-loop" / "routing-feedback.jsonl"
+            history.parent.mkdir(parents=True)
+            history.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-routing-feedback.v1",
+                        "task_id": "OLD-DONE",
+                        "profile": "software-code",
+                        "selected_agents": ["codex"],
+                        "result": "done",
+                        "updated_at": "2026-07-09T00:00:00Z",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    task_dir = publish_task(root, "TASK-PRIOR", "Fix a bug and run tests", runtime="manual")
+
+            routing = read_json(task_dir / "routing.json")
+            score = routing["candidate_scores"]["codex"]
+            self.assertGreater(score["evidence_history"], 0.6)
+            self.assertTrue(score["evidence_history_refs"])
+            self.assertIn("OLD-DONE", score["evidence_history_refs"][0])
 
     def test_scan_and_route_existing_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Learning Feedback",
+  "type": "object",
+  "required": ["schema_version", "task_id", "profile", "result", "learning_items", "proposed_updates", "privacy_notes", "updated_at"],
+  "properties": {
+    "schema_version": {
+      "const": "valp-learning-feedback.v1"
+    },
+    "task_id": {"type": "string"},
+    "profile": {"type": "string"},
+    "result": {
+      "enum": ["done", "blocked", "failed", "cancelled", "partial"]
+    },
+    "routing_feedback_ref": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "learning_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "observation", "evidence_refs", "confidence", "next_effect"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["routing", "context", "failure", "automation", "approval", "protocol", "adapter", "verification"]
+          },
+          "observation": {"type": "string"},
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+            }
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["low", "medium", "high"]
+          },
+          "next_effect": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "proposed_updates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target_layer", "proposal", "evidence_refs", "disposition", "approval_required"],
+        "properties": {
+          "target_layer": {
+            "type": "string",
+            "enum": ["protocol", "schema", "audit", "docs", "local_overlay", "skill", "runtime_adapter", "memory", "none"]
+          },
+          "proposal": {"type": "string"},
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+            }
+          },
+          "disposition": {
+            "type": "string",
+            "enum": ["proposed", "accepted", "merged", "rejected", "deferred", "not_required", "requires_approval"]
+          },
+          "approval_required": {"type": "boolean"},
+          "owner": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "privacy_notes": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "updated_at": {"type": "string"}
+  },
+  "additionalProperties": true
+}

@@ -75,9 +75,11 @@ Dispatch should contain:
 - role and permission boundary;
 - expected evidence paths;
 - visible attention slice;
+- compact context pack summary;
 - short skill recommendation labels;
-- refs to `task.md`, `routing.json`, `context-selection.json`,
-  `mask-list.json`, `evidence-board.json`, and `skill-recommendations.json`.
+- refs to `task.md`, `automation-policy.json`, `routing.json`,
+  `context-selection.json`, `context-pack.json`, `mask-list.json`,
+  `evidence-board.json`, and `skill-recommendations.json`.
 
 Dispatch should not paste:
 
@@ -85,6 +87,8 @@ Dispatch should not paste:
 - full task history when `task.md` is available;
 - long repeated skill-router task text;
 - stale memory without evidence.
+- raw private transcript or broad operator preference data that is not selected
+  into `context-pack.json`.
 
 HTML can render dashboards or reports, but the canonical worker dispatch should
 remain readable plain text or Markdown unless the runtime exports the same

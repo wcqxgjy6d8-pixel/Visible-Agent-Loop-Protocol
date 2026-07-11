@@ -2,7 +2,8 @@
 
 Agent says done. VALP asks for proof.
 
-VALP is an open protocol for visible, evidence-backed multi-agent automation.
+VALP is an open protocol for visible, evidence-backed autonomous and
+multi-agent work.
 
 ![VALP audit demo: PASS to FAIL to PASS](assets/valp-audit-demo.svg)
 
@@ -12,6 +13,7 @@ Start here:
 - [中文注解](zh-CN/README.md)
 - [Protocol specification](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SPEC.md)
 - [Quickstart](quickstart.md)
+- [Compound learning loop](compound-learning-loop.md)
 - [When Agent "Done" Is Not Done](when-agent-done-is-not-done.md)
 - [Minimal audit demo](minimal-audit-demo.md)
 - [Visible dispatch process proof](case-studies/visible-dispatch-process-proof.md)
@@ -24,8 +26,9 @@ Start here:
 - [Support](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SUPPORT.md)
 
 The core idea is narrow: a runtime saying `completed` is not enough. VALP
-completion requires dispatch receipts, expected evidence, verification/review,
-approval gates when needed, and a final synthesis that points to proof.
+completion requires automation policy, dispatch receipts, expected evidence,
+verification/review, approval gates when needed, final synthesis, and
+task-local learning feedback that points to proof.
 
 VALP is currently `0.2.0`. It is an open protocol release plus a reference CLI,
 not a hosted production platform.

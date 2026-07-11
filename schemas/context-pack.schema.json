@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Context Pack",
+  "type": "object",
+  "required": ["schema_version", "task_id", "profile", "generated_at", "sources", "items"],
+  "properties": {
+    "schema_version": {
+      "const": "valp-context-pack.v1"
+    },
+    "task_id": {"type": "string"},
+    "profile": {"type": "string"},
+    "loop_layer": {"type": "string"},
+    "generated_at": {"type": "string"},
+    "budget": {
+      "type": "object",
+      "properties": {
+        "target_tokens": {"type": "integer", "minimum": 1},
+        "target_chars": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": true
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref", "reason"],
+        "properties": {
+          "ref": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+          },
+          "reason": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["section", "summary", "evidence_refs"],
+        "properties": {
+          "section": {
+            "type": "string",
+            "enum": [
+              "project",
+              "operator_preferences",
+              "known_pitfalls",
+              "task_scope",
+              "verification",
+              "permission_boundary",
+              "routing_prior"
+            ]
+          },
+          "summary": {"type": "string"},
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+            }
+          },
+          "recipient_agents": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "excluded": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "item": {"type": "string"},
+          "reason": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "privacy_notes": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": true
+}

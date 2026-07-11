@@ -150,6 +150,7 @@ should require review before mutation or ask for explicit approval.
     "loop_layer": "agentic_coding_loop",
     "attention_map": "attention-map.json",
     "context_selection": "context-selection.json",
+    "context_pack": "context-pack.json",
     "mask_list": "mask-list.json",
     "evidence_board": "evidence-board.json",
     "visible_routing": "visible-routing.md"

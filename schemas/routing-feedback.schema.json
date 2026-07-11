@@ -23,7 +23,61 @@
     },
     "lessons": {"type": "array", "items": {"type": "string"}},
     "next_routing_hints": {"type": "array", "items": {"type": "string"}},
+    "worked": {"type": "array", "items": {"type": "string"}},
+    "did_not_work": {"type": "array", "items": {"type": "string"}},
+    "context_gaps": {"type": "array", "items": {"type": "string"}},
+    "learning_feedback_ref": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "rule_change_proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["proposal", "target_layer", "evidence_refs", "disposition"],
+        "properties": {
+          "proposal": {"type": "string"},
+          "target_layer": {
+            "type": "string",
+            "enum": ["protocol", "schema", "audit", "docs", "local_overlay", "skill", "runtime_adapter", "memory", "none"]
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+            }
+          },
+          "disposition": {
+            "type": "string",
+            "enum": ["proposed", "accepted", "merged", "rejected", "deferred", "not_required", "requires_approval"]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
     "privacy_notes": {"type": "array", "items": {"type": "string"}},
     "updated_at": {"type": "string"}
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "result": {"const": "done"}
+        },
+        "required": ["result"]
+      },
+      "then": {
+        "required": ["selected_agents", "actual_evidence", "verification_result", "review_result", "privacy_notes"],
+        "properties": {
+          "selected_agents": {"minItems": 1},
+          "actual_evidence": {"minItems": 1},
+          "verification_result": {"const": "passed"},
+          "review_result": {"const": "passed"},
+          "privacy_notes": {"minItems": 1}
+        }
+      }
+    }
+  ],
+  "additionalProperties": true
 }

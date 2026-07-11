@@ -34,12 +34,15 @@
       "items": {"type": "object"}
     },
     "selected_agent_context_policies": {"type": "object"},
+    "automation_policy": {"type": "object"},
+    "context_pack": {"type": "object"},
     "skill_recommendations": {"type": "object"},
     "visible_attention": {"type": "object"},
     "provider_matrix": {"type": "object"},
     "runtime_task_state_mapping": {"type": "object"},
     "squad_routing": {"type": "object"},
     "routing_feedback_ref": {"type": "string"},
+    "learning_feedback_ref": {"type": "string"},
     "capabilities_missing": {
       "type": "array",
       "items": {"type": "string"}

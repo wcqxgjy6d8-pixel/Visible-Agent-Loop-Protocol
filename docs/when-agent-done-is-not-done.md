@@ -34,7 +34,7 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=7
+Summary: pass=13 warn=0 fail=0 skip=10
 ```
 
 Now copy the task and remove the expected review evidence:
@@ -71,7 +71,7 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=7
+Summary: pass=13 warn=0 fail=0 skip=10
 ```
 
 ## What This Shows

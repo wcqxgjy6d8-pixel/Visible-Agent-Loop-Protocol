@@ -38,8 +38,10 @@ python3 -m json.tool examples/context-policy.json >/dev/null
 python3 -m json.tool examples/routing.json >/dev/null
 python3 -m json.tool examples/trigger-policy.json >/dev/null
 python3 -m json.tool schemas/capabilities.schema.json >/dev/null
+python3 -m json.tool schemas/automation-policy.schema.json >/dev/null
 python3 -m json.tool schemas/local-overlay.schema.json >/dev/null
 python3 -m json.tool schemas/routing-feedback.schema.json >/dev/null
+python3 -m json.tool schemas/learning-feedback.schema.json >/dev/null
 python3 -m json.tool schemas/state.schema.json >/dev/null
 python3 -m json.tool schemas/routing.schema.json >/dev/null
 python3 -m json.tool schemas/receipts.schema.json >/dev/null
@@ -47,6 +49,7 @@ python3 -m json.tool schemas/evidence-status.schema.json >/dev/null
 python3 -m json.tool schemas/skill-recommendations.schema.json >/dev/null
 python3 -m json.tool schemas/trigger-policy.schema.json >/dev/null
 python3 -m json.tool schemas/attention-map.schema.json >/dev/null
+python3 -m json.tool schemas/context-pack.schema.json >/dev/null
 python3 -m json.tool schemas/context-selection.schema.json >/dev/null
 python3 -m json.tool schemas/correction-cycle.schema.json >/dev/null
 python3 -m json.tool schemas/mask-list.schema.json >/dev/null

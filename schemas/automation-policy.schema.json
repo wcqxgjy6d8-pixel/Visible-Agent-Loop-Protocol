@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Automation Policy",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "task_id",
+    "mode",
+    "risk_classification",
+    "selected_action",
+    "approval_required",
+    "audit_grade",
+    "stop_conditions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "valp-automation-policy.v1"
+    },
+    "task_id": {"type": "string"},
+    "mode": {
+      "type": "string",
+      "enum": ["manual", "policy_auto", "watcher", "runtime_auto", "disabled"]
+    },
+    "trigger_policy_ref": {
+      "type": ["string", "null"],
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "risk_classification": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "unknown"]
+    },
+    "selected_action": {
+      "type": "string",
+      "enum": [
+        "no_valp",
+        "publish_only",
+        "publish_and_route",
+        "publish_route_and_dispatch",
+        "continue_until_gate",
+        "block_for_approval"
+      ]
+    },
+    "approval_required": {"type": "boolean"},
+    "approval_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+      }
+    },
+    "allowed_automatic_phases": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "blocked_automatic_phases": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "audit_grade": {
+      "type": "string",
+      "enum": ["demo", "local", "runtime", "public-proof"]
+    },
+    "basis": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "ref", "summary"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["trigger", "risk", "runtime", "approval", "context", "operator_policy", "task"]
+          },
+          "ref": {"type": "string"},
+          "summary": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "stop_conditions": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "notes": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": true
+}

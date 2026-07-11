@@ -77,6 +77,8 @@ Routing writes:
 ```text
 <workspace>/.herdr-loop/tasks/<task-id>/routing.json
 <workspace>/.herdr-loop/tasks/<task-id>/trigger-policy.json, when Auto Visible Mode is used
+<workspace>/.herdr-loop/tasks/<task-id>/automation-policy.json
+<workspace>/.herdr-loop/tasks/<task-id>/context-pack.json
 <workspace>/.herdr-loop/tasks/<task-id>/skill-recommendations.json
 <workspace>/.herdr-loop/tasks/<task-id>/agents/<agent>/dispatch.md
 <workspace>/.herdr-loop/tasks/<task-id>/dispatch-receipts.jsonl
@@ -175,13 +177,16 @@ folder are not completion evidence.
 task.md
 state.json
 routing.json
+automation-policy.json
 attention-map.json
 context-selection.json
+context-pack.json
 mask-list.json
 evidence-board.json
 visible-routing.md
 dispatch-receipts.jsonl
 routing-feedback.json
+learning-feedback.json
 agents/<agent>/...
 evidence/...
 agent-recommendations.json
@@ -282,6 +287,8 @@ The command maps the Done Criteria into these audit items:
 | `provider_matrix` | provider matrix fields needed for the task are recorded |
 | `runtime_preflight` | Full Mode runtime preflight is recorded and selected agents have no failing checks |
 | `routing_confidence` | routing confidence, missing capabilities, and relevant rejected candidates are recorded |
+| `automation_policy` | automation policy records allowed automatic phases, stop conditions, approval behavior, and audit grade |
+| `context_pack` | context pack records compact visible worker context with safe evidence refs |
 | `skill_recommendations` | skill recommendation backend result is recorded when available |
 | `squad_routing` | squad routing evidence is recorded when a squad is used |
 | `dispatch_receipts` | dispatch receipts satisfy the required gates; Full/Remote Mode completions require prior runtime submission proof |
@@ -294,13 +301,14 @@ The command maps the Done Criteria into these audit items:
 | `approvals` | approvals are resolved, including task-local approval ledgers |
 | `final_synthesis` | final synthesis records decisions, disagreements, evidence gaps, and result |
 | `routing_feedback` | feedback record is written for non-trivial tasks when supported |
+| `learning_feedback` | evidence-backed learning observations and proposed updates are recorded |
 
 ## Example Output
 
 ```text
 VALP audit: PASS
 Task: /path/to/Visible-Agent-Loop-Protocol/examples/full-mode-task
-Summary: pass=19 warn=0 fail=0 skip=1
+Summary: pass=22 warn=0 fail=0 skip=1
 ```
 
 The example has one skip because it does not use squad routing.

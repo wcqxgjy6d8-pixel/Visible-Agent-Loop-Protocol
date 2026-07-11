@@ -31,10 +31,13 @@
     "provider_matrix": {"type": "object"},
     "squad_routing": {"type": "object"},
     "context_policies": {"type": "object"},
+    "automation_policy": {"type": "object"},
+    "context_pack": {"type": "object"},
     "skill_recommendations": {"type": "object"},
     "visible_attention": {"type": "object"},
     "routing_confidence": {"type": "object"},
     "routing_feedback": {"type": "object"},
+    "learning_feedback": {"type": "object"},
     "gates": {"type": "object"},
     "approval_required": {"type": "array"},
     "updated_at": {"type": "string"}

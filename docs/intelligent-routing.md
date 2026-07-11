@@ -126,6 +126,7 @@ Routing must not become a black box. For non-trivial tasks, publish should write
 ```text
 attention-map.json
 context-selection.json
+context-pack.json
 mask-list.json
 evidence-board.json
 visible-routing.md
@@ -133,4 +134,5 @@ visible-routing.md
 
 `visible-routing.md` is the human-readable summary that should be printed in the
 runtime frontend. It explains which attention heads were selected, which context
-was selected, which inputs were masked, and what evidence is required next.
+was selected, what compact context pack is given to workers, which inputs were
+masked, and what evidence is required next.

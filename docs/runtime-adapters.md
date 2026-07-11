@@ -91,6 +91,7 @@ Trigger adapters should write:
 
 ```text
 <task>/trigger-policy.json
+<task>/automation-policy.json
 ```
 
 Watcher support is optional. A runtime that cannot export trigger evidence is

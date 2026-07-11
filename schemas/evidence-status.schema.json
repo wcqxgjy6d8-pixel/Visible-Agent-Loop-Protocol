@@ -17,6 +17,13 @@
             "enum": ["valid", "superseded", "invalid", "rejected", "blocked"]
           },
           "reason": {"type": "string"},
+          "supporting_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+            }
+          },
           "superseded_by": {"type": "string"},
           "updated_at": {"type": "string"}
         }

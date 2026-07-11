@@ -10,8 +10,9 @@ Agent says done. VALP asks for proof.
 ![VALP audit demo: PASS to FAIL to PASS](docs/assets/valp-audit-demo.svg)
 
 VALP is an open protocol and reference CLI for visible, evidence-backed
-multi-agent automation. It catches false completion by checking dispatch
-receipts, expected evidence, review/approval gates, and final synthesis.
+autonomous and multi-agent work. It catches false completion by checking
+automation policy, dispatch receipts, expected evidence, review/approval gates,
+final synthesis, and task-local learning feedback.
 
 Try the smallest audit path:
 
@@ -47,8 +48,9 @@ What this repository proves today:
 
 - schemas, unit tests, and bundled examples pass `scripts/verify-examples.sh`;
 - CI runs the repository smoke check on Linux, macOS, and Windows runners;
-- `valp audit` enforces receipt, evidence, review, agent-recommendation,
-  approval, and final synthesis gates for the included task folders;
+- `valp audit` enforces receipt, evidence, automation-policy, context-pack,
+  review, agent-recommendation, approval, learning-feedback, and final
+  synthesis gates for the included task folders;
 - a short [visible dispatch process proof](docs/case-studies/visible-dispatch-process-proof.md)
   shows a real VALP/HERDR publish-and-dispatch run.
 
@@ -94,6 +96,7 @@ Choose the path that matches why you are here:
 | Goal | Start here | Runtime required? |
 |---|---|---|
 | Understand the protocol | Read [SPEC.md](SPEC.md) and audit `examples/minimal-task/` | No |
+| Understand the automation and learning principles | Read [Compound Learning Loop](docs/compound-learning-loop.md) | No |
 | See the shortest public demo | Read [When Agent "Done" Is Not Done](docs/when-agent-done-is-not-done.md) | No |
 | Watch live dispatch process proof | Watch the [visible dispatch process proof](docs/case-studies/visible-dispatch-process-proof.md) | No |
 | Try automated multi-agent work | Install HERDR, the current reference runtime | Yes |
@@ -151,7 +154,7 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=7
+Summary: pass=13 warn=0 fail=0 skip=10
 ```
 
 To see the audit fail when expected evidence is removed, run the
@@ -190,7 +193,8 @@ bin/valp dispatch TASK-001 --workspace /path/to/workspace
 
 `publish` only creates and routes the task. It is not a completion signal. A
 new task will not pass `valp audit` until dispatch receipts, expected evidence,
-verification/review status, and final synthesis are recorded.
+verification/review status, final synthesis, and required feedback records are
+recorded.
 
 For Full Mode claims, completed receipts must be backed by actual runtime
 submission proof for each selected agent. Dry-run dispatch output, local
@@ -201,7 +205,8 @@ Generated dispatches are concise worker assignments. The coordinator or leader
 is responsible for sending the short task brief, role, boundaries, expected
 evidence, visible attention slice, and refs to full task evidence. Long context,
 full task history, and detailed skill recommendation records should stay in
-task-local files such as `task.md` and `skill-recommendations.json`.
+task-local files such as `task.md`, `context-pack.json`, and
+`skill-recommendations.json`.
 
 Auto Visible Mode is the opt-in version of this entry path: a local policy or
 runtime watcher can decide that a user request should publish a VALP task
@@ -336,10 +341,10 @@ The repository includes four self-verifying task examples:
 
 | Example | What it proves | Expected audit |
 |---|---|---|
-| `examples/minimal-task/` | Manual Mode evidence can be audited without a runtime | `PASS`, `pass=13 warn=0 fail=0 skip=7` |
-| `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, correction-cycle, recommendation, review, and final synthesis audit gates | `PASS`, `pass=19 warn=0 fail=0 skip=1` |
-| `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=18 warn=0 fail=0 skip=2` |
-| `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=14 warn=0 fail=0 skip=6` |
+| `examples/minimal-task/` | Manual Mode evidence can be audited without a runtime | `PASS`, `pass=13 warn=0 fail=0 skip=10` |
+| `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, correction-cycle, recommendation, review, and final synthesis audit gates | `PASS`, `pass=22 warn=0 fail=0 skip=1` |
+| `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=21 warn=0 fail=0 skip=2` |
+| `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=14 warn=0 fail=0 skip=9` |
 | `docs/case-studies/visible-dispatch-process-proof.md` | Short public video of a real VALP/HERDR publish-and-dispatch process; not a standalone Full Mode completion case study | Process proof only |
 
 Run the complete smoke check:
@@ -526,15 +531,19 @@ Visible-Agent-Loop-Protocol/
     skill-recommendations.schema.json
     agent-recommendations.schema.json
     trigger-policy.schema.json
+    automation-policy.schema.json
     attention-map.schema.json
     context-selection.schema.json
+    context-pack.schema.json
     mask-list.schema.json
     evidence-board.schema.json
+    learning-feedback.schema.json
   examples/
     task-folder-tree.md
     context-policy.json
     routing.json
     trigger-policy.json
+    automation-policy.json
     dispatch.md
     minimal-task/
     full-mode-task/

@@ -54,6 +54,9 @@ class TaskAudit:
         self.state = self._load_json("state.json")
         self.routing = self._load_json("routing.json")
         self.feedback = self._load_json("routing-feedback.json")
+        self.automation_policy = self._load_json("automation-policy.json")
+        self.context_pack = self._load_json("context-pack.json")
+        self.learning_feedback = self._load_json("learning-feedback.json")
         self.evidence_status = self._load_json("evidence-status.json")
         self.skill_recommendations = self._load_json("skill-recommendations.json")
         self.agent_recommendations = self._load_json("agent-recommendations.json")
@@ -79,7 +82,9 @@ class TaskAudit:
             self.check_provider_matrix(),
             self.check_runtime_preflight(),
             self.check_routing_confidence(),
+            self.check_automation_policy(),
             self.check_visible_attention(),
+            self.check_context_pack(),
             self.check_skill_recommendations(),
             self.check_squad_routing(),
             self.check_dispatch_receipts(),
@@ -92,6 +97,7 @@ class TaskAudit:
             self.check_approvals(),
             self.check_final_synthesis(),
             self.check_routing_feedback(),
+            self.check_learning_feedback(),
         ]
 
         if self.strict:
@@ -253,10 +259,44 @@ class TaskAudit:
             evidence,
         )
 
+    def check_automation_policy(self) -> AuditItem:
+        evidence = self._existing(["automation-policy.json", "routing.json", "state.json"])
+        runtime = self.routing.get("runtime_adapter") or self.state.get("runtime_adapter") or {}
+        declared = self.routing.get("automation_policy") or self.state.get("automation_policy") or self.automation_policy
+        required = bool(declared) or runtime.get("class") != "manual"
+        if not required:
+            return self._skip("automation_policy", "Automation policy records automatic progress and stop conditions", "Manual task without automation policy requirement", evidence)
+        if not self.automation_policy:
+            return self._fail("automation_policy", "Automation policy records automatic progress and stop conditions", "Missing automation-policy.json", evidence)
+        if self.automation_policy.get("schema_version") != "valp-automation-policy.v1":
+            return self._fail("automation_policy", "Automation policy records automatic progress and stop conditions", "automation-policy.json has wrong or missing schema_version", evidence)
+        missing = [
+            key
+            for key in ["mode", "risk_classification", "selected_action", "audit_grade", "stop_conditions"]
+            if not self.automation_policy.get(key)
+        ]
+        if missing:
+            return self._fail("automation_policy", "Automation policy records automatic progress and stop conditions", "Missing automation policy fields: " + ", ".join(missing), evidence)
+        if (
+            self.automation_policy.get("approval_required")
+            and self.automation_policy.get("selected_action") != "block_for_approval"
+            and not self._approval_ledger_result()["approved"]
+        ):
+            return self._fail("automation_policy", "Automation policy records automatic progress and stop conditions", "Approval-required automation must select block_for_approval until approval evidence exists", evidence)
+        if not isinstance(self.automation_policy.get("stop_conditions"), list) or not self.automation_policy.get("stop_conditions"):
+            return self._fail("automation_policy", "Automation policy records automatic progress and stop conditions", "Automation policy needs stop_conditions", evidence)
+        return self._pass(
+            "automation_policy",
+            "Automation policy records automatic progress and stop conditions",
+            f"Automation action: {self.automation_policy.get('selected_action')}; audit grade: {self.automation_policy.get('audit_grade')}",
+            evidence,
+        )
+
     def check_visible_attention(self) -> AuditItem:
         required_refs = [
             "attention-map.json",
             "context-selection.json",
+            "context-pack.json",
             "mask-list.json",
             "evidence-board.json",
             "visible-routing.md",
@@ -294,6 +334,39 @@ class TaskAudit:
             f"Loop layer: {self.attention_map.get('loop_layer')}",
             evidence,
         )
+
+    def check_context_pack(self) -> AuditItem:
+        evidence = self._existing(["context-pack.json", "context-selection.json", "routing.json", "state.json"])
+        required = self._agent_recommendations_required() or bool(self.routing.get("context_pack") or self.state.get("context_pack") or self.context_pack)
+        if not required:
+            return self._skip("context_pack", "Context pack records compact visible worker context", "Simple task without context pack requirement", evidence)
+        if not self.context_pack:
+            return self._fail("context_pack", "Context pack records compact visible worker context", "Missing context-pack.json", evidence)
+        if self.context_pack.get("schema_version") != "valp-context-pack.v1":
+            return self._fail("context_pack", "Context pack records compact visible worker context", "context-pack.json has wrong or missing schema_version", evidence)
+        items = self.context_pack.get("items")
+        if not isinstance(items, list) or not items:
+            return self._fail("context_pack", "Context pack records compact visible worker context", "context-pack.json has no items", evidence)
+        sections = {str(item.get("section")) for item in items if isinstance(item, dict)}
+        missing_sections = [section for section in ["task_scope", "verification", "permission_boundary"] if section not in sections]
+        if missing_sections:
+            return self._fail("context_pack", "Context pack records compact visible worker context", "Context pack missing sections: " + ", ".join(missing_sections), evidence)
+        unsafe_refs: list[str] = []
+        missing_refs: list[str] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for ref in item.get("evidence_refs") or []:
+                ref = str(ref)
+                if not self._is_safe_task_ref(ref):
+                    unsafe_refs.append(ref)
+                elif not self._ref_exists(ref) and not self._workspace_ref_exists(ref):
+                    missing_refs.append(ref)
+        if unsafe_refs:
+            return self._fail("context_pack", "Context pack records compact visible worker context", "Context pack refs must be safe paths: " + ", ".join(unsafe_refs[:5]), evidence)
+        if missing_refs:
+            return self._fail("context_pack", "Context pack records compact visible worker context", "Context pack refs are missing: " + ", ".join(missing_refs[:5]), evidence)
+        return self._pass("context_pack", "Context pack records compact visible worker context", f"Context pack sections: {len(items)}", evidence)
 
     def check_skill_recommendations(self) -> AuditItem:
         evidence = self._existing(["routing.json", "skill-recommendations.json", "state.json"])
@@ -757,8 +830,89 @@ class TaskAudit:
             return self._skip("routing_feedback", "Feedback record is written for non-trivial tasks when supported", "No routing feedback support declared", evidence)
         ref = feedback_ref or feedback_state.get("ref") or "routing-feedback.json"
         if (self.task_dir / ref).exists() or self.feedback:
-            return self._pass("routing_feedback", "Feedback record is written for non-trivial tasks when supported", "Routing feedback exists", evidence)
+            if self.feedback.get("schema_version") != "valp-routing-feedback.v1":
+                return self._fail("routing_feedback", "Feedback record is written for non-trivial tasks when supported", "routing-feedback.json has wrong or missing schema_version", evidence)
+            missing = [key for key in ["task_id", "profile", "result", "updated_at"] if not self.feedback.get(key)]
+            if missing:
+                return self._fail("routing_feedback", "Feedback record is written for non-trivial tasks when supported", "Routing feedback missing fields: " + ", ".join(missing), evidence)
+            if self._agent_recommendations_required():
+                quality_missing = [
+                    key
+                    for key in ["selected_agents", "expected_evidence", "actual_evidence", "lessons", "next_routing_hints", "privacy_notes"]
+                    if not self.feedback.get(key)
+                ]
+                if quality_missing:
+                    return self._fail("routing_feedback", "Feedback record is written for non-trivial tasks when supported", "Routing feedback missing learning fields: " + ", ".join(quality_missing), evidence)
+            if self.feedback.get("result") == "done":
+                if self.feedback.get("verification_result") != "passed" or self.feedback.get("review_result") != "passed":
+                    return self._fail(
+                        "routing_feedback",
+                        "Feedback record is written for non-trivial tasks when supported",
+                        "Done routing feedback requires passed verification_result and review_result",
+                        evidence,
+                    )
+                actual_evidence = self.feedback.get("actual_evidence") or []
+                if not isinstance(actual_evidence, list) or not actual_evidence:
+                    return self._fail(
+                        "routing_feedback",
+                        "Feedback record is written for non-trivial tasks when supported",
+                        "Done routing feedback requires actual_evidence refs",
+                        evidence,
+                    )
+                unsafe_refs = [str(ref) for ref in actual_evidence if not self._is_safe_task_ref(str(ref))]
+                if unsafe_refs:
+                    return self._fail(
+                        "routing_feedback",
+                        "Feedback record is written for non-trivial tasks when supported",
+                        "Routing feedback evidence refs must be task-relative safe paths: " + ", ".join(unsafe_refs[:5]),
+                        evidence,
+                    )
+                missing_refs = [str(ref) for ref in actual_evidence if not self._task_local_ref_exists(str(ref))]
+                if missing_refs:
+                    return self._fail(
+                        "routing_feedback",
+                        "Feedback record is written for non-trivial tasks when supported",
+                        "Routing feedback evidence refs are missing: " + ", ".join(missing_refs[:5]),
+                        evidence,
+                    )
+            return self._pass("routing_feedback", "Feedback record is written for non-trivial tasks when supported", "Routing feedback exists with required fields", evidence)
         return self._fail("routing_feedback", "Feedback record is written for non-trivial tasks when supported", f"Missing routing feedback ref: {ref}", evidence)
+
+    def check_learning_feedback(self) -> AuditItem:
+        evidence = self._existing(["learning-feedback.json", "routing-feedback.json", "routing.json", "state.json"])
+        declared = self.routing.get("learning_feedback_ref") or (self.state.get("learning_feedback") or {}).get("ref") or self.learning_feedback
+        required = self._agent_recommendations_required() and bool(declared or self.feedback)
+        if not required:
+            return self._skip("learning_feedback", "Learning feedback records evidence-backed future improvements", "No learning feedback requirement for this task", evidence)
+        ref = self.routing.get("learning_feedback_ref") or (self.state.get("learning_feedback") or {}).get("ref") or "learning-feedback.json"
+        if not self.learning_feedback:
+            return self._fail("learning_feedback", "Learning feedback records evidence-backed future improvements", f"Missing learning feedback ref: {ref}", evidence)
+        if self.learning_feedback.get("schema_version") != "valp-learning-feedback.v1":
+            return self._fail("learning_feedback", "Learning feedback records evidence-backed future improvements", "learning-feedback.json has wrong or missing schema_version", evidence)
+        learning_items = self.learning_feedback.get("learning_items")
+        proposed_updates = self.learning_feedback.get("proposed_updates")
+        if not isinstance(learning_items, list) or not learning_items:
+            return self._fail("learning_feedback", "Learning feedback records evidence-backed future improvements", "learning-feedback.json has no learning_items", evidence)
+        if not isinstance(proposed_updates, list):
+            return self._fail("learning_feedback", "Learning feedback records evidence-backed future improvements", "learning-feedback.json proposed_updates must be a list", evidence)
+        unsafe_refs: list[str] = []
+        missing_refs: list[str] = []
+        for item in [*learning_items, *proposed_updates]:
+            if not isinstance(item, dict):
+                continue
+            for ref in item.get("evidence_refs") or []:
+                ref = str(ref)
+                if not self._is_safe_task_ref(ref):
+                    unsafe_refs.append(ref)
+                elif not self._ref_exists(ref):
+                    missing_refs.append(ref)
+        if unsafe_refs:
+            return self._fail("learning_feedback", "Learning feedback records evidence-backed future improvements", "Learning feedback refs must be safe paths: " + ", ".join(unsafe_refs[:5]), evidence)
+        if missing_refs:
+            return self._fail("learning_feedback", "Learning feedback records evidence-backed future improvements", "Learning feedback refs are missing: " + ", ".join(missing_refs[:5]), evidence)
+        if not self.learning_feedback.get("privacy_notes"):
+            return self._fail("learning_feedback", "Learning feedback records evidence-backed future improvements", "Learning feedback needs privacy_notes", evidence)
+        return self._pass("learning_feedback", "Learning feedback records evidence-backed future improvements", f"Learning items: {len(learning_items)}", evidence)
 
     def _selected_agents(self) -> list[str]:
         agents = self.routing.get("selected_agents") or self.state.get("selected_agents") or []
@@ -880,7 +1034,7 @@ class TaskAudit:
             )
             if not claim_found:
                 continue
-            if self._has_concrete_claim_evidence(text):
+            if self._has_concrete_claim_evidence(text) or self._claim_has_status_support(path):
                 continue
             unsupported.append(f"{path.relative_to(self.task_dir)}")
         return unsupported
@@ -929,20 +1083,87 @@ class TaskAudit:
             ref = candidate.strip().strip(".,;:)")
             if not self._is_safe_task_ref(ref):
                 continue
-            if (self.task_dir / ref).exists():
-                return True
+            try:
+                if (self.task_dir / ref).exists():
+                    return True
+            except OSError:
+                continue
         return False
 
     def _is_safe_task_ref(self, ref: str) -> bool:
         if not isinstance(ref, str):
             return False
         ref = ref.strip()
-        if not ref or ref.startswith("/") or "\\" in ref:
+        if not ref or ref.startswith("/") or "\\" in ref or "\n" in ref or "\r" in ref:
             return False
         path = PurePosixPath(ref)
         if path.is_absolute():
             return False
         return ".." not in path.parts
+
+    def _ref_exists(self, ref: str) -> bool:
+        if not self._is_safe_task_ref(ref):
+            return False
+        task_relative = self.task_dir / ref
+        try:
+            if task_relative.exists():
+                return True
+        except OSError:
+            return False
+        if ref.startswith(".herdr-loop/tasks/") and self.task_dir.parent.name == "tasks" and self.task_dir.parent.parent.name == ".herdr-loop":
+            workspace_root = self.task_dir.parent.parent.parent
+            try:
+                return (workspace_root / ref).exists()
+            except OSError:
+                return False
+        return False
+
+    def _workspace_ref_exists(self, ref: str) -> bool:
+        if not self._is_safe_task_ref(ref):
+            return False
+        if self.task_dir.parent.name != "tasks" or self.task_dir.parent.parent.name != ".herdr-loop":
+            return False
+        workspace_root = self.task_dir.parent.parent.parent.resolve()
+        try:
+            candidate = (workspace_root / ref).resolve()
+            candidate.relative_to(workspace_root)
+        except (OSError, ValueError):
+            return False
+        return candidate.exists()
+
+    def _task_local_ref_exists(self, ref: str) -> bool:
+        if not self._is_safe_task_ref(ref):
+            return False
+        try:
+            candidate = (self.task_dir / ref).resolve()
+            candidate.relative_to(self.task_dir.resolve())
+        except (OSError, ValueError):
+            return False
+        return candidate.exists()
+
+    def _claim_has_status_support(self, path: Path) -> bool:
+        records = self.evidence_status.get("evidence") or self.evidence_status.get("items") or {}
+        if not isinstance(records, dict):
+            return False
+        ref = path.relative_to(self.task_dir).as_posix()
+        record = records.get(ref)
+        if not isinstance(record, dict) or record.get("status") != "valid":
+            return False
+        supporting_refs = record.get("supporting_refs") or []
+        if not isinstance(supporting_refs, list):
+            return False
+        for supporting_ref in supporting_refs:
+            supporting_ref = str(supporting_ref)
+            if supporting_ref == ref or not self._task_local_ref_exists(supporting_ref):
+                continue
+            supporting_path = self.task_dir / supporting_ref
+            try:
+                supporting_text = supporting_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if self._has_concrete_claim_evidence(supporting_text):
+                return True
+        return False
 
     def _approval_ledger_result(self) -> dict[str, list[str]]:
         decisions_by_key: dict[str, list[dict[str, Any]]] = {}

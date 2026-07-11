@@ -47,5 +47,6 @@
   "context_selection_ref": "context-selection.json",
   "mask_list_ref": "mask-list.json",
   "evidence_board_ref": "evidence-board.json",
-  "visible_summary_ref": "visible-routing.md"
+  "visible_summary_ref": "visible-routing.md",
+  "context_pack_ref": "context-pack.json"
 }

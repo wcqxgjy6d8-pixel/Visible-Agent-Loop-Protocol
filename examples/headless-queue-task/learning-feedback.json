@@ -1,0 +1,46 @@
+{
+  "schema_version": "valp-learning-feedback.v1",
+  "task_id": "TASK-QUEUE-001",
+  "profile": "software-code",
+  "result": "done",
+  "routing_feedback_ref": "routing-feedback.json",
+  "learning_items": [
+    {
+      "kind": "routing",
+      "observation": "Implementation and read-only review should remain separate evidence roles for this software-code profile.",
+      "evidence_refs": [
+        "routing.json",
+        "agents/codex/evidence.md",
+        "agents/claude/review.md"
+      ],
+      "confidence": "high",
+      "next_effect": "Use this as a prior for similar tasks only after fresh runtime, tool, context, and permission scans."
+    },
+    {
+      "kind": "context",
+      "observation": "A compact context pack can give workers task scope, verification expectations, and permission boundaries without copying a full transcript.",
+      "evidence_refs": [
+        "context-pack.json",
+        "visible-routing.md"
+      ],
+      "confidence": "high",
+      "next_effect": "Include context-pack refs in future dispatches for non-trivial routed tasks."
+    }
+  ],
+  "proposed_updates": [
+    {
+      "target_layer": "none",
+      "proposal": "No protocol, schema, local overlay, skill, runtime adapter, or memory update is required by this example beyond the recorded fixtures.",
+      "evidence_refs": [
+        "routing-feedback.json"
+      ],
+      "disposition": "not_required",
+      "approval_required": false,
+      "owner": "coordinator"
+    }
+  ],
+  "privacy_notes": [
+    "Learning feedback stores evidence refs and short summaries only; no secrets or hidden conversations are copied."
+  ],
+  "updated_at": "2026-07-03T00:00:00Z"
+}

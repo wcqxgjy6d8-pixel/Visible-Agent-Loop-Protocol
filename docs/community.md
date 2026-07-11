@@ -79,6 +79,8 @@ For broad ideas, use GitHub Discussions. Use the RFC template when the proposal
 changes protocol semantics, evidence contracts, schemas, adapter requirements,
 or governance. For concrete bugs or scoped changes, open an issue. For code or
 doc changes, open a pull request and include the verification command you ran.
+Maintainer changes follow the same PR trail; see
+[Maintainer Governance](maintainer-governance.md).
 
 ## Ground Rules
 

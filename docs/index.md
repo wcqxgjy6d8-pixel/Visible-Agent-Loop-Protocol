@@ -20,6 +20,7 @@ Start here:
 - [Runtime adapter checklist](adapter-checklist.md)
 - [Runtime adapters](runtime-adapters.md)
 - [Community](community.md)
+- [Maintainer governance](maintainer-governance.md)
 - [Support](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SUPPORT.md)
 
 The core idea is narrow: a runtime saying `completed` is not enough. VALP

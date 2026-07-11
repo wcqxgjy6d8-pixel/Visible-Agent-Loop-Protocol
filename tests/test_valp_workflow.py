@@ -113,6 +113,10 @@ class ValpWorkflowTests(unittest.TestCase):
             classify_approval_risks("Use strict character/token budgets for compact dispatch context."),
             [],
         )
+        self.assertEqual(
+            classify_approval_risks("Keep zero-token routing and token-efficient dispatches."),
+            [],
+        )
         auth_kinds = {item["kind"] for item in classify_approval_risks("Rotate the auth token.")}
         self.assertIn("auth", auth_kinds)
         standalone_kinds = {item["kind"] for item in classify_approval_risks("Revoke the access token.")}

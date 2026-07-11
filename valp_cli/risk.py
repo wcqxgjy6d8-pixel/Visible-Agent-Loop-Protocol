@@ -87,6 +87,8 @@ def _is_model_token_context(window: str) -> bool:
         return False
     return bool(
         re.search(r"\b(llm|model|prompt|context|input|output|billing)\s+token\b", window)
+        or re.search(r"\bzero[- ]token\b", window)
+        or re.search(r"\btoken[- ](efficient|efficiency|saving|budgeted)\b", window)
         or re.search(
             r"\btoken\s+(consumption|budgets?|counts?|usage|costs?|limits?|window|efficiency|saving|spend)\b",
             window,

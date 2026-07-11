@@ -10,7 +10,10 @@
     "task_id": {"type": "string"},
     "profile": {"type": "string"},
     "loop_layer": {"type": "string"},
-    "status": {"type": "string"},
+    "status": {
+      "type": "string",
+      "description": "Includes the non-terminal suspended state when a runtime pauses coordinator model turns."
+    },
     "risk": {"type": "object"},
     "selected_agents": {
       "type": "array",
@@ -33,6 +36,44 @@
     "context_policies": {"type": "object"},
     "automation_policy": {"type": "object"},
     "context_pack": {"type": "object"},
+    "dispatch_payload_budgets": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/dispatchPayloadBudget"}
+    },
+    "suspension": {
+      "type": "object",
+      "required": [
+        "status",
+        "entered_at",
+        "deadline_at",
+        "waiting_for_agents",
+        "receipt_count_at_entry",
+        "allowed_resume_events"
+      ],
+      "properties": {
+        "status": {"enum": ["waiting", "resumed"]},
+        "entered_at": {"type": "string"},
+        "deadline_at": {"type": "string"},
+        "waiting_for_agents": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string"}
+        },
+        "receipt_count_at_entry": {"type": "integer", "minimum": 0},
+        "allowed_resume_events": {
+          "type": "array",
+          "items": {
+            "enum": ["receipt", "timeout", "runtime_failure", "cancellation", "user_input"]
+          }
+        },
+        "resume_event": {
+          "enum": ["receipt", "timeout", "runtime_failure", "cancellation", "user_input"]
+        },
+        "resumed_at": {"type": "string"},
+        "resume_ref": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
     "skill_recommendations": {"type": "object"},
     "visible_attention": {"type": "object"},
     "routing_confidence": {"type": "object"},
@@ -41,5 +82,21 @@
     "gates": {"type": "object"},
     "approval_required": {"type": "array"},
     "updated_at": {"type": "string"}
+  },
+  "$defs": {
+    "dispatchPayloadBudget": {
+      "type": "object",
+      "required": ["role", "max_chars", "max_reference_tokens", "token_estimator"],
+      "properties": {
+        "role": {"enum": ["coordinator", "implementer", "reviewer", "prototype", "researcher", "other"]},
+        "max_chars": {"type": "integer", "minimum": 1},
+        "max_reference_tokens": {"type": "integer", "minimum": 1},
+        "token_estimator": {"const": "ceil(chars/4)"},
+        "actual_chars": {"type": "integer", "minimum": 1},
+        "actual_reference_tokens": {"type": "integer", "minimum": 1},
+        "dispatch_ref": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
   }
 }

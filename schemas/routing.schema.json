@@ -36,6 +36,23 @@
     "selected_agent_context_policies": {"type": "object"},
     "automation_policy": {"type": "object"},
     "context_pack": {"type": "object"},
+    "dispatch_payload_budgets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["role", "max_chars", "max_reference_tokens", "token_estimator", "actual_chars", "actual_reference_tokens", "dispatch_ref"],
+        "properties": {
+          "role": {"enum": ["coordinator", "implementer", "reviewer", "prototype", "researcher", "other"]},
+          "max_chars": {"type": "integer", "minimum": 1},
+          "max_reference_tokens": {"type": "integer", "minimum": 1},
+          "token_estimator": {"const": "ceil(chars/4)"},
+          "actual_chars": {"type": "integer", "minimum": 1},
+          "actual_reference_tokens": {"type": "integer", "minimum": 1},
+          "dispatch_ref": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
     "skill_recommendations": {"type": "object"},
     "visible_attention": {"type": "object"},
     "provider_matrix": {"type": "object"},

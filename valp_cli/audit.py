@@ -139,6 +139,14 @@ class TaskAudit:
             return self._fail("runtime_adapter", "Runtime adapter and task state mapping are recorded", "Missing runtime_adapter", evidence)
         if not mapping:
             return self._fail("runtime_adapter", "Runtime adapter and task state mapping are recorded", "Missing runtime_task_state_mapping", evidence)
+        suspension = self.state.get("suspension") or {}
+        if self.state.get("status") == "suspended" or suspension.get("status") == "waiting":
+            return self._fail(
+                "runtime_adapter",
+                "Runtime adapter and task state mapping are recorded",
+                "Task is suspended and cannot satisfy completion audit",
+                evidence,
+            )
         return self._pass("runtime_adapter", "Runtime adapter and task state mapping are recorded", "Runtime adapter and state mapping found", evidence)
 
     def check_local_overlay(self) -> AuditItem:
@@ -366,6 +374,28 @@ class TaskAudit:
             return self._fail("context_pack", "Context pack records compact visible worker context", "Context pack refs must be safe paths: " + ", ".join(unsafe_refs[:5]), evidence)
         if missing_refs:
             return self._fail("context_pack", "Context pack records compact visible worker context", "Context pack refs are missing: " + ", ".join(missing_refs[:5]), evidence)
+        payload_budgets = self.routing.get("dispatch_payload_budgets") or self.state.get("dispatch_payload_budgets") or {}
+        for agent, budget in payload_budgets.items():
+            if not isinstance(budget, dict):
+                return self._fail("context_pack", "Context pack records compact visible worker context", f"Invalid dispatch payload budget for {agent}", evidence)
+            dispatch_ref = str(budget.get("dispatch_ref") or "")
+            if not dispatch_ref or not self._is_safe_task_ref(dispatch_ref) or not self._ref_exists(dispatch_ref):
+                return self._fail("context_pack", "Context pack records compact visible worker context", f"Missing safe dispatch ref for {agent}", evidence)
+            dispatch_text = (self.task_dir / dispatch_ref).read_text(encoding="utf-8")
+            actual_chars = len(dispatch_text)
+            actual_reference_tokens = (actual_chars + 3) // 4
+            if (
+                actual_chars > int(budget.get("max_chars") or 0)
+                or actual_reference_tokens > int(budget.get("max_reference_tokens") or 0)
+                or actual_chars != int(budget.get("actual_chars") or 0)
+                or actual_reference_tokens != int(budget.get("actual_reference_tokens") or 0)
+            ):
+                return self._fail(
+                    "context_pack",
+                    "Context pack records compact visible worker context",
+                    f"Dispatch payload budget mismatch for {agent}: chars={actual_chars}, reference_tokens={actual_reference_tokens}",
+                    evidence,
+                )
         return self._pass("context_pack", "Context pack records compact visible worker context", f"Context pack sections: {len(items)}", evidence)
 
     def check_skill_recommendations(self) -> AuditItem:

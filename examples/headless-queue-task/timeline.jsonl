@@ -1,0 +1,2 @@
+{"ts":"2026-07-03T00:00:03Z","event":"coordinator_suspended","summary":"Coordinator model turns suspended while workers run","waiting_for_agents":["codex"],"deadline_at":"2026-07-03T00:05:03Z"}
+{"ts":"2026-07-03T00:04:00Z","event":"coordinator_resumed","summary":"Coordinator resumed from receipt","resume_event":"receipt","resume_ref":"dispatch-receipts.jsonl#3"}

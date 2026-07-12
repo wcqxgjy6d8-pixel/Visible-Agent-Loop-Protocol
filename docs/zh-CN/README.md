@@ -26,6 +26,33 @@ VALP 要求任务过程留下可审计的证据：
 
 所以 VALP 更像一个 acceptance system，而不是聊天提示词集合。
 
+## v0.3 提案：从任务验收到安装级控制平面
+
+当前规范、实现和发布版本仍是 `0.2.0`。
+[RFC 0001](../rfcs/0001-v0.3-installation-control-plane.md) 的状态是
+**Proposed**，目标是 `0.3.0-draft`；它不是当前 `SPEC.md` 的规范语义，
+也不代表 schemas、CLI、Runtime adapter 或稳定版本已经实现。
+
+可以把变化理解成：`0.2.0` 主要检查“这个任务凭什么算 Done”，v0.3 提案
+进一步检查“管理所有任务的安装级控制平面凭什么可信”。
+
+| 层面 | 当前 `0.2.0` | v0.3 RFC 提案 |
+|---|---|---|
+| 控制主体 | 每个任务根据当前能力证据选择 coordinator | 用户明确选择 Installation Leader；确定性 core 和 epoch 负责约束与 fencing |
+| 能力真值 | 当前 scan、routing、provider matrix 和 task evidence | 持久 registry 分开记录 `official_claim`、`local_presence`、`live_callable`、`task_verified` |
+| 执行契约 | task receipts、expected evidence、review、approval、audit | 严格 message、event-sourced state、claim-evidence、deterministic failure、exact-artifact review |
+| Provider 边界 | Runtime adapter 导出同等 receipts 和 evidence | Provider plugin 使用 manifest、最小权限和隔离边界，不能直接改协议 core state |
+| 稳定证明 | 仓库测试与 bundled examples；live E2E 仍有公开缺口 | 必须补齐实现、迁移、负面/恢复 conformance，以及真实非 HERDR Full Mode E2E |
+
+这里最重要的不是多几个名词，而是 proof bar：用户选择 Leader 不等于信任
+Leader；发现 CLI、Skill 或 MCP 不等于已经能调用；Runtime completed 仍不等于
+VALP Done；写完 RFC 更不等于功能已经发布。
+
+稳定 `0.3.0` 只有在 RFC 被接受并写入 `SPEC.md`、相关 schemas/reference
+behavior 已实现、重启和迁移等 conformance tests 通过、且真实非 HERDR
+adapter 完成公开脱敏 E2E 后才能成立。请同时查看
+[当前项目状态](../project-status.md)，不要把 proposed target 当成当前证明。
+
 ## 它不是什么
 
 VALP 不是：
@@ -101,7 +128,9 @@ VALP 关心的是：这个完成状态能不能被另一个人、另一个 Agent
 4. 读 [../minimal-audit-demo.md](../minimal-audit-demo.md)。
 5. 读 [../when-agent-done-is-not-done.md](../when-agent-done-is-not-done.md)。
 6. 读 [../failure-gallery.md](../failure-gallery.md)。
-7. 再读英文 [SPEC.md](../../SPEC.md)。
+7. 对照读 [v0.3 RFC](../rfcs/0001-v0.3-installation-control-plane.md) 和
+   [当前项目状态](../project-status.md)。
+8. 再读英文 [SPEC.md](../../SPEC.md)。
 
 如果要实现 Runtime adapter，直接读英文：
 

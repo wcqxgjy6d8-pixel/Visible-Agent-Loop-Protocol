@@ -34,6 +34,25 @@ task-local learning feedback that points to proof.
 VALP is currently `0.2.0`. It is an open protocol release plus a reference CLI,
 not a hosted production platform.
 
+## Proposed v0.3 Direction
+
+The current implementation and release remain `0.2.0`. The
+[v0.3 installation control plane RFC](rfcs/0001-v0.3-installation-control-plane.md)
+targets `0.3.0-draft` and is proposed work. It is not implemented or stable,
+and it does not change current behavior.
+
+The proposal extends VALP's evidence discipline from individual tasks to the
+installation control plane: the user selects an Installation Leader;
+capability truth remains separated into declared, present, callable, and
+task-verified layers; messages, state, claims, failures, and review gain strict
+machine contracts; and provider plugins stay outside the deterministic core.
+
+Stable `0.3.0` would require implementation, schema and migration work,
+negative/recovery conformance tests, and a real non-HERDR Full Mode end-to-end
+proof. See the [project status matrix](project-status.md) for what is verified
+today and the [RFC](rfcs/0001-v0.3-installation-control-plane.md) for the
+proposed target.
+
 First useful actions:
 
 - Run `bin/valp audit examples/minimal-task` to inspect the evidence shape.

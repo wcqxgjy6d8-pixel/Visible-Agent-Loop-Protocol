@@ -68,6 +68,42 @@ source repository, currently documented at
 depend on HERDR specifically. See [docs/project-status.md](docs/project-status.md)
 for the current evidence and gap matrix.
 
+## Proposed v0.3 Direction
+
+The current release remains `0.2.0`. [RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)
+is a proposal for `0.3.0-draft`; it is not implemented, normative, or stable.
+It does not change the current schemas, reference CLI, runtime support, or
+release claims.
+
+In Software 3.0 terms, VALP is control-plane code around work driven by prompts,
+tools, and agents. It does not make a model smarter. It makes control decisions
+and completion claims inspectable. `0.2.0` does that at the task level; the v0.3
+RFC asks how the installation-wide control plane itself can become restart-safe,
+provider-neutral, and testable.
+
+If implemented, the proposal would add:
+
+- a user-selected **Installation Leader**, constrained by a deterministic core
+  and fenced leader epochs rather than a hard-coded universal coordinator;
+- an authoritative persistent capability registry that keeps
+  `official_claim`, `local_presence`, `live_callable`, and `task_verified` as
+  separate evidence layers;
+- strict contracts for messages, executable state, claim-to-evidence binding,
+  deterministic failure, and independent exact-artifact review;
+- provider-neutral plugin isolation, explicit protocol migration, and
+  conformance profiles with negative and recovery tests.
+
+The proposal deliberately keeps the proof bar ahead of the release label.
+Before stable `0.3.0`, the RFC must be accepted and incorporated into
+`SPEC.md`; schemas and reference behavior must be implemented; conformance,
+restart, migration, and failure tests must pass; and a real non-HERDR Full Mode
+adapter must complete a public sanitized end-to-end run. None of those future
+requirements should be read as a shipped capability today.
+
+Read the [full RFC](docs/rfcs/0001-v0.3-installation-control-plane.md) and the
+[current evidence matrix](docs/project-status.md) side by side: one describes
+the proposed contract, and the other describes what this repository proves now.
+
 ## Why VALP?
 
 Agent work often fails in ways that ordinary chat transcripts hide:

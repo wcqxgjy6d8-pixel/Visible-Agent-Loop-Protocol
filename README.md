@@ -96,6 +96,7 @@ Choose the path that matches why you are here:
 | Goal | Start here | Runtime required? |
 |---|---|---|
 | Understand the protocol | Read [SPEC.md](SPEC.md) and audit `examples/minimal-task/` | No |
+| Review the proposed v0.3 installation control plane | Read [RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md) | No |
 | Understand the automation and learning principles | Read [Compound Learning Loop](docs/compound-learning-loop.md) | No |
 | See the shortest public demo | Read [When Agent "Done" Is Not Done](docs/when-agent-done-is-not-done.md) | No |
 | Watch live dispatch process proof | Watch the [visible dispatch process proof](docs/case-studies/visible-dispatch-process-proof.md) | No |

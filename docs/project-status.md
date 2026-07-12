@@ -16,6 +16,14 @@ multi-agent platform.
 | Public examples | Three bundled fixtures, one sanitized real Manual Mode documentation case study, and one visible dispatch process video |
 | Public release | Stable evaluation release `v0.2.0` |
 
+## Proposed v0.3 RFC
+
+[RFC 0001: VALP v0.3 Installation Control Plane](rfcs/0001-v0.3-installation-control-plane.md)
+is a proposal for `0.3.0-draft`. It defines target contracts and stable-release
+gates; it does not change current `0.2.0` protocol behavior, schemas, CLI
+commands, runtime support, or stability claims. The proposed semantics are not
+implemented or stable.
+
 ## Verified In This Repository
 
 These checks prove the repository artifacts, not live runtime deployment:

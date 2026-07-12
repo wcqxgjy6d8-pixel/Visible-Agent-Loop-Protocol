@@ -442,7 +442,7 @@ class TaskAudit:
             dispatch_path = self.task_dir / dispatch_ref
             try:
                 dispatch_bytes = dispatch_path.read_bytes()
-                dispatch_text = dispatch_bytes.decode("utf-8")
+                dispatch_text = dispatch_bytes.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
                 max_chars = int(budget["max_chars"])
                 max_reference_tokens = int(budget["max_reference_tokens"])
                 recorded_chars = int(budget["actual_chars"])

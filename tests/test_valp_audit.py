@@ -79,6 +79,32 @@ class ValpAuditTests(unittest.TestCase):
             self.assertEqual(report.status, FAIL)
             self.assertTrue(any(item.id == "context_pack" and item.status == FAIL for item in report.items))
 
+    def test_dispatch_payload_counts_use_canonical_line_endings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            dispatch_ref = "agents/codex/dispatch.md"
+            dispatch_path = task / dispatch_ref
+            canonical_text = dispatch_path.read_text(encoding="utf-8")
+            dispatch_path.write_bytes(canonical_text.replace("\n", "\r\n").encode("utf-8"))
+            routing = json.loads((task / "routing.json").read_text(encoding="utf-8"))
+            routing["dispatch_payload_budgets"] = {
+                "codex": {
+                    "role": "implementer",
+                    "max_chars": len(canonical_text),
+                    "max_reference_tokens": (len(canonical_text) + 3) // 4,
+                    "token_estimator": "ceil(chars/4)",
+                    "actual_chars": len(canonical_text),
+                    "actual_reference_tokens": (len(canonical_text) + 3) // 4,
+                    "dispatch_ref": dispatch_ref,
+                }
+            }
+            (task / "routing.json").write_text(json.dumps(routing), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            context_item = next(item for item in report.items if item.id == "context_pack")
+            self.assertEqual(context_item.status, PASS)
+
     def test_exact_historical_dispatch_boundary_is_a_warning_not_a_silent_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

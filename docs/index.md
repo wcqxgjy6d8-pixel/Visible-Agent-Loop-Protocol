@@ -12,6 +12,7 @@ Start here:
 - [Repository README](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/README.md)
 - [中文注解](zh-CN/README.md)
 - [Protocol specification](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SPEC.md)
+- [Proposed v0.3 installation control plane RFC](rfcs/0001-v0.3-installation-control-plane.md)
 - [Quickstart](quickstart.md)
 - [Compound learning loop](compound-learning-loop.md)
 - [When Agent "Done" Is Not Done](when-agent-done-is-not-done.md)

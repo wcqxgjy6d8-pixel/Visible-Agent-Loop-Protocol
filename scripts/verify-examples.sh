@@ -111,4 +111,7 @@ echo "==> Auditing headless queue example"
 echo "==> Auditing real documentation calibration case study"
 "$PYTHON_BIN" -m valp_cli audit examples/real-doc-calibration-task
 
+echo "==> Benchmarking role-budgeted dispatch size"
+"$PYTHON_BIN" scripts/benchmark-dispatch-size.py
+
 echo "==> VALP example verification complete"

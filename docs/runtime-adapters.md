@@ -197,12 +197,18 @@ The adapter must map runtime queue states into VALP:
 |---|---|
 | queued | accepted by runtime, not delivered |
 | dispatched | may map to `dispatch_submitted` only with submission proof |
+| waiting | maps to `suspended`; runtime waits without coordinator model turns |
 | running | maps to `executing` |
 | completed | maps to `dispatch_completed` only after expected evidence exists |
 | failed | maps to `failed` or `blocked` with reason |
 | cancelled | maps to `cancelled` |
 
 Queue success is not enough. VALP still requires evidence.
+
+When an adapter claims suspended waiting, it must block outside the coordinator
+model and wake only for a newer terminal worker receipt, the recorded timeout,
+runtime failure, cancellation, or explicit user input. It must export the
+suspension record and timeline events. A wakeup is not completion proof.
 
 Recommended queue evidence:
 
@@ -212,6 +218,7 @@ worker id
 provider/backend id
 dispatch payload ref
 status transition log
+suspension and deterministic resume event, if used
 output or artifact ref
 expected evidence refs
 failure reason, if any

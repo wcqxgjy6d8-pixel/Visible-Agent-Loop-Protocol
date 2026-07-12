@@ -42,6 +42,7 @@
     "ref": ".herdr-loop/local-overlay.json"
   },
   "runtime_task_state_mapping": {
+    "waiting": "suspended_without_completion_proof",
     "completed": "dispatch_completed_only_with_expected_evidence"
   },
   "provider_matrix": {
@@ -117,6 +118,25 @@
   "context_pack": {
     "status": "recorded",
     "ref": "context-pack.json"
+  },
+  "suspension": {
+    "status": "resumed",
+    "entered_at": "2026-07-03T00:00:03Z",
+    "deadline_at": "2026-07-03T00:05:03Z",
+    "waiting_for_agents": [
+      "codex"
+    ],
+    "receipt_count_at_entry": 2,
+    "allowed_resume_events": [
+      "cancellation",
+      "receipt",
+      "runtime_failure",
+      "timeout",
+      "user_input"
+    ],
+    "resume_event": "receipt",
+    "resumed_at": "2026-07-03T00:04:00Z",
+    "resume_ref": "dispatch-receipts.jsonl#3"
   },
   "learning_feedback": {
     "status": "written",

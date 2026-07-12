@@ -8,6 +8,20 @@
     "target_tokens": 500,
     "target_chars": 2400
   },
+  "dispatch_role_budgets": {
+    "codex": {
+      "role": "implementer",
+      "max_chars": 2800,
+      "max_reference_tokens": 700,
+      "token_estimator": "ceil(chars/4)"
+    },
+    "claude": {
+      "role": "reviewer",
+      "max_chars": 2400,
+      "max_reference_tokens": 600,
+      "token_estimator": "ceil(chars/4)"
+    }
+  },
   "sources": [
     {
       "ref": "task.md",

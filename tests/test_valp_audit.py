@@ -28,6 +28,56 @@ class ValpAuditTests(unittest.TestCase):
         self.assertNotIn("terminal_size_status", preflight_text)
         self.assertNotIn("pane_id", preflight_text)
 
+    def test_suspended_task_cannot_audit_as_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            state = json.loads((task / "state.json").read_text(encoding="utf-8"))
+            state["status"] = "suspended"
+            state["suspension"] = {
+                "status": "waiting",
+                "entered_at": "2026-07-11T00:00:00Z",
+                "deadline_at": "2026-07-11T00:05:00Z",
+                "waiting_for_agents": ["codex"],
+                "receipt_count_at_entry": 2,
+                "allowed_resume_events": [
+                    "receipt",
+                    "timeout",
+                    "runtime_failure",
+                    "cancellation",
+                    "user_input",
+                ],
+            }
+            (task / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "runtime_adapter" and item.status == FAIL for item in report.items))
+
+    def test_recorded_dispatch_payload_budget_is_audited(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            routing = json.loads((task / "routing.json").read_text(encoding="utf-8"))
+            routing["dispatch_payload_budgets"] = {
+                "codex": {
+                    "role": "implementer",
+                    "max_chars": 2800,
+                    "max_reference_tokens": 700,
+                    "token_estimator": "ceil(chars/4)",
+                    "actual_chars": 3887,
+                    "actual_reference_tokens": 972,
+                    "dispatch_ref": "agents/codex/dispatch.md",
+                }
+            }
+            (task / "routing.json").write_text(json.dumps(routing), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+
+            self.assertEqual(report.status, FAIL)
+            self.assertTrue(any(item.id == "context_pack" and item.status == FAIL for item in report.items))
+
     def test_real_documentation_calibration_case_study_passes(self) -> None:
         report = TaskAudit(REAL_DOC_EXAMPLE).run()
         self.assertEqual(report.status, PASS)

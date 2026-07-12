@@ -31,6 +31,7 @@ new
   -> routing_capabilities
   -> routing_squad
   -> dispatching
+  -> suspended
   -> planned
   -> locked
   -> executing
@@ -50,6 +51,7 @@ Daemon and managed-agent runtimes often expose:
 ```text
 queued
   -> dispatched
+  -> waiting
   -> running
   -> completed | failed | cancelled
 ```
@@ -62,10 +64,45 @@ This is a runtime lifecycle. It is not enough to prove VALP completion.
 |---|---|---|
 | queued | no dispatch proof yet | queue item id, assignee, runtime id |
 | dispatched | `dispatch_submitted`, only when proof exists | submission proof or runtime claim proof |
+| waiting | `suspended` | delivery proof, bounded deadline, waiting agents, receipt baseline |
 | running | `executing` | active run id or status event |
 | completed | `dispatch_completed`, only when expected evidence exists | output refs and expected evidence refs |
 | failed | `failed` or `blocked` | failure reason and logs |
 | cancelled | `cancelled` | actor or policy that cancelled |
+
+## Suspended Waiting
+
+After delivery proof exists, `valp wait` may place the task in `suspended` and
+block in the runtime process. This stops coordinator model turns while workers
+run; it does not pause workers and does not satisfy a receipt or evidence gate.
+
+The runtime resumes only for:
+
+```text
+new terminal worker receipt
+recorded deadline reached
+runtime failure with task-local evidence
+cancellation
+explicit user input
+```
+
+The reference CLI records `state.json.suspension` plus
+`coordinator_suspended` / `coordinator_resumed` timeline events. Receipt and
+timeout wakeups are detected by `valp wait`; external events use:
+
+```bash
+valp resume TASK-ID --workspace /path/to/workspace --event user_input
+valp resume TASK-ID --workspace /path/to/workspace --event cancellation
+valp resume TASK-ID --workspace /path/to/workspace \
+  --event runtime_failure --ref evidence/runtime-failure.log
+```
+
+Explicit `user_input` may resume before the recorded deadline. The deadline
+controls automatic timeout handling, not deliberate human re-entry.
+
+Receipt or user input resumes into `executing`. Timeout or runtime failure
+resumes into `blocked`. Cancellation resumes into `cancelled`. None of these
+transitions bypass review, recommendation, approval, synthesis, or audit gates.
 
 ## Retry Semantics
 

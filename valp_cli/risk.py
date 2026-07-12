@@ -64,6 +64,8 @@ def _is_actionable_match(text: str, start: int, end: int, kind: str) -> bool:
 
     before = text[max(0, start - 48) : start]
     action_context = _local_action_context(text, start, end)
+    if kind == "auth" and text[start:end] == "token" and _is_model_token_context(action_context):
+        return False
     negation_pattern = (
         r"\b(do not|don't|dont|never|without|no|not|avoid|skip|refuse to|must not|should not|will not)\b"
         r"[\s\S]{0,40}$"
@@ -78,6 +80,20 @@ def _is_actionable_match(text: str, start: int, end: int, kind: str) -> bool:
     if kind in {"publish", "submit"} and _is_valp_control_word_context(action_context):
         return False
     return True
+
+
+def _is_model_token_context(window: str) -> bool:
+    if re.search(r"\b(auth|authentication|credential|access|refresh|bearer|api[- ]?key)\b", window):
+        return False
+    return bool(
+        re.search(r"\b(llm|model|prompt|context|input|output|billing)\s+token\b", window)
+        or re.search(r"\bzero[- ]token\b", window)
+        or re.search(r"\btoken[- ](efficient|efficiency|saving|budgeted)\b", window)
+        or re.search(
+            r"\btoken\s+(consumption|budgets?|counts?|usage|costs?|limits?|window|efficiency|saving|spend)\b",
+            window,
+        )
+    )
 
 
 def _local_action_context(text: str, start: int, end: int) -> str:

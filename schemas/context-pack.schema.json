@@ -19,6 +19,20 @@
       },
       "additionalProperties": true
     },
+    "dispatch_role_budgets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["role", "max_chars", "max_reference_tokens", "token_estimator"],
+        "properties": {
+          "role": {"enum": ["coordinator", "implementer", "reviewer", "prototype", "researcher", "other"]},
+          "max_chars": {"type": "integer", "minimum": 1},
+          "max_reference_tokens": {"type": "integer", "minimum": 1},
+          "token_estimator": {"const": "ceil(chars/4)"}
+        },
+        "additionalProperties": false
+      }
+    },
     "sources": {
       "type": "array",
       "items": {

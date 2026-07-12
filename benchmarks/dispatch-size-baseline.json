@@ -1,0 +1,12 @@
+{
+  "schema_version": "valp-dispatch-size-baseline.v1",
+  "source": "Bundled full-mode and headless-queue dispatches before role budget enforcement",
+  "measurement": "Unicode character count",
+  "files": {
+    "full-mode/codex": 3887,
+    "full-mode/claude": 3321,
+    "headless-queue/codex": 3865,
+    "headless-queue/claude": 3303
+  },
+  "total_chars": 14376
+}

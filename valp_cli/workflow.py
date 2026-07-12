@@ -2268,7 +2268,7 @@ def suspend_task(root: Path, task_id: str, timeout_seconds: float = 300.0) -> di
     if state.get("status") in {"done", "failed", "cancelled"}:
         raise SystemExit(f"Cannot suspend task in terminal state: {state.get('status')}")
 
-    receipts = read_json_lines(directory / "dispatch-receipts.jsonl")
+    receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
     selected_agents = [str(agent) for agent in (state.get("selected_agents") or [])]
     latest_receipts: dict[str, dict[str, Any]] = {}
     for record in receipts:
@@ -2330,7 +2330,7 @@ def resume_suspended_task(
             receipt_index = int(resume_ref.rsplit("#", 1)[1])
         except (ValueError, IndexError):
             raise SystemExit("Invalid dispatch receipt ref")
-        receipts = read_json_lines(directory / "dispatch-receipts.jsonl")
+        receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
         if receipt_index < 1 or receipt_index > len(receipts):
             raise SystemExit("Dispatch receipt ref does not exist")
         if receipt_index <= int(suspension.get("receipt_count_at_entry") or 0):
@@ -2384,7 +2384,7 @@ def wait_for_task(
         if state.get("status") != "suspended" or current.get("status") != "waiting":
             return current
 
-        receipts = read_json_lines(directory / "dispatch-receipts.jsonl")
+        receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
         receipt_count = int(current.get("receipt_count_at_entry") or 0)
         waiting_for_agents = {str(agent) for agent in (current.get("waiting_for_agents") or [])}
         for receipt_index, record in enumerate(receipts[receipt_count:], start=receipt_count + 1):

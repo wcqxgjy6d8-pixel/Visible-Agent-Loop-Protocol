@@ -4,7 +4,7 @@
   "ordering_source": "dispatch-receipts.jsonl#line-order",
   "dependencies": [
     {
-      "id": "coordinator-self-review-before-implementer",
+      "id": "coordinator-before-implementer",
       "prerequisite_role": "coordinator",
       "prerequisite_agent": "hermes",
       "dependent_role": "implementer",
@@ -18,7 +18,7 @@
       ]
     },
     {
-      "id": "implementer-evidence-before-reviewer",
+      "id": "implementer-before-reviewer",
       "prerequisite_role": "implementer",
       "prerequisite_agent": "codex",
       "dependent_role": "reviewer",

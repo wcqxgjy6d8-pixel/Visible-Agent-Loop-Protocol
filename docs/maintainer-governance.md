@@ -40,6 +40,34 @@ If branch protection is ever weakened for an emergency, the follow-up should be
 public and should record why the exception happened, what changed, and which
 checks validated the result.
 
+## Task-Local Merge Authority
+
+Branch protection, approving review, and passing checks are necessary merge
+conditions, but they do not grant task authority. When a VALP task excludes
+merge, release, or publication, completion of that task does not erase the
+exclusion. A later merge requires either a new task-local approval record that
+names the reviewed commit and merge action, or a separate maintainer task with
+that scope.
+
+A post-task action must be appended as later governance evidence. Maintainers
+must not edit the original task, receipts, or approval ledger to imply that the
+action was previously authorized.
+
+### PR #17 Post-Task Reconciliation
+
+VALP-030 reached its final audit at `2026-07-12T10:36:55Z`. Its task evidence
+authorized branch, commit, push, and PR creation while explicitly excluding
+merge. PR #17 was later merged by `jxb412` at `2026-07-12T11:49:06Z`, a gap of
+`1:12:11`, as merge commit
+`607c8db3b8440348747a3c4c869ab45004b21743`.
+
+The PR had an approving review bound to its final head and all required checks
+had passed. No VALP-030 task-local merge approval exists, and the merge-scoped
+request in that task was superseded. The public GitHub controls therefore
+passed, while the task-local authorization ledger remained incomplete. This is
+recorded as a post-task maintainer governance gap; it does not retroactively
+change VALP-030's scope.
+
 ## Retrospective Direct-Push Audit
 
 Early public hardening work was committed directly to `main`. Those commits

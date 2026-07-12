@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Delegation Policy",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "task_id",
+    "reference_enforcement",
+    "runtime_enforcement",
+    "live_self_modification",
+    "violations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "valp-delegation-policy.v1"
+    },
+    "task_id": {"type": "string", "minLength": 1},
+    "reference_enforcement": {
+      "const": "dispatch_and_audit"
+    },
+    "runtime_enforcement": {
+      "enum": ["adapter_required", "manual_attestation"]
+    },
+    "live_self_modification": {
+      "type": "object",
+      "required": [
+        "mode",
+        "protected_surfaces",
+        "repository_changes",
+        "violation_effect"
+      ],
+      "properties": {
+        "mode": {"const": "forbidden"},
+        "protected_surfaces": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["skills", "plugins", "memory", "mcp_config", "agent_config"]
+          }
+        },
+        "repository_changes": {
+          "const": "allowed_when_task_scoped_and_not_live_loaded"
+        },
+        "violation_effect": {
+          "const": "invalidate_evidence_and_block"
+        }
+      },
+      "additionalProperties": false
+    },
+    "violations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["agent", "surface", "evidence_ref", "detected_at"],
+        "properties": {
+          "agent": {"type": "string", "minLength": 1},
+          "surface": {
+            "enum": ["skills", "plugins", "memory", "mcp_config", "agent_config"]
+          },
+          "evidence_ref": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+          },
+          "detected_at": {"type": "string", "minLength": 1},
+          "earliest_affected_receipt": {"type": "integer", "minimum": 1},
+          "operator_resolution_ref": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, asdict
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .delegation import validate_delegation_policy
 from .risk import classify_approval_risks
+from .submission import dependency_order_errors, validate_submission_dependencies
 
 
 PASS = "pass"
@@ -24,7 +27,6 @@ VISIBLE_ATTENTION_REQUIRED_PROFILES = {
     "ops-release",
     "prototype",
 }
-
 
 @dataclass
 class AuditItem:
@@ -60,6 +62,9 @@ class TaskAudit:
         self.evidence_status = self._load_json("evidence-status.json")
         self.skill_recommendations = self._load_json("skill-recommendations.json")
         self.agent_recommendations = self._load_json("agent-recommendations.json")
+        self.submission_dependencies = self._load_json("submission-dependencies.json")
+        self.delegation_policy = self._load_json("delegation-policy.json")
+        self.historical_audit_boundary = self._load_json("historical-audit-boundary.json")
         self.attention_map = self._load_json("attention-map.json")
         self.context_selection = self._load_json("context-selection.json")
         self.mask_list = self._load_json("mask-list.json")
@@ -83,11 +88,13 @@ class TaskAudit:
             self.check_runtime_preflight(),
             self.check_routing_confidence(),
             self.check_automation_policy(),
+            self.check_delegation_policy(),
             self.check_visible_attention(),
             self.check_context_pack(),
             self.check_skill_recommendations(),
             self.check_squad_routing(),
             self.check_dispatch_receipts(),
+            self.check_submission_dependencies(),
             self.check_expected_evidence(),
             self.check_correction_cycle(),
             self.check_agent_recommendations(),
@@ -300,6 +307,56 @@ class TaskAudit:
             evidence,
         )
 
+    def check_delegation_policy(self) -> AuditItem:
+        evidence = self._existing(["delegation-policy.json", "routing.json", "state.json"])
+        expected_marker = {"status": "recorded", "ref": "delegation-policy.json"}
+        routing_marker = self.routing.get("delegation_policy") or {}
+        state_marker = self.state.get("delegation_policy") or {}
+        required = bool(routing_marker) or bool(state_marker) or bool(self.delegation_policy)
+        if not required:
+            return self._skip(
+                "delegation_policy",
+                "Delegated live self-modification is forbidden",
+                "Legacy task without a declared delegation policy",
+                evidence,
+            )
+        if routing_marker != expected_marker or state_marker != expected_marker:
+            return self._fail(
+                "delegation_policy",
+                "Delegated live self-modification is forbidden",
+                "Delegation policy markers are missing or inconsistent",
+                evidence,
+            )
+        runtime = self.routing.get("runtime_adapter") or self.state.get("runtime_adapter") or {}
+        errors = validate_delegation_policy(
+            self.delegation_policy,
+            str(self.state.get("task_id") or self.routing.get("task_id") or ""),
+            manual_mode=runtime.get("class") == "manual",
+        )
+        if errors:
+            return self._fail(
+                "delegation_policy",
+                "Delegated live self-modification is forbidden",
+                "; ".join(errors),
+                evidence,
+            )
+        violations = self.delegation_policy.get("violations") or []
+        if violations:
+            agents = sorted({str(item.get("agent") or "unknown") for item in violations if isinstance(item, dict)})
+            return self._fail(
+                "delegation_policy",
+                "Delegated live self-modification is forbidden",
+                "Recorded live self-modification invalidates affected evidence and blocks the task: "
+                + ", ".join(agents),
+                evidence,
+            )
+        return self._pass(
+            "delegation_policy",
+            "Delegated live self-modification is forbidden",
+            "Exact protected-surface policy recorded with no violations",
+            evidence,
+        )
+
     def check_visible_attention(self) -> AuditItem:
         required_refs = [
             "attention-map.json",
@@ -375,27 +432,82 @@ class TaskAudit:
         if missing_refs:
             return self._fail("context_pack", "Context pack records compact visible worker context", "Context pack refs are missing: " + ", ".join(missing_refs[:5]), evidence)
         payload_budgets = self.routing.get("dispatch_payload_budgets") or self.state.get("dispatch_payload_budgets") or {}
+        mismatches: list[dict[str, Any]] = []
         for agent, budget in payload_budgets.items():
             if not isinstance(budget, dict):
                 return self._fail("context_pack", "Context pack records compact visible worker context", f"Invalid dispatch payload budget for {agent}", evidence)
             dispatch_ref = str(budget.get("dispatch_ref") or "")
             if not dispatch_ref or not self._is_safe_task_ref(dispatch_ref) or not self._ref_exists(dispatch_ref):
                 return self._fail("context_pack", "Context pack records compact visible worker context", f"Missing safe dispatch ref for {agent}", evidence)
-            dispatch_text = (self.task_dir / dispatch_ref).read_text(encoding="utf-8")
-            actual_chars = len(dispatch_text)
-            actual_reference_tokens = (actual_chars + 3) // 4
-            if (
-                actual_chars > int(budget.get("max_chars") or 0)
-                or actual_reference_tokens > int(budget.get("max_reference_tokens") or 0)
-                or actual_chars != int(budget.get("actual_chars") or 0)
-                or actual_reference_tokens != int(budget.get("actual_reference_tokens") or 0)
-            ):
+            dispatch_path = self.task_dir / dispatch_ref
+            try:
+                dispatch_bytes = dispatch_path.read_bytes()
+                dispatch_text = dispatch_bytes.decode("utf-8")
+                max_chars = int(budget["max_chars"])
+                max_reference_tokens = int(budget["max_reference_tokens"])
+                recorded_chars = int(budget["actual_chars"])
+                recorded_reference_tokens = int(budget["actual_reference_tokens"])
+            except (KeyError, TypeError, ValueError, UnicodeDecodeError, OSError):
                 return self._fail(
                     "context_pack",
                     "Context pack records compact visible worker context",
-                    f"Dispatch payload budget mismatch for {agent}: chars={actual_chars}, reference_tokens={actual_reference_tokens}",
+                    f"Invalid dispatch payload budget or bytes for {agent}",
                     evidence,
                 )
+            actual_chars = len(dispatch_text)
+            actual_reference_tokens = (actual_chars + 3) // 4
+            if (
+                actual_chars > max_chars
+                or actual_reference_tokens > max_reference_tokens
+                or actual_chars != recorded_chars
+                or actual_reference_tokens != recorded_reference_tokens
+            ):
+                mismatches.append(
+                    {
+                        "agent": str(agent),
+                        "artifact_ref": dispatch_ref,
+                        "byte_digest": "sha256:" + hashlib.sha256(dispatch_bytes).hexdigest(),
+                        "recorded_budget": budget,
+                        "observed": {
+                            "actual_chars": actual_chars,
+                            "actual_reference_tokens": actual_reference_tokens,
+                        },
+                    }
+                )
+        boundary_exists = (self.task_dir / "historical-audit-boundary.json").exists()
+        if mismatches:
+            boundary_errors = self._historical_budget_boundary_errors(mismatches)
+            if boundary_errors:
+                first = mismatches[0]
+                return self._fail(
+                    "context_pack",
+                    "Context pack records compact visible worker context",
+                    "Dispatch payload budget mismatch for "
+                    f"{first['agent']}: chars={first['observed']['actual_chars']}, "
+                    f"reference_tokens={first['observed']['actual_reference_tokens']}; "
+                    + "; ".join(boundary_errors[:3]),
+                    evidence,
+                )
+            return self._warn(
+                "context_pack",
+                "Context pack records compact visible worker context",
+                "Hash-pinned historical dispatch budget nonconformity preserved for: "
+                + ", ".join(item["agent"] for item in mismatches),
+                self._existing([
+                    "context-pack.json",
+                    "context-selection.json",
+                    "routing.json",
+                    "state.json",
+                    "historical-audit-boundary.json",
+                ]),
+            )
+        if boundary_exists:
+            return self._fail(
+                "context_pack",
+                "Context pack records compact visible worker context",
+                "Historical audit boundary is present without a current dispatch budget mismatch",
+                self._existing(["historical-audit-boundary.json"]),
+            )
         return self._pass("context_pack", "Context pack records compact visible worker context", f"Context pack sections: {len(items)}", evidence)
 
     def check_skill_recommendations(self) -> AuditItem:
@@ -477,6 +589,56 @@ class TaskAudit:
         if manual_mode:
             return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is manual_result_attested or dispatch_completed for selected agents", evidence)
         return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is dispatch_completed for selected agents and runtime submission proof exists", evidence)
+
+    def check_submission_dependencies(self) -> AuditItem:
+        evidence = self._existing(["submission-dependencies.json", "dispatch-receipts.jsonl", "routing.json", "state.json"])
+        expected_marker = {"status": "recorded", "ref": "submission-dependencies.json"}
+        routing_marker = self.routing.get("submission_dependencies") or {}
+        state_marker = self.state.get("submission_dependencies") or {}
+        required = bool(routing_marker) or bool(state_marker) or bool(self.submission_dependencies)
+        if not required:
+            return self._skip(
+                "submission_dependencies",
+                "Role submission dependencies are ordered",
+                "Legacy task without declared submission dependencies",
+                evidence,
+            )
+        if routing_marker != expected_marker or state_marker != expected_marker:
+            return self._fail(
+                "submission_dependencies",
+                "Role submission dependencies are ordered",
+                "Submission dependency markers are missing or inconsistent",
+                evidence,
+            )
+        task_id = str(self.state.get("task_id") or self.routing.get("task_id") or "")
+        role_assignments = self.routing.get("role_assignments") or self.state.get("role_assignments") or {}
+        errors = validate_submission_dependencies(
+            self.submission_dependencies,
+            task_id,
+            role_assignments,
+        )
+        runtime = self.routing.get("runtime_adapter") or self.state.get("runtime_adapter") or {}
+        if not errors:
+            errors = dependency_order_errors(
+                self.submission_dependencies,
+                self.receipts,
+                self.task_dir,
+                self.evidence_status,
+                manual_mode=runtime.get("class") == "manual",
+            )
+        if errors:
+            return self._fail(
+                "submission_dependencies",
+                "Role submission dependencies are ordered",
+                "; ".join(errors),
+                evidence,
+            )
+        return self._pass(
+            "submission_dependencies",
+            "Role submission dependencies are ordered",
+            f"Validated dependencies: {len(self.submission_dependencies.get('dependencies') or [])}",
+            evidence,
+        )
 
     def check_expected_evidence(self) -> AuditItem:
         refs = self._expected_evidence_refs()
@@ -943,6 +1105,118 @@ class TaskAudit:
         if not self.learning_feedback.get("privacy_notes"):
             return self._fail("learning_feedback", "Learning feedback records evidence-backed future improvements", "Learning feedback needs privacy_notes", evidence)
         return self._pass("learning_feedback", "Learning feedback records evidence-backed future improvements", f"Learning items: {len(learning_items)}", evidence)
+
+    def _historical_budget_boundary_errors(self, mismatches: list[dict[str, Any]]) -> list[str]:
+        boundary = self.historical_audit_boundary
+        errors: list[str] = []
+        expected_top_level = {
+            "schema_version",
+            "task_id",
+            "recorded_at",
+            "decision_task_id",
+            "decision_ref",
+            "auditor_boundary",
+            "accepted_legacy_artifacts",
+        }
+        if not boundary:
+            return ["missing historical-audit-boundary.json"]
+        if set(boundary) != expected_top_level:
+            errors.append("historical audit boundary has unexpected or missing top-level fields")
+        task_id = str(self.state.get("task_id") or self.routing.get("task_id") or "")
+        if boundary.get("schema_version") != "valp-historical-audit-boundary.v1":
+            errors.append("historical audit boundary has the wrong schema_version")
+        if boundary.get("task_id") != task_id:
+            errors.append("historical audit boundary task_id does not match")
+        if self.state.get("status") != "done":
+            errors.append("historical audit boundary is restricted to terminal done tasks")
+        decision_task_id = str(boundary.get("decision_task_id") or "")
+        decision_ref = str(boundary.get("decision_ref") or "")
+        if not decision_task_id or decision_task_id == task_id:
+            errors.append("historical audit boundary requires a separate reconciliation task")
+        expected_decision_prefix = f".herdr-loop/tasks/{decision_task_id}/"
+        if (
+            not decision_ref.startswith(expected_decision_prefix)
+            or not self._is_safe_task_ref(decision_ref)
+            or not self._workspace_ref_exists(decision_ref)
+        ):
+            errors.append("historical audit boundary decision_ref is missing or unsafe")
+        auditor_boundary = boundary.get("auditor_boundary") or {}
+        if set(auditor_boundary) != {
+            "historical_cli_version",
+            "historical_source_revision",
+            "rule_introduced_revision",
+        }:
+            errors.append("historical auditor boundary fields are incomplete")
+        historical_revision = str(auditor_boundary.get("historical_source_revision") or "")
+        introduced_revision = str(auditor_boundary.get("rule_introduced_revision") or "")
+        if not re.fullmatch(r"[0-9a-f]{40}", historical_revision):
+            errors.append("historical source revision is invalid")
+        if not re.fullmatch(r"[0-9a-f]{40}", introduced_revision):
+            errors.append("rule introduction revision is invalid")
+        if historical_revision == introduced_revision:
+            errors.append("historical and rule introduction revisions must differ")
+        if not str(auditor_boundary.get("historical_cli_version") or ""):
+            errors.append("historical CLI version is missing")
+        if not str(boundary.get("recorded_at") or ""):
+            errors.append("historical audit boundary recorded_at is missing")
+
+        accepted = boundary.get("accepted_legacy_artifacts")
+        if not isinstance(accepted, list):
+            return [*errors, "accepted legacy artifacts must be an array"]
+        keys = [
+            (
+                str(item.get("rule_id") or ""),
+                str(item.get("agent") or ""),
+                str(item.get("artifact_ref") or ""),
+            )
+            for item in accepted
+            if isinstance(item, dict)
+        ]
+        if len(keys) != len(accepted) or len(keys) != len(set(keys)):
+            errors.append("accepted legacy artifacts must be unique objects")
+        if len(accepted) != len(mismatches):
+            errors.append("historical audit boundary must cover every and only current mismatch")
+
+        expected_entry_fields = {
+            "rule_id",
+            "agent",
+            "artifact_ref",
+            "byte_digest",
+            "recorded_budget",
+            "observed",
+            "disposition",
+            "reason",
+        }
+        accepted_by_agent = {
+            str(item.get("agent")): item
+            for item in accepted
+            if isinstance(item, dict)
+        }
+        for mismatch in mismatches:
+            agent = mismatch["agent"]
+            entry = accepted_by_agent.get(agent)
+            if not entry:
+                errors.append(f"missing historical acceptance for {agent}")
+                continue
+            if set(entry) != expected_entry_fields:
+                errors.append(f"historical acceptance fields are invalid for {agent}")
+            if entry.get("rule_id") != "context_pack.dispatch_payload_budget":
+                errors.append(f"historical acceptance rule is invalid for {agent}")
+            if entry.get("artifact_ref") != mismatch["artifact_ref"]:
+                errors.append(f"historical artifact ref does not match for {agent}")
+            if not self._is_safe_task_ref(str(entry.get("artifact_ref") or "")):
+                errors.append(f"historical artifact ref is unsafe for {agent}")
+            if entry.get("byte_digest") != mismatch["byte_digest"]:
+                errors.append(f"historical byte digest does not match for {agent}")
+            if entry.get("recorded_budget") != mismatch["recorded_budget"]:
+                errors.append(f"historical recorded budget does not match for {agent}")
+            if entry.get("observed") != mismatch["observed"]:
+                errors.append(f"historical observed measurement does not match for {agent}")
+            if entry.get("disposition") != "accept_historical_artifact":
+                errors.append(f"historical disposition is invalid for {agent}")
+            if not str(entry.get("reason") or ""):
+                errors.append(f"historical acceptance reason is missing for {agent}")
+        return errors
 
     def _selected_agents(self) -> list[str]:
         agents = self.routing.get("selected_agents") or self.state.get("selected_agents") or []

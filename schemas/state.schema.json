@@ -20,6 +20,24 @@
       "items": {"type": "string"}
     },
     "role_assignments": {"type": "object"},
+    "submission_dependencies": {
+      "type": "object",
+      "required": ["status", "ref"],
+      "properties": {
+        "status": {"const": "recorded"},
+        "ref": {"const": "submission-dependencies.json"}
+      },
+      "additionalProperties": false
+    },
+    "delegation_policy": {
+      "type": "object",
+      "required": ["status", "ref"],
+      "properties": {
+        "status": {"const": "recorded"},
+        "ref": {"const": "delegation-policy.json"}
+      },
+      "additionalProperties": false
+    },
     "capabilities_needed": {
       "type": "array",
       "items": {"type": "string"}

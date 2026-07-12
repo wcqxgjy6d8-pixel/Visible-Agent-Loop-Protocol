@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -86,8 +88,24 @@ AGENT_MIN_TERMINAL_SIZE = {
     "agy": {"width": 70, "height": 24},
 }
 RUNTIME_CHOICES = {"auto", "manual", "herdr", "queue"}
-DISPATCH_BRIEF_CHAR_LIMIT = 700
+DISPATCH_BRIEF_CHAR_LIMIT = 480
 SKILL_TASK_LABEL_CHAR_LIMIT = 120
+DISPATCH_ROLE_BUDGETS = {
+    "coordinator": {"max_chars": 3000, "max_reference_tokens": 750},
+    "implementer": {"max_chars": 2800, "max_reference_tokens": 700},
+    "reviewer": {"max_chars": 2400, "max_reference_tokens": 600},
+    "prototype": {"max_chars": 2400, "max_reference_tokens": 600},
+    "researcher": {"max_chars": 2400, "max_reference_tokens": 600},
+    "other": {"max_chars": 2200, "max_reference_tokens": 550},
+}
+SUSPENSION_RESUME_EVENTS = {"receipt", "timeout", "runtime_failure", "cancellation", "user_input"}
+DELIVERY_RECEIPT_EVENTS = {"dispatch_submitted", "manual_delivery_attested"}
+TERMINAL_WORKER_RECEIPT_EVENTS = {
+    "dispatch_completed",
+    "dispatch_blocked",
+    "manual_result_attested",
+    "manual_blocked",
+}
 
 
 def now_iso() -> str:
@@ -107,6 +125,28 @@ def read_json(path: Path) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def read_json_lines(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
+
+
+def append_timeline_event(directory: Path, event: str, summary: str, **details: Any) -> None:
+    record = {"ts": now_iso(), "event": event, "summary": summary, **details}
+    with (directory / "timeline.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def run_command(
@@ -337,6 +377,19 @@ def bounded_text(value: str, limit: int) -> str:
 def task_brief_for_dispatch(task_text: str) -> str:
     goal = extract_goal_text(task_text)
     return bounded_text(goal, DISPATCH_BRIEF_CHAR_LIMIT)
+
+
+def dispatch_budget_for_agent(agent: str, role_assignments: dict[str, str]) -> dict[str, Any]:
+    assigned_roles = {role for role, selected in role_assignments.items() if selected == agent}
+    role = next(
+        (candidate for candidate in ["implementer", "reviewer", "prototype", "researcher", "coordinator"] if candidate in assigned_roles),
+        "other",
+    )
+    return {
+        "role": role,
+        **DISPATCH_ROLE_BUDGETS[role],
+        "token_estimator": "ceil(chars/4)",
+    }
 
 
 def skill_task_label(task: str, index: int) -> str:
@@ -761,6 +814,7 @@ def context_pack_for(
     profile: str,
     loop_layer: str,
     selected_agents: list[str],
+    role_assignments: dict[str, str],
     context_selection: dict[str, Any],
     feedback_history: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -830,6 +884,10 @@ def context_pack_for(
         "loop_layer": loop_layer,
         "generated_at": now_iso(),
         "budget": {"target_tokens": 500, "target_chars": 2400},
+        "dispatch_role_budgets": {
+            agent: dispatch_budget_for_agent(agent, role_assignments)
+            for agent in selected_agents
+        },
         "sources": [
             {"ref": ref, "reason": "selected visible context"}
             for ref in selected_refs[:10]
@@ -1050,7 +1108,17 @@ def write_visible_attention(
     loop_layer = classify_loop_layer(prompt, profile)
     design_contract = find_design_contract(root)
     context_selection = context_selection_for(root, directory, profile, loop_layer)
-    context_pack = context_pack_for(root, directory, task_id, profile, loop_layer, selected_agents, context_selection, feedback_history)
+    context_pack = context_pack_for(
+        root,
+        directory,
+        task_id,
+        profile,
+        loop_layer,
+        selected_agents,
+        role_assignments,
+        context_selection,
+        feedback_history,
+    )
     mask_list = mask_list_for(profile, loop_layer, design_contract)
     evidence_board = evidence_board_for(profile, loop_layer, selected_agents, design_contract)
     heads = attention_heads_for(loop_layer, profile, selected_agents, candidate_scores, design_contract, role_assignments)
@@ -1171,46 +1239,31 @@ Design contract: {design_status}{design_path}
 
 def attention_slice_for_agent(agent: str, visible_attention: dict[str, Any]) -> str:
     attention_map = visible_attention.get("attention_map") or {}
-    context_selection = visible_attention.get("context_selection") or {}
     context_pack = visible_attention.get("context_pack") or {}
-    mask_list = visible_attention.get("mask_list") or {}
     heads = attention_map.get("heads") or {}
     matching_heads = [
         head
         for head, record in heads.items()
         if record.get("selected") == agent or record.get("candidate") == agent
     ]
-    context_lines = [
-        f"- `{item.get('path')}`: {item.get('reason')}"
-        for item in (context_selection.get("selected") or [])[:8]
-    ]
     context_pack_lines = [
         f"- {item.get('section')}: {item.get('summary')}"
         for item in (context_pack.get("items") or [])
         if agent in (item.get("recipient_agents") or []) or not item.get("recipient_agents")
-    ][:6]
-    mask_lines = [
-        f"- {item.get('item')}: {item.get('reason')}"
-        for item in (mask_list.get("masked") or [])[:6]
-    ]
+    ][:2]
     design = visible_attention.get("design_contract") or {}
     return """- Loop layer: `{loop_layer}`
 - Your attention head(s): {heads}
 - Design contract: `{design_status}`{design_path}
-- Context selected for this round:
-{context}
-- Context pack (`context-pack.json`):
+- Role context from `context-pack.json`:
 {context_pack}
-- Inputs masked out:
-{masks}
+- Full selection and masks: `visible-routing.md`
 """.format(
         loop_layer=visible_attention.get("loop_layer", "unknown"),
         heads=", ".join(matching_heads) if matching_heads else "none",
         design_status=design.get("status", "unknown"),
         design_path=f" (`{design.get('path')}`)" if design.get("path") else "",
-        context="\n".join(context_lines) or "  - none",
         context_pack="\n".join(context_pack_lines) or "  - none",
-        masks="\n".join(mask_lines) or "  - none",
     )
 
 
@@ -1393,7 +1446,20 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         "capabilities_missing": [],
     }
     write_json(directory / "routing.json", routing)
-    write_dispatches(root, directory, task_id, profile, prompt, selected_agents, expected_by_agent, routing, skill_recommendations, visible_attention)
+    dispatch_payload_budgets = write_dispatches(
+        root,
+        directory,
+        task_id,
+        profile,
+        prompt,
+        selected_agents,
+        expected_by_agent,
+        routing,
+        skill_recommendations,
+        visible_attention,
+    )
+    routing["dispatch_payload_budgets"] = dispatch_payload_budgets
+    write_json(directory / "routing.json", routing)
     append_dispatch_written_receipts(directory, selected_agents, expected_by_agent)
     state.update(
         {
@@ -1417,6 +1483,7 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
                 "audit_grade": automation_policy.get("audit_grade"),
             },
             "context_pack": {"status": "recorded", "ref": "context-pack.json"},
+            "dispatch_payload_budgets": dispatch_payload_budgets,
             "skill_recommendations": {
                 "status": skill_recommendations.get("status"),
                 "backend": skill_recommendations.get("backend"),
@@ -1886,103 +1953,118 @@ def write_dispatches(
     routing: dict[str, Any],
     skill_recommendations: dict[str, Any],
     visible_attention: dict[str, Any],
-) -> None:
+) -> dict[str, dict[str, Any]]:
     task_brief = task_brief_for_dispatch(prompt)
-    task_refs = "\n".join(
+    core_task_refs = "\n".join(
         f"- `{relative_ref(directory / ref, root)}`"
-        for ref in [
-            "task.md",
-            "automation-policy.json",
-            "routing.json",
-            "visible-routing.md",
-            "context-selection.json",
-            "context-pack.json",
-            "mask-list.json",
-            "evidence-board.json",
-            "skill-recommendations.json",
-        ]
+        for ref in ["task.md", "context-pack.json", "skill-recommendations.json"]
     )
+    payload_records: dict[str, dict[str, Any]] = {}
     for agent in selected_agents:
         agent_dir = directory / "agents" / agent
         agent_dir.mkdir(parents=True, exist_ok=True)
         expected = "\n".join(f"- `{ref}`" for ref in expected_by_agent.get(agent, []))
         exact_evidence = "\n".join(f"- `{relative_ref(directory / ref, root)}`" for ref in expected_by_agent.get(agent, []))
-        reasons = "\n".join(f"- {reason}" for reason in routing["agent_match_reasons"].get(agent, []))
+        reasons = bounded_text("; ".join(routing["agent_match_reasons"].get(agent, [])), 240)
         skills = format_skill_recommendations_for_dispatch(agent, skill_recommendations)
         attention_slice = attention_slice_for_agent(agent, visible_attention)
-        dispatch = f"""# Dispatch: {agent}
+        budget = dispatch_budget_for_agent(agent, routing.get("role_assignments") or {})
+
+        def render_dispatch(brief: str, attention: str, skill_text: str, actual_chars: int) -> str:
+            return f"""# Dispatch: {agent}
 
 Task: {task_id}
 Profile: {profile}
+Payload budget: role={budget['role']} max_chars={budget['max_chars']} max_reference_tokens={budget['max_reference_tokens']} actual_chars={actual_chars} estimator=ceil(chars/4)
 
 ## Project Root
-
-Before inspecting or writing evidence, run:
 
 ```bash
 cd "{root}"
 ```
 
-Write evidence exactly to:
-
-{exact_evidence}
-
 ## Role
 
-Use your routed capability profile for this task. Local profiles are hints, not fixed assignments.
-
-## Capability Match
-
-{reasons}
+Primary role: `{budget['role']}`. Capability match: {reasons or 'current routing evidence'}.
 
 ## Task Brief
 
-{task_brief}
+{brief}
 
 ## Task References
 
-The coordinator/leader is responsible for sending a precise, concise dispatch.
-Use this brief first. Load full context only from task-local refs when your role
-requires it:
+The coordinator/leader owns dispatch precision. Start here and load detail only when required:
 
-{task_refs}
+{core_task_refs}
+- On demand: `automation-policy.json`, `routing.json`, `visible-routing.md`, `context-selection.json`, `mask-list.json`, `evidence-board.json`
 
 ## Payload Budget
 
-- Treat this dispatch as the working prompt, not as a dump of all coordinator context.
-- Do not ask the coordinator to paste hidden chat context; use the referenced task files and evidence refs.
-- Keep your output scoped to expected evidence plus actionable recommendations.
+- Treat this brief as working context; use task-local refs for progressive disclosure.
+- Do not request hidden chat history. Keep output to evidence, blockers, confidence, and recommendations.
 
 ## Visible Attention Slice
 
-{attention_slice}
+{attention}
 
 ## Permission Boundary
 
 - Do not bypass approval gates.
 - Do not claim runtime facts without evidence.
-- Write only the expected evidence for your role unless the task explicitly permits source edits.
+- Write only expected role evidence unless source edits are explicitly permitted.
 
 ## Expected Evidence
 
-{expected}
+{exact_evidence or expected}
 
 ## Recommended Skills
 
-{skills}
+{skill_text}
 
 ## Evidence Claim Rule
 
-- Any build, test, lint, runtime, UI, or verification claim must cite a concrete command log, screenshot, receipt, or evidence file path.
-- Do not write "verified", "tests passed", "build passed", or equivalent claims unless the evidence path exists or the blocker is explicit.
+- Build/test/runtime claims require a concrete task-local log, receipt, screenshot, or evidence path.
 
 ## Required Response
 
-Write concise evidence to the expected path. Include blockers, confidence limits, and any handoff needed for the next agent.
-
-Also include a `## Recommendations` section. List concrete next steps, risks, or follow-up suggestions, or state `No further action recommended.` The coordinator must resolve these recommendations before Done.
+Write concise evidence to the expected path, including blockers and confidence limits. Include `## Recommendations`; the coordinator must resolve it before Done.
 """
+
+        variants = [
+            (task_brief, attention_slice, skills),
+            (bounded_text(task_brief, 320), attention_slice, "- Full recommendation records: `skill-recommendations.json` (short labels only)."),
+            (
+                bounded_text(task_brief, 240),
+                f"- Attention head(s): task-local role slice. See `visible-routing.md` and `context-pack.json`.",
+                "- Full recommendation records: `skill-recommendations.json`.",
+            ),
+        ]
+        dispatch = ""
+        for brief, attention, skill_text in variants:
+            actual_chars = 0
+            for _ in range(4):
+                candidate = render_dispatch(brief, attention, skill_text, actual_chars)
+                next_chars = len(candidate)
+                if next_chars == actual_chars:
+                    break
+                actual_chars = next_chars
+            candidate = render_dispatch(brief, attention, skill_text, actual_chars)
+            reference_tokens = (len(candidate) + 3) // 4
+            if len(candidate) <= budget["max_chars"] and reference_tokens <= budget["max_reference_tokens"]:
+                dispatch = candidate
+                break
+        if not dispatch:
+            raise SystemExit(f"Dispatch payload exceeds role budget for {agent}")
+
+        actual_chars = len(dispatch)
+        payload_records[agent] = {
+            **budget,
+            "actual_chars": actual_chars,
+            "actual_reference_tokens": (actual_chars + 3) // 4,
+            "dispatch_ref": f"agents/{agent}/dispatch.md",
+        }
         (agent_dir / "dispatch.md").write_text(dispatch, encoding="utf-8")
+    return payload_records
 
 
 def format_skill_recommendations_for_dispatch(agent: str, skill_recommendations: dict[str, Any]) -> str:
@@ -1996,11 +2078,10 @@ def format_skill_recommendations_for_dispatch(agent: str, skill_recommendations:
         return f"- Skill router status: `{source.get('status', 'unknown')}`. Proceed without assuming hidden skill recommendations."
     lines = [
         "- Skill recommendations are routing aids, not permission grants.",
-        "- Full recommendation records remain in `skill-recommendations.json`; dispatch only carries short labels.",
-        "- Load or invoke an installed skill only when it matches your role and materially improves this task.",
+        "- Full recommendation records remain in `skill-recommendations.json`; dispatch carries short labels only.",
     ]
     if source is not skill_recommendations:
-        lines.append(f"- These recommendations were filtered for `{agent}` with the recommender's provider filter.")
+        lines.append(f"- Recommendations filtered for `{agent}` by provider.")
     count = 0
     for result_index, result in enumerate(source.get("results") or [], start=1):
         task = str(result.get("task") or "").strip()
@@ -2013,24 +2094,22 @@ def format_skill_recommendations_for_dispatch(agent: str, skill_recommendations:
                 continue
             count += 1
             lines.append(
-                "- Work item {} `{}` -> skill `{}` ({}, confidence {}, mode {}, path `{}`).".format(
+                "- Work item {} `{}` -> `{}` ({}, confidence {}).".format(
                     result_index,
                     label,
                     match.get("skill", "unknown"),
                     routing.get("decision", "unknown"),
                     match.get("confidence", "unknown"),
-                    match.get("mode", "unknown"),
-                    match.get("path", "unknown"),
                 )
             )
-            if count >= 5:
+            if count >= 3:
                 break
-        if count >= 5:
+        if count >= 3:
             break
     if count == 0:
         lines.append("- No installed skill matched strongly enough for this dispatch.")
     missing = source.get("missing_skills") or []
-    for missing_skill in missing[:3]:
+    for missing_skill in missing[:1]:
         lines.append(
             "- Missing useful skill `{}`: {}".format(
                 missing_skill.get("skill", "unknown"),
@@ -2126,6 +2205,159 @@ def write_queue_submission(directory: Path, task_id: str, target: str, expected:
     return queue_record
 
 
+def suspend_task(root: Path, task_id: str, timeout_seconds: float = 300.0) -> dict[str, Any]:
+    root = workspace_root(root)
+    directory = task_dir(root, task_id)
+    state_path = directory / "state.json"
+    state = read_json(state_path)
+    if not state:
+        raise SystemExit(f"Missing state.json for task {task_id}")
+    if state.get("status") == "suspended":
+        return state.get("suspension") or {}
+    if not math.isfinite(timeout_seconds) or timeout_seconds < 0:
+        raise SystemExit("Wait timeout must be a finite non-negative number")
+    if state.get("status") in {"done", "failed", "cancelled"}:
+        raise SystemExit(f"Cannot suspend task in terminal state: {state.get('status')}")
+
+    receipts = read_json_lines(directory / "dispatch-receipts.jsonl")
+    selected_agents = [str(agent) for agent in (state.get("selected_agents") or [])]
+    latest_receipts: dict[str, dict[str, Any]] = {}
+    for record in receipts:
+        latest_receipts[str(record.get("agent"))] = record
+    waiting_for_agents = [
+        agent
+        for agent in selected_agents
+        if (latest_receipts.get(agent) or {}).get("event") in DELIVERY_RECEIPT_EVENTS
+    ]
+    if not waiting_for_agents:
+        raise SystemExit("Cannot suspend before a selected worker has delivery proof")
+
+    entered_at = datetime.now(timezone.utc).replace(microsecond=0)
+    deadline_at = entered_at + timedelta(seconds=max(0.0, timeout_seconds))
+    suspension = {
+        "status": "waiting",
+        "entered_at": entered_at.isoformat().replace("+00:00", "Z"),
+        "deadline_at": deadline_at.isoformat().replace("+00:00", "Z"),
+        "waiting_for_agents": waiting_for_agents,
+        "receipt_count_at_entry": len(receipts),
+        "allowed_resume_events": sorted(SUSPENSION_RESUME_EVENTS),
+    }
+    state["status"] = "suspended"
+    state["suspension"] = suspension
+    state["updated_at"] = now_iso()
+    write_json(state_path, state)
+    append_timeline_event(
+        directory,
+        "coordinator_suspended",
+        "Coordinator model turns suspended while workers run",
+        waiting_for_agents=waiting_for_agents,
+        deadline_at=suspension["deadline_at"],
+    )
+    return suspension
+
+
+def resume_suspended_task(
+    root: Path,
+    task_id: str,
+    resume_event: str,
+    resume_ref: str | None = None,
+) -> dict[str, Any]:
+    if resume_event not in SUSPENSION_RESUME_EVENTS:
+        raise SystemExit(f"Unsupported resume event: {resume_event}")
+    root = workspace_root(root)
+    directory = task_dir(root, task_id)
+    state_path = directory / "state.json"
+    state = read_json(state_path)
+    suspension = state.get("suspension") or {}
+    if state.get("status") != "suspended" or suspension.get("status") != "waiting":
+        raise SystemExit(f"Task {task_id} is not suspended")
+    if resume_event == "runtime_failure":
+        if not resume_ref or not safe_task_evidence_ref(resume_ref) or not task_evidence_exists(directory, resume_ref):
+            raise SystemExit("runtime_failure resume requires an existing task-local evidence ref")
+    if resume_event == "receipt":
+        if not resume_ref or not resume_ref.startswith("dispatch-receipts.jsonl#"):
+            raise SystemExit("receipt resume requires a dispatch receipt ref")
+        try:
+            receipt_index = int(resume_ref.rsplit("#", 1)[1])
+        except (ValueError, IndexError):
+            raise SystemExit("Invalid dispatch receipt ref")
+        receipts = read_json_lines(directory / "dispatch-receipts.jsonl")
+        if receipt_index < 1 or receipt_index > len(receipts):
+            raise SystemExit("Dispatch receipt ref does not exist")
+        if receipt_index <= int(suspension.get("receipt_count_at_entry") or 0):
+            raise SystemExit("Dispatch receipt predates suspension")
+        receipt = receipts[receipt_index - 1]
+        if receipt.get("event") not in TERMINAL_WORKER_RECEIPT_EVENTS:
+            raise SystemExit("Dispatch receipt is not a terminal worker receipt")
+        if str(receipt.get("agent")) not in {str(agent) for agent in (suspension.get("waiting_for_agents") or [])}:
+            raise SystemExit("Dispatch receipt does not belong to a waiting agent")
+
+    resumed_at = now_iso()
+    suspension.update({
+        "status": "resumed",
+        "resume_event": resume_event,
+        "resumed_at": resumed_at,
+    })
+    if resume_ref:
+        suspension["resume_ref"] = resume_ref
+    state["status"] = {
+        "timeout": "blocked",
+        "runtime_failure": "blocked",
+        "cancellation": "cancelled",
+    }.get(resume_event, "executing")
+    state["suspension"] = suspension
+    state["updated_at"] = resumed_at
+    write_json(state_path, state)
+    append_timeline_event(
+        directory,
+        "coordinator_resumed",
+        f"Coordinator resumed from {resume_event}",
+        resume_event=resume_event,
+        resume_ref=resume_ref,
+    )
+    return suspension
+
+
+def wait_for_task(
+    root: Path,
+    task_id: str,
+    timeout_seconds: float = 300.0,
+    poll_interval_seconds: float = 0.25,
+) -> dict[str, Any]:
+    if not math.isfinite(poll_interval_seconds) or poll_interval_seconds < 0:
+        raise SystemExit("Poll interval must be a finite non-negative number")
+    root = workspace_root(root)
+    directory = task_dir(root, task_id)
+    suspension = suspend_task(root, task_id, timeout_seconds=timeout_seconds)
+    while True:
+        state = read_json(directory / "state.json")
+        current = state.get("suspension") or suspension
+        if state.get("status") != "suspended" or current.get("status") != "waiting":
+            return current
+
+        receipts = read_json_lines(directory / "dispatch-receipts.jsonl")
+        receipt_count = int(current.get("receipt_count_at_entry") or 0)
+        waiting_for_agents = {str(agent) for agent in (current.get("waiting_for_agents") or [])}
+        for receipt_index, record in enumerate(receipts[receipt_count:], start=receipt_count + 1):
+            if str(record.get("agent")) not in waiting_for_agents:
+                continue
+            if record.get("event") not in TERMINAL_WORKER_RECEIPT_EVENTS:
+                continue
+            return resume_suspended_task(
+                root,
+                task_id,
+                "receipt",
+                resume_ref=f"dispatch-receipts.jsonl#{receipt_index}",
+            )
+
+        deadline_text = str(current.get("deadline_at") or "").replace("Z", "+00:00")
+        deadline = datetime.fromisoformat(deadline_text)
+        if datetime.now(timezone.utc) >= deadline:
+            return resume_suspended_task(root, task_id, "timeout")
+
+        time.sleep(max(0.01, poll_interval_seconds))
+
+
 def dispatch_task(root: Path, task_id: str, agent: str = "all", submit: bool = False, runtime: str | None = None) -> list[str]:
     root = workspace_root(root)
     directory = task_dir(root, task_id)
@@ -2134,6 +2366,25 @@ def dispatch_task(root: Path, task_id: str, agent: str = "all", submit: bool = F
         raise SystemExit(f"Missing routing.json for task {task_id}")
     selected_agents = routing.get("selected_agents") or []
     targets = selected_agents if agent == "all" else [agent]
+    role_assignments = routing.get("role_assignments") or {}
+    recorded_budgets = routing.get("dispatch_payload_budgets") or {}
+    for target in targets:
+        dispatch_ref = directory / "agents" / target / "dispatch.md"
+        if not dispatch_ref.exists():
+            raise SystemExit(f"Missing dispatch for agent {target}: {dispatch_ref}")
+        budget = recorded_budgets.get(target) or dispatch_budget_for_agent(target, role_assignments)
+        dispatch_text = dispatch_ref.read_text(encoding="utf-8")
+        actual_chars = len(dispatch_text)
+        actual_reference_tokens = (actual_chars + 3) // 4
+        if (
+            actual_chars > int(budget["max_chars"])
+            or actual_reference_tokens > int(budget["max_reference_tokens"])
+        ):
+            raise SystemExit(
+                f"Dispatch for {target} exceeds role budget: "
+                f"chars={actual_chars}/{budget['max_chars']} "
+                f"reference_tokens={actual_reference_tokens}/{budget['max_reference_tokens']}"
+            )
     runtime_record = routing.get("runtime_adapter") or {}
     requested_runtime = normalize_runtime(runtime)
     runtime_kind = runtime_from_adapter_record(runtime_record) if requested_runtime == "auto" else requested_runtime
@@ -2149,11 +2400,8 @@ def dispatch_task(root: Path, task_id: str, agent: str = "all", submit: bool = F
         raise SystemExit("Runtime preflight failed for: " + target_summary)
     write_json(directory / "runtime-preflight.json", preflight)
     commands = []
-    role_assignments = routing.get("role_assignments") or {}
     for target in targets:
         dispatch_ref = directory / "agents" / target / "dispatch.md"
-        if not dispatch_ref.exists():
-            raise SystemExit(f"Missing dispatch for agent {target}: {dispatch_ref}")
         expected = expected_refs_for_agents([target], role_assignments).get(target, [])
         if runtime_kind == "manual":
             if submit:

@@ -69,6 +69,22 @@ rerun routing if the task, project, or tools changed
 The coordinator or leader must keep worker dispatches short. A good dispatch is
 not a transcript; it is a precise assignment with file refs.
 
+The complete generated dispatch has strict role-specific ceilings:
+
+| Primary role | Max characters | Max reference tokens |
+|---|---:|---:|
+| coordinator | 3000 | 750 |
+| implementer | 2800 | 700 |
+| reviewer | 2400 | 600 |
+| prototype or researcher | 2400 | 600 |
+| other | 2200 | 550 |
+
+The portable reference-token estimator is `ceil(chars / 4)`. It is a
+deterministic budget proxy, not a provider-tokenizer claim. Adapters with exact
+tokenizers enforce the lower limit. `routing.json` records configured and
+actual dispatch sizes; `context-pack.json` records each selected agent's role
+budget.
+
 Dispatch should contain:
 
 - short task brief;
@@ -80,6 +96,12 @@ Dispatch should contain:
 - refs to `task.md`, `automation-policy.json`, `routing.json`,
   `context-selection.json`, `context-pack.json`, `mask-list.json`,
   `evidence-board.json`, and `skill-recommendations.json`.
+
+Only `task.md`, `context-pack.json`, and `skill-recommendations.json` need to be
+in the starting worker prompt. Other task-local refs can be named as on-demand
+progressive disclosure. Coordinator, implementer, reviewer, prototype, and
+researcher prompts should receive only their role-specific evidence and
+attention slice.
 
 Dispatch should not paste:
 
@@ -93,6 +115,16 @@ Dispatch should not paste:
 HTML can render dashboards or reports, but the canonical worker dispatch should
 remain readable plain text or Markdown unless the runtime exports the same
 concise assignment and receipt evidence.
+
+Measure the checked-in legacy baseline against the current generator with:
+
+```bash
+python3 scripts/benchmark-dispatch-size.py
+```
+
+The benchmark reports Unicode character counts and percentage reduction. It
+does not claim exact provider billing tokens; provider-specific adapters may add
+their exact tokenizer measurement.
 
 ## Required Handoff
 

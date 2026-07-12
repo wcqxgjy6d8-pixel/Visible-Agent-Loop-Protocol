@@ -316,6 +316,23 @@ To actually submit through the local HERDR adapter:
 bin/valp dispatch TASK-001 --workspace /path/to/workspace --submit
 ```
 
+After delivery proof exists, suspend coordinator model turns while workers run:
+
+```bash
+bin/valp wait TASK-001 --workspace /path/to/workspace --timeout 300
+```
+
+The runtime process returns only for a newer terminal receipt, timeout, runtime
+failure, cancellation, or explicit user input. Another runtime or user-facing
+surface can wake it explicitly with:
+
+```bash
+bin/valp resume TASK-001 --workspace /path/to/workspace --event user_input
+```
+
+Suspension is non-terminal. It does not satisfy evidence, review, approval,
+recommendation-resolution, synthesis, or audit gates.
+
 ### 8. Verify, Review, Record
 
 A task is done only when:

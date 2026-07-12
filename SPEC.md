@@ -130,9 +130,16 @@ visible.
 : A visible assignment sent to an agent.
 
 `dispatch payload budget`
-: The constraint that a dispatch is a concise, role-specific assignment with
-task-local references for long context, not a pasted transcript or a full
-context dump.
+: A machine-readable per-role ceiling for the complete worker dispatch. It
+records maximum characters, a deterministic reference-token estimate, and the
+task-local references used for progressive disclosure. It is not permission to
+omit role boundaries, expected evidence, or gate requirements.
+
+`suspended waiting`
+: A non-terminal coordinator state entered after dispatch submission while
+workers run. The runtime waits without invoking another coordinator model turn
+and resumes only from a qualifying receipt, timeout, runtime failure,
+cancellation, or explicit user input.
 
 `receipt`
 : A machine-readable record of dispatch state.
@@ -214,6 +221,7 @@ DISPATCH
   -> WRITE VISIBLE DISPATCH
   -> SUBMIT DISPATCH
   -> MAP RUNTIME TASK STATES
+  -> SUSPEND COORDINATOR WHILE WORKERS RUN, IF SUPPORTED
 EXECUTE
   -> ANALYZE
   -> EXECUTE / RESEARCH / PROTOTYPE
@@ -258,6 +266,7 @@ new
   -> routing_squad
   -> building_context_pack
   -> dispatching
+  -> suspended
   -> planned
   -> locked
   -> executing
@@ -279,6 +288,7 @@ such as:
 ```text
 queued
   -> dispatched
+  -> waiting
   -> running
   -> completed | failed | cancelled
 ```
@@ -290,6 +300,7 @@ VALP completion still requires receipt and evidence gates:
 |---|---|
 | `queued` | Runtime accepted work, but delivery is not proven yet |
 | `dispatched` | Runtime claims work was claimed or sent; maps to `dispatch_submitted` only when submission proof exists |
+| `waiting` | Coordinator is suspended while submitted work runs; no completion or evidence gate is satisfied |
 | `running` | Agent execution is active; maps to VALP `executing` |
 | `completed` | Execution ended; maps to `dispatch_completed` only when expected evidence exists |
 | `failed` | Execution failed; record failure reason and evidence gap |
@@ -297,6 +308,48 @@ VALP completion still requires receipt and evidence gates:
 
 If a runtime marks work `completed` without expected evidence, VALP must record
 the adapter state but keep the evidence gate open.
+
+#### 4.1.1 Suspended Waiting And Deterministic Resume
+
+Suspended waiting is an optional runtime capability and a normative state when
+claimed. It exists to stop coordinator model turns while dispatched workers are
+still running. A runtime process may block on file notifications, queue events,
+socket events, or bounded polling; it must not invoke the coordinator model to
+ask whether work is finished.
+
+Before entering `suspended`, the adapter must have submission proof for at least
+one selected worker. The task's `state.json` records a `suspension` object with:
+
+```text
+status: waiting | resumed
+entered_at
+deadline_at
+waiting_for_agents
+receipt_count_at_entry
+allowed_resume_events:
+  receipt | timeout | runtime_failure | cancellation | user_input
+resume_event, resumed_at, and resume_ref when resumed
+```
+
+Resume is deterministic:
+
+- `receipt`: a newer `dispatch_completed`, `dispatch_blocked`,
+  `manual_result_attested`, or `manual_blocked` receipt for a waiting agent;
+- `timeout`: the recorded deadline is reached;
+- `runtime_failure`: the runtime exports a failure state or evidence ref;
+- `cancellation`: a user, runtime, or policy cancellation is recorded;
+- `user_input`: new explicit user input is recorded by the runtime adapter.
+
+`user_input` is an explicit human override and may resume before `deadline_at`.
+The deadline governs automatic `timeout` resume only; it must not delay a user
+who intentionally re-enters the control loop.
+
+A receipt resumes coordination but does not prove Done. Expected evidence,
+review, recommendation resolution, approval, final synthesis, and audit remain
+unchanged. A runtime failure or timeout normally resumes into `blocked` for
+visible handling; cancellation resumes into `cancelled`; receipt and user input
+resume into `executing`. The coordinator may suspend again for remaining work,
+creating a new visible suspension record.
 
 ### 4.2 Trigger Policy And Auto Visible Mode
 
@@ -873,6 +926,30 @@ must send each worker a precise, concise assignment and use task-local file refs
 for context expansion. This applies to direct routing, squad routing, hosted
 runtimes, pane runtimes, queues, and Manual Mode.
 
+The complete canonical dispatch must satisfy the selected role budget. The
+reference profile is:
+
+| Primary role | Max characters | Max reference tokens |
+|---|---:|---:|
+| coordinator | 3000 | 750 |
+| implementer | 2800 | 700 |
+| reviewer | 2400 | 600 |
+| prototype or researcher | 2400 | 600 |
+| other | 2200 | 550 |
+
+Characters are Unicode code points. Reference tokens use the deterministic
+estimate `ceil(character_count / 4)`. This estimate is for portable budgeting,
+not a claim about any provider tokenizer. An adapter with an exact tokenizer
+must enforce the lower of its provider limit and the recorded VALP role budget.
+The generated task context pack records the role budgets and estimator; each
+dispatch records its actual character count and reference-token estimate.
+
+Budget enforcement must be deterministic. If essential content would exceed a
+ceiling, the coordinator shortens prose and skill labels first, then replaces
+detail with task-local refs. It must not truncate a permission boundary,
+expected evidence path, receipt requirement, or approval rule. A dispatch that
+still exceeds either ceiling is not submitted and must be recorded as blocked.
+
 A dispatch should include:
 
 ```text
@@ -899,6 +976,21 @@ The full `task.md` and `skill-recommendations.json` remain task evidence. They
 are not required to be copied into every worker prompt. Skill recommendations in
 dispatch should use short work-item labels and point to the full recommendation
 record when more detail is needed.
+
+Progressive disclosure uses the smallest role-specific starting set:
+
+```text
+all roles: task.md, automation-policy.json, visible-routing.md
+coordinator: state, receipts, evidence board, recommendation resolution
+implementer: source/build refs and expected implementation evidence
+reviewer: changed refs, verification evidence, findings/review output
+prototype or researcher: task scope, selected context, expected role evidence
+```
+
+Workers load `routing.json`, `context-selection.json`, `context-pack.json`,
+`mask-list.json`, `evidence-board.json`, or `skill-recommendations.json` only
+when the assignment requires that detail. The files remain visible task
+evidence even when their names are not duplicated into every dispatch.
 
 Plain text or Markdown is the canonical worker dispatch format. HTML or other
 rich formats may render reports, dashboards, or evidence summaries, but they

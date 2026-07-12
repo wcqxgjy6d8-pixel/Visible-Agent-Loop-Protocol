@@ -7,7 +7,7 @@ from pathlib import Path
 from . import __version__
 from .audit import FAIL, TaskAudit, print_text_report, report_to_dict, resolve_task_dir
 from .doctor import collect_doctor_report, render_text_summary, report_to_dict as doctor_report_to_dict, write_markdown_report
-from .workflow import RUNTIME_CHOICES, collect_runtime_preflight, dispatch_task, publish_task, route_task, scan_workspace
+from .workflow import RUNTIME_CHOICES, collect_runtime_preflight, dispatch_task, publish_task, resume_suspended_task, route_task, scan_workspace, wait_for_task
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,6 +63,25 @@ notes:
     preflight.add_argument("--agent", action="append", help="Agent name to check; may be repeated")
     preflight.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Runtime adapter to preflight")
     preflight.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    wait = sub.add_parser("wait", help="Suspend coordinator turns until a deterministic resume event")
+    wait.add_argument("task_id", help="Task id")
+    wait.add_argument("--workspace", default=".", help="Workspace root")
+    wait.add_argument("--timeout", type=float, default=300.0, help="Maximum suspended wait in seconds")
+    wait.add_argument("--poll-interval", type=float, default=0.25, help="Runtime polling interval in seconds")
+    wait.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    resume = sub.add_parser("resume", help="Resume a suspended coordinator from an explicit external event")
+    resume.add_argument("task_id", help="Task id")
+    resume.add_argument("--workspace", default=".", help="Workspace root")
+    resume.add_argument(
+        "--event",
+        choices=["user_input", "runtime_failure", "cancellation"],
+        required=True,
+        help="External event that resumes coordinator turns",
+    )
+    resume.add_argument("--ref", dest="resume_ref", help="Task-local evidence ref; required for runtime_failure")
+    resume.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     audit = sub.add_parser("audit", help="Audit a VALP task evidence folder")
     audit.add_argument("path", nargs="?", default=".", help="Task folder or workspace root")
@@ -163,6 +182,32 @@ def main(argv: list[str] | None = None) -> int:
                     f"size={size.get('width', '?')}x{size.get('height', '?')}"
                 )
         return 1 if report.get("status") == "fail" else 0
+
+    if args.command == "wait":
+        result = wait_for_task(
+            Path(args.workspace),
+            args.task_id,
+            timeout_seconds=args.timeout,
+            poll_interval_seconds=args.poll_interval,
+        )
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print(f"VALP wait resumed: {result.get('resume_event', 'unknown')}")
+        return 0
+
+    if args.command == "resume":
+        result = resume_suspended_task(
+            Path(args.workspace),
+            args.task_id,
+            args.event,
+            resume_ref=args.resume_ref,
+        )
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print(f"VALP suspension resumed: {result.get('resume_event', 'unknown')}")
+        return 0
 
     if args.command == "audit":
         directory = resolve_task_dir(Path(args.path), args.task_id)

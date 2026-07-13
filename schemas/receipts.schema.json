@@ -6,6 +6,9 @@
   "properties": {
     "ts": {"type": "string"},
     "agent": {"type": "string"},
+    "role": {
+      "enum": ["coordinator", "implementer", "reviewer", "prototype", "researcher", "other"]
+    },
     "event": {
       "enum": [
         "dispatch_written",

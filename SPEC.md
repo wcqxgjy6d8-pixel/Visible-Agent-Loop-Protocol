@@ -135,6 +135,27 @@ records maximum characters, a deterministic reference-token estimate, and the
 task-local references used for progressive disclosure. It is not permission to
 omit role boundaries, expected evidence, or gate requirements.
 
+`submission dependency`
+: A machine-readable role-to-role gate that requires recorded prerequisite
+evidence and a qualifying completion receipt before a dependent dispatch may
+be submitted. Receipt ledger line order, not timestamps, determines whether
+the dependency was satisfied.
+
+`delegated self-modification`
+: A delegated principal changing live-loaded skills, plugins, memory, MCP
+configuration, or agent configuration for itself or another current task
+participant. Repository source, protocol, policy, schema, test, and
+documentation edits are not delegated self-modification when the task
+explicitly permits them and the changed files are not live-loaded by the
+current task.
+
+`historical audit boundary`
+: A hash-pinned compatibility decision that lets a later auditor evaluate an
+immutable terminal task created before a named audit rule existed. It records
+the exact rule, artifact bytes, recorded facts, observed facts, source
+revisions, and external reconciliation evidence. It does not make the old
+artifact conform to the later rule.
+
 `suspended waiting`
 : A non-terminal coordinator state entered after dispatch submission while
 workers run. The runtime waits without invoking another coordinator model turn
@@ -466,7 +487,50 @@ This is the protocol boundary for autonomous work: the system can move quickly
 when the control loop is healthy, and it must stop visibly when the loop cannot
 prove safety or completion.
 
-### 4.4 First-Install Health Gate
+### 4.4 Delegated No-Self-Modification Policy
+
+Every newly routed delegated task must write `delegation-policy.json` before
+submission. The policy must forbid delegated self-modification across exactly
+these live surfaces:
+
+```text
+skills
+plugins
+memory
+mcp_config
+agent_config
+```
+
+The boundary is based on live effect, not path or Git tracking. A tracked file
+that is live-loaded by a current agent is protected. A repository protocol,
+policy, schema, source, test, or documentation change is allowed only when the
+task scope explicitly permits that repository change and the changed artifact
+is not loaded into the current task as live agent behavior or configuration.
+
+The reference CLI can require and surface the policy at dispatch and make a
+recorded violation audit-fatal. It cannot claim that arbitrary filesystem or
+shell writes were prevented unless the runtime adapter provides sandbox or
+write-monitor evidence. Full and Remote Mode adapters must hard-block protected
+writes or export equivalent enforcement evidence. Manual Mode may only record
+an operator attestation; it must not claim runtime enforcement.
+
+A protected write performed during delegation is a violation even if the
+acting agent later reverts it. The task must record the earliest possible
+mutation point, invalidate evidence produced at or after that point, move the
+task to `blocked`, and require operator resolution, a fresh capability and
+permission scan, rerouting, and redispatch. Approval recorded after the write
+cannot retroactively validate affected evidence. A separately scoped
+configuration task requires prior explicit user approval and is not an
+exception that a delegated principal may grant itself.
+
+That prior approval must name the task id, protected category, target principal
+or artifact, permitted operation, and expiry or one-shot boundary. A
+category-only, role-wide, repository-wide, or general task approval is
+insufficient. The reference delegation policy remains fail-closed unless the
+separately scoped configuration path can prove that exact approval before any
+mutation.
+
+### 4.5 First-Install Health Gate
 
 A first install, including an App-managed install, must prove environment health
 before real dispatch. The installer or App should run an explicit health gate in
@@ -527,6 +591,7 @@ expected evidence refs
 receipt ledger
 failure reason
 approval gate status
+delegation-policy enforcement evidence or an explicit limitation
 ```
 
 An adapter may use its own internal state names, but it must publish the mapping
@@ -886,6 +951,38 @@ review, queues, or human operators to correct work. VALP only requires enough
 machine-readable evidence to audit what was rejected, what changed, and why the
 task is now acceptable or still blocked.
 
+## 10.2 Submission Dependencies
+
+New routed tasks with coordinator, implementer, and reviewer roles must write a
+closed `submission-dependencies.json` artifact. At minimum it declares these
+role gates when the roles exist:
+
+```text
+coordinator self-review completed -> implementer dispatch may be submitted
+implementer evidence and verification completed -> reviewer dispatch may be submitted
+```
+
+Each dependency records a stable id, prerequisite role and agent, dependent
+role and agent, prerequisite evidence refs, and dependent evidence refs. The
+artifact must match the current role assignments and cannot omit or weaken a
+generated edge. Co-located roles still require role-scoped receipts whose
+`expected_refs` distinguish the phases; agent identity alone is not enough.
+
+For Full and Remote Mode, every prerequisite ref must exist and remain valid,
+and a matching `dispatch_completed` receipt must appear earlier in
+`dispatch-receipts.jsonl` than the dependent role's `dispatch_submitted`
+receipt. For Manual Mode, the equivalent ordering is
+`manual_result_attested` before `manual_delivery_attested`. Physical JSONL line
+order is authoritative. Timestamps are descriptive and must not be used to
+repair reversed ledger order.
+
+Reference dispatch tools must validate all requested dependency gates before
+preflight, queue writes, subprocess submission, or any other delivery side
+effect. A request that includes one uncleared target fails as a whole, so a
+bulk submission cannot partially dispatch earlier targets and then stop. Manual
+Mode can print dependency-aware instructions, but only the later ordered
+attestations prove that a human followed them.
+
 ## 11. Context Compression
 
 Context compression is part of capability scanning, not a late-stage cleanup.
@@ -949,6 +1046,34 @@ ceiling, the coordinator shortens prose and skill labels first, then replaces
 detail with task-local refs. It must not truncate a permission boundary,
 expected evidence path, receipt requirement, or approval rule. A dispatch that
 still exceeds either ceiling is not submitted and must be recorded as blocked.
+
+A current or newly generated dispatch must never use a historical audit
+boundary to bypass this rule. A terminal historical task may use
+`historical-audit-boundary.json` only when the dispatch was accepted under a
+named source revision where the named audit rule did not exist and a later,
+separate reconciliation task records the compatibility decision. Each accepted
+legacy artifact must bind all of the following without wildcards:
+
+```text
+rule id
+agent
+safe task-local artifact ref
+exact raw-byte SHA-256 digest
+exact recorded role, limits, estimator, and measurements
+exact observed measurements under the current auditor
+historical auditor source revision
+rule-introduction source revision
+external reconciliation task id and evidence ref
+```
+
+The auditor must recompute the byte digest and every recorded and observed
+value. A missing decision ref, duplicate acceptance, changed byte, changed
+measurement, unsafe path, unknown rule, or partial multi-artifact declaration
+fails closed. The digest establishes byte identity only. A valid boundary may
+let the later audit continue only with `WARN` and must disclose the preserved
+nonconformity; it must never convert that item to `PASS`. The boundary must not
+claim that the dispatch met the later rule when submitted, raise a limit,
+rewrite a receipt, or authorize the same exception for a current task.
 
 A dispatch should include:
 
@@ -1298,6 +1423,10 @@ proposal and its disposition. Updates to protocol, schemas, audit gates, local
 overlays, skills, memory, runtime adapters, or agent configuration must follow
 the relevant approval, review, and change-control path. This keeps compound
 learning inspectable instead of turning old memory into hidden authority.
+During a delegated task, learning feedback cannot authorize or perform live
+self-modification. Any accepted live skill, plugin, memory, MCP, or agent
+configuration change must become a separately scoped task with prior explicit
+user approval and fresh delegation evidence.
 
 For routing, learning feedback becomes an evidence-based prior. A current scan
 still wins over old feedback:
@@ -1462,6 +1591,8 @@ The following require explicit user approval:
 delete
 auth
 secrets
+skill_config
+plugin_config
 memory
 agent_config
 mcp_config
@@ -1481,6 +1612,11 @@ external_private_data
 ```
 
 No approval is inferred from silence.
+
+Approval is not retroactive. In particular, a delegated principal that writes a
+protected live surface before approval has violated the delegation policy; a
+later approval or revert cannot restore evidence produced after the earliest
+uncertain mutation point.
 
 Task publishing or routing should classify the task goal and explicit
 `Approval Risks` section for the high-risk categories above. When a match is
@@ -1512,6 +1648,10 @@ A task is done only when:
 - skill recommendation backend result is recorded when a backend is available,
   and relevant recommendations are surfaced in dispatch prompts;
 - squad routing evidence is recorded when a squad is used;
+- submission dependencies are recorded and every dependent delivery follows
+  its prerequisite completion in receipt-ledger line order;
+- delegation policy is recorded for newly routed delegated tasks and has no
+  unresolved protected-write violation;
 - dispatch receipts satisfy the required gates;
 - expected evidence exists and is not marked invalid, superseded, rejected, or
   blocked;

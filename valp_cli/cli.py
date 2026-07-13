@@ -56,6 +56,11 @@ notes:
     dispatch.add_argument("task_id", help="Task id")
     dispatch.add_argument("--workspace", default=".", help="Workspace root")
     dispatch.add_argument("--agent", default="all", help="Agent name or all")
+    dispatch.add_argument(
+        "--role",
+        choices=["coordinator", "implementer", "reviewer", "prototype", "researcher", "other"],
+        help="Submit only the named role phase; required to disambiguate co-located roles",
+    )
     dispatch.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Override the runtime adapter recorded in routing.json")
     dispatch.add_argument("--submit", action="store_true", help="Actually submit through the selected reference adapter when supported")
 
@@ -154,7 +159,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "dispatch":
-        commands = dispatch_task(Path(args.workspace), args.task_id, agent=args.agent, submit=args.submit, runtime=args.runtime)
+        commands = dispatch_task(
+            Path(args.workspace),
+            args.task_id,
+            agent=args.agent,
+            submit=args.submit,
+            runtime=args.runtime,
+            role=args.role,
+        )
         if args.submit:
             print(f"Submitted dispatch for task {args.task_id}")
         else:

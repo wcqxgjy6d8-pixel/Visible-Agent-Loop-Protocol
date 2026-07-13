@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 import json
 import shutil
 import tempfile
@@ -77,6 +78,105 @@ class ValpAuditTests(unittest.TestCase):
 
             self.assertEqual(report.status, FAIL)
             self.assertTrue(any(item.id == "context_pack" and item.status == FAIL for item in report.items))
+
+    def test_dispatch_payload_counts_use_canonical_line_endings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            dispatch_ref = "agents/codex/dispatch.md"
+            dispatch_path = task / dispatch_ref
+            canonical_text = dispatch_path.read_text(encoding="utf-8")
+            dispatch_path.write_bytes(canonical_text.replace("\n", "\r\n").encode("utf-8"))
+            routing = json.loads((task / "routing.json").read_text(encoding="utf-8"))
+            routing["dispatch_payload_budgets"] = {
+                "codex": {
+                    "role": "implementer",
+                    "max_chars": len(canonical_text),
+                    "max_reference_tokens": (len(canonical_text) + 3) // 4,
+                    "token_estimator": "ceil(chars/4)",
+                    "actual_chars": len(canonical_text),
+                    "actual_reference_tokens": (len(canonical_text) + 3) // 4,
+                    "dispatch_ref": dispatch_ref,
+                }
+            }
+            (task / "routing.json").write_text(json.dumps(routing), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            context_item = next(item for item in report.items if item.id == "context_pack")
+            self.assertEqual(context_item.status, PASS)
+
+    def test_exact_historical_dispatch_boundary_is_a_warning_not_a_silent_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_id = "TASK-HISTORICAL"
+            decision_task_id = "TASK-RECONCILIATION"
+            task = root / ".herdr-loop" / "tasks" / task_id
+            shutil.copytree(EXAMPLE, task)
+            decision_ref = f".herdr-loop/tasks/{decision_task_id}/evidence/decision.md"
+            decision_path = root / decision_ref
+            decision_path.parent.mkdir(parents=True)
+            decision_path.write_text("Independent reconciliation decision.\n", encoding="utf-8")
+
+            dispatch_ref = "agents/codex/dispatch.md"
+            dispatch_path = task / dispatch_ref
+            original_text = dispatch_path.read_text(encoding="utf-8")
+            recorded_budget = {
+                "role": "implementer",
+                "max_chars": len(original_text),
+                "max_reference_tokens": (len(original_text) + 3) // 4,
+                "token_estimator": "ceil(chars/4)",
+                "actual_chars": len(original_text),
+                "actual_reference_tokens": (len(original_text) + 3) // 4,
+                "dispatch_ref": dispatch_ref,
+            }
+            dispatch_path.write_text(dispatch_path.read_text(encoding="utf-8") + ("x" * 500), encoding="utf-8")
+            dispatch_text = dispatch_path.read_text(encoding="utf-8")
+            routing = json.loads((task / "routing.json").read_text(encoding="utf-8"))
+            state = json.loads((task / "state.json").read_text(encoding="utf-8"))
+            routing["task_id"] = task_id
+            routing["dispatch_payload_budgets"] = {"codex": recorded_budget}
+            state["task_id"] = task_id
+            state["status"] = "done"
+            boundary = {
+                "schema_version": "valp-historical-audit-boundary.v1",
+                "task_id": task_id,
+                "recorded_at": "2026-07-12T00:00:00Z",
+                "decision_task_id": decision_task_id,
+                "decision_ref": decision_ref,
+                "auditor_boundary": {
+                    "historical_cli_version": "0.2.0",
+                    "historical_source_revision": "1" * 40,
+                    "rule_introduced_revision": "2" * 40,
+                },
+                "accepted_legacy_artifacts": [
+                    {
+                        "rule_id": "context_pack.dispatch_payload_budget",
+                        "agent": "codex",
+                        "artifact_ref": dispatch_ref,
+                        "byte_digest": "sha256:" + hashlib.sha256(dispatch_path.read_bytes()).hexdigest(),
+                        "recorded_budget": recorded_budget,
+                        "observed": {
+                            "actual_chars": len(dispatch_text),
+                            "actual_reference_tokens": (len(dispatch_text) + 3) // 4,
+                        },
+                        "disposition": "accept_historical_artifact",
+                        "reason": "The immutable dispatch predates this audit rule.",
+                    }
+                ],
+            }
+            (task / "routing.json").write_text(json.dumps(routing), encoding="utf-8")
+            (task / "state.json").write_text(json.dumps(state), encoding="utf-8")
+            (task / "historical-audit-boundary.json").write_text(json.dumps(boundary), encoding="utf-8")
+
+            report = TaskAudit(task).run()
+            self.assertEqual(report.status, WARN)
+            self.assertEqual(report.fail_count, 0)
+            self.assertTrue(any(item.id == "context_pack" and item.status == WARN for item in report.items))
+
+            dispatch_path.write_text(dispatch_text + "tamper", encoding="utf-8")
+            tampered = TaskAudit(task).run()
+            self.assertEqual(tampered.status, FAIL)
+            self.assertTrue(any(item.id == "context_pack" and item.status == FAIL for item in tampered.items))
 
     def test_real_documentation_calibration_case_study_passes(self) -> None:
         report = TaskAudit(REAL_DOC_EXAMPLE).run()

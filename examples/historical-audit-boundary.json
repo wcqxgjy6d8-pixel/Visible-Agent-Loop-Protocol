@@ -1,0 +1,35 @@
+{
+  "schema_version": "valp-historical-audit-boundary.v1",
+  "task_id": "TASK-HISTORICAL-001",
+  "recorded_at": "2026-07-12T00:00:00Z",
+  "decision_task_id": "TASK-RECONCILE-001",
+  "decision_ref": ".herdr-loop/tasks/TASK-RECONCILE-001/evidence/decision.md",
+  "auditor_boundary": {
+    "historical_cli_version": "0.2.0",
+    "historical_source_revision": "1111111111111111111111111111111111111111",
+    "rule_introduced_revision": "2222222222222222222222222222222222222222"
+  },
+  "accepted_legacy_artifacts": [
+    {
+      "rule_id": "context_pack.dispatch_payload_budget",
+      "agent": "codex",
+      "artifact_ref": "agents/codex/dispatch.md",
+      "byte_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "recorded_budget": {
+        "role": "implementer",
+        "max_chars": 2800,
+        "max_reference_tokens": 700,
+        "token_estimator": "ceil(chars/4)",
+        "actual_chars": 2600,
+        "actual_reference_tokens": 650,
+        "dispatch_ref": "agents/codex/dispatch.md"
+      },
+      "observed": {
+        "actual_chars": 3000,
+        "actual_reference_tokens": 750
+      },
+      "disposition": "accept_historical_artifact",
+      "reason": "The immutable artifact predates enforcement of this audit rule."
+    }
+  ]
+}

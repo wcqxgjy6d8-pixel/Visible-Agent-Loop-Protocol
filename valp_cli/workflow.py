@@ -11,7 +11,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .delegation import build_delegation_policy, validate_delegation_policy
 from .risk import classify_approval_risks
+from .submission import (
+    build_submission_dependencies,
+    role_expected_refs,
+    roles_for_agent,
+    unmet_dependencies_for_phases,
+    validate_submission_dependencies,
+)
 
 
 PROFILE_RULES = [
@@ -140,6 +148,23 @@ def read_json_lines(path: Path) -> list[dict[str, Any]]:
             continue
         if isinstance(record, dict):
             records.append(record)
+    return records
+
+
+def read_json_lines_strict(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"Invalid JSONL record at {path.name}:{line_number}: {exc.msg}") from exc
+        if not isinstance(record, dict):
+            raise SystemExit(f"Invalid JSONL record at {path.name}:{line_number}: expected object")
+        records.append(record)
     return records
 
 
@@ -1384,6 +1409,13 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         for agent in selected_agents
     }
     expected_by_agent = expected_refs_for_agents(selected_agents, role_assignments)
+    submission_dependencies = build_submission_dependencies(task_id, role_assignments)
+    delegation_policy = build_delegation_policy(
+        task_id,
+        manual_mode=runtime_adapter.get("class") == "manual",
+    )
+    write_json(directory / "submission-dependencies.json", submission_dependencies)
+    write_json(directory / "delegation-policy.json", delegation_policy)
     routing = {
         "schema_version": "valp-capability-routing.v1",
         "task_id": task_id,
@@ -1398,6 +1430,14 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         "capabilities_needed": PROFILE_CAPABILITIES.get(profile, PROFILE_CAPABILITIES["generic-analysis"]),
         "role_requirements": PROFILE_ROLE_REQUIREMENTS.get(profile, PROFILE_ROLE_REQUIREMENTS["generic-analysis"]),
         "role_assignments": role_assignments,
+        "submission_dependencies": {
+            "status": "recorded",
+            "ref": "submission-dependencies.json",
+        },
+        "delegation_policy": {
+            "status": "recorded",
+            "ref": "delegation-policy.json",
+        },
         "coordinator_selection": {
             "selected_agent": role_assignments.get("coordinator"),
             "selection_rule": "Selected from current capability evidence, local overlay hints, runtime availability, context policy, and task profile. The open protocol does not name a universal leader.",
@@ -1473,6 +1513,8 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             "squad_routing": {"used": False},
             "selected_agents": selected_agents,
             "role_assignments": role_assignments,
+            "submission_dependencies": routing["submission_dependencies"],
+            "delegation_policy": routing["delegation_policy"],
             "capabilities_needed": routing["capabilities_needed"],
             "capabilities_missing": [],
             "context_policies": context_policies,
@@ -1924,20 +1966,9 @@ def expected_refs_for_agents(selected_agents: list[str], role_assignments: dict[
     role_assignments = role_assignments or {}
     refs = {}
     for agent in selected_agents:
-        agent_roles = {role for role, selected in role_assignments.items() if selected == agent}
         agent_refs: list[str] = []
-        if "coordinator" in agent_roles:
-            agent_refs.append(f"agents/{agent}/self-review.md")
-        if "implementer" in agent_roles or "researcher" in agent_roles:
-            agent_refs.append(f"agents/{agent}/evidence.md")
-        if "implementer" in agent_roles:
-            agent_refs.append("evidence/verification.md")
-        if "reviewer" in agent_roles:
-            agent_refs.append(f"agents/{agent}/review.md")
-        if "prototype" in agent_roles:
-            agent_refs.append(f"agents/{agent}/prototype.md")
-        if not agent_refs:
-            agent_refs.append(f"agents/{agent}/evidence.md")
+        for role in roles_for_agent(role_assignments, agent):
+            agent_refs.extend(role_expected_refs(agent, role))
         refs[agent] = list(dict.fromkeys(agent_refs))
     return refs
 
@@ -1965,8 +1996,16 @@ def write_dispatches(
         agent_dir.mkdir(parents=True, exist_ok=True)
         expected = "\n".join(f"- `{ref}`" for ref in expected_by_agent.get(agent, []))
         exact_evidence = "\n".join(f"- `{relative_ref(directory / ref, root)}`" for ref in expected_by_agent.get(agent, []))
-        reasons = bounded_text("; ".join(routing["agent_match_reasons"].get(agent, [])), 240)
+        reasons = bounded_text("; ".join(routing["agent_match_reasons"].get(agent, [])), 160)
         skills = format_skill_recommendations_for_dispatch(agent, skill_recommendations)
+        compact_skill_lines = [
+            line
+            for line in skills.splitlines()
+            if "Full recommendation records remain" in line
+            or "Recommendations filtered for" in line
+            or line.startswith("- Work item ")
+        ]
+        compact_skills = "\n".join(compact_skill_lines) or "- Full recommendation records: `skill-recommendations.json`."
         attention_slice = attention_slice_for_agent(agent, visible_attention)
         budget = dispatch_budget_for_agent(agent, routing.get("role_assignments") or {})
 
@@ -1993,15 +2032,15 @@ Primary role: `{budget['role']}`. Capability match: {reasons or 'current routing
 
 ## Task References
 
-The coordinator/leader owns dispatch precision. Start here and load detail only when required:
+The coordinator/leader owns dispatch precision; load these refs as needed:
 
 {core_task_refs}
-- On demand: `automation-policy.json`, `routing.json`, `visible-routing.md`, `context-selection.json`, `mask-list.json`, `evidence-board.json`
+- Gate contracts: `submission-dependencies.json`, `delegation-policy.json`
+- More refs: `automation-policy.json`, `routing.json`, `visible-routing.md`, `context-selection.json`, `mask-list.json`, `evidence-board.json`
 
 ## Payload Budget
 
-- Treat this brief as working context; use task-local refs for progressive disclosure.
-- Do not request hidden chat history. Keep output to evidence, blockers, confidence, and recommendations.
+- Expand only through task-local refs; do not request hidden chat history.
 
 ## Visible Attention Slice
 
@@ -2009,9 +2048,10 @@ The coordinator/leader owns dispatch precision. Start here and load detail only 
 
 ## Permission Boundary
 
-- Do not bypass approval gates.
-- Do not claim runtime facts without evidence.
-- Write only expected role evidence unless source edits are explicitly permitted.
+- Honor approval gates; cite evidence for runtime facts.
+- Do not write skills, plugins, memory, MCP configuration, or agent configuration while delegated.
+- Scoped repository edits need permission and must not be live-loaded.
+- Write expected evidence only unless source edits are permitted.
 
 ## Expected Evidence
 
@@ -2023,20 +2063,20 @@ The coordinator/leader owns dispatch precision. Start here and load detail only 
 
 ## Evidence Claim Rule
 
-- Build/test/runtime claims require a concrete task-local log, receipt, screenshot, or evidence path.
+- Cite task-local proof for build, test, and runtime claims.
 
 ## Required Response
 
-Write concise evidence to the expected path, including blockers and confidence limits. Include `## Recommendations`; the coordinator must resolve it before Done.
+Write expected evidence with blockers, confidence, and `## Recommendations`.
 """
 
         variants = [
             (task_brief, attention_slice, skills),
-            (bounded_text(task_brief, 320), attention_slice, "- Full recommendation records: `skill-recommendations.json` (short labels only)."),
+            (bounded_text(task_brief, 320), attention_slice, compact_skills),
             (
                 bounded_text(task_brief, 240),
                 f"- Attention head(s): task-local role slice. See `visible-routing.md` and `context-pack.json`.",
-                "- Full recommendation records: `skill-recommendations.json`.",
+                compact_skills,
             ),
         ]
         dispatch = ""
@@ -2169,13 +2209,20 @@ def append_receipt(directory: Path, record: dict[str, Any]) -> None:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def write_queue_submission(directory: Path, task_id: str, target: str, expected: list[str]) -> dict[str, Any]:
-    queue_id = f"{task_id}-{target}"
-    worker_id = f"worker-{target}"
+def write_queue_submission(
+    directory: Path,
+    task_id: str,
+    target: str,
+    role: str,
+    expected: list[str],
+) -> dict[str, Any]:
+    queue_id = f"{task_id}-{target}-{role}"
+    worker_id = f"worker-{target}-{role}"
     queue_record = {
         "schema_version": "valp-queue-dispatch.v1",
         "task_id": task_id,
         "agent": target,
+        "role": role,
         "queue_id": queue_id,
         "worker_id": worker_id,
         "status": "queued",
@@ -2184,12 +2231,14 @@ def write_queue_submission(directory: Path, task_id: str, target: str, expected:
         "created_at": now_iso(),
         "note": "Synthetic reference queue submission. Completion still requires dispatch_completed plus expected evidence.",
     }
-    write_json(directory / "queue" / f"{target}.json", queue_record)
+    queue_ref = f"queue/{target}-{role}.json"
+    write_json(directory / queue_ref, queue_record)
     append_receipt(
         directory,
         {
             "ts": now_iso(),
             "agent": target,
+            "role": role,
             "event": "dispatch_submitted",
             "dispatch_ref": f"agents/{target}/dispatch.md",
             "expected_refs": expected,
@@ -2197,7 +2246,7 @@ def write_queue_submission(directory: Path, task_id: str, target: str, expected:
                 "runtime": "VALP headless queue",
                 "queue_id": queue_id,
                 "worker_id": worker_id,
-                "queue_record": f"queue/{target}.json",
+                "queue_record": queue_ref,
             },
             "summary": "Headless queue adapter accepted the dispatch. Completion still requires expected evidence.",
         },
@@ -2219,7 +2268,7 @@ def suspend_task(root: Path, task_id: str, timeout_seconds: float = 300.0) -> di
     if state.get("status") in {"done", "failed", "cancelled"}:
         raise SystemExit(f"Cannot suspend task in terminal state: {state.get('status')}")
 
-    receipts = read_json_lines(directory / "dispatch-receipts.jsonl")
+    receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
     selected_agents = [str(agent) for agent in (state.get("selected_agents") or [])]
     latest_receipts: dict[str, dict[str, Any]] = {}
     for record in receipts:
@@ -2281,7 +2330,7 @@ def resume_suspended_task(
             receipt_index = int(resume_ref.rsplit("#", 1)[1])
         except (ValueError, IndexError):
             raise SystemExit("Invalid dispatch receipt ref")
-        receipts = read_json_lines(directory / "dispatch-receipts.jsonl")
+        receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
         if receipt_index < 1 or receipt_index > len(receipts):
             raise SystemExit("Dispatch receipt ref does not exist")
         if receipt_index <= int(suspension.get("receipt_count_at_entry") or 0):
@@ -2335,7 +2384,7 @@ def wait_for_task(
         if state.get("status") != "suspended" or current.get("status") != "waiting":
             return current
 
-        receipts = read_json_lines(directory / "dispatch-receipts.jsonl")
+        receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
         receipt_count = int(current.get("receipt_count_at_entry") or 0)
         waiting_for_agents = {str(agent) for agent in (current.get("waiting_for_agents") or [])}
         for receipt_index, record in enumerate(receipts[receipt_count:], start=receipt_count + 1):
@@ -2358,15 +2407,117 @@ def wait_for_task(
         time.sleep(max(0.01, poll_interval_seconds))
 
 
-def dispatch_task(root: Path, task_id: str, agent: str = "all", submit: bool = False, runtime: str | None = None) -> list[str]:
+def dispatch_task(
+    root: Path,
+    task_id: str,
+    agent: str = "all",
+    submit: bool = False,
+    runtime: str | None = None,
+    role: str | None = None,
+) -> list[str]:
     root = workspace_root(root)
     directory = task_dir(root, task_id)
     routing = read_json(directory / "routing.json")
     if not routing:
         raise SystemExit(f"Missing routing.json for task {task_id}")
     selected_agents = routing.get("selected_agents") or []
-    targets = selected_agents if agent == "all" else [agent]
     role_assignments = routing.get("role_assignments") or {}
+    if role and role not in {"coordinator", "implementer", "reviewer", "prototype", "researcher", "other"}:
+        raise SystemExit(f"Unsupported dispatch role: {role}")
+    if agent == "all" and role:
+        targets = [target for target in selected_agents if role in roles_for_agent(role_assignments, target)]
+    else:
+        targets = selected_agents if agent == "all" else [agent]
+    unknown_targets = [target for target in targets if target not in selected_agents]
+    if unknown_targets:
+        raise SystemExit("Agent is not selected for this task: " + ", ".join(unknown_targets))
+    if not targets:
+        raise SystemExit("No selected agent is assigned to the requested role")
+
+    phases: list[tuple[str, str]] = []
+    for target in targets:
+        assigned_roles = roles_for_agent(role_assignments, target)
+        if role:
+            if role not in assigned_roles:
+                raise SystemExit(f"Agent {target} is not assigned role {role}")
+            phases.append((target, role))
+        else:
+            phases.extend((target, assigned_role) for assigned_role in assigned_roles)
+
+    runtime_record = routing.get("runtime_adapter") or {}
+    requested_runtime = normalize_runtime(runtime)
+    runtime_kind = runtime_from_adapter_record(runtime_record) if requested_runtime == "auto" else requested_runtime
+    manual_mode = runtime_kind == "manual"
+    state = read_json(directory / "state.json")
+    if not state:
+        raise SystemExit(f"Missing state.json for task {task_id}")
+
+    expected_submission_marker = {"status": "recorded", "ref": "submission-dependencies.json"}
+    routing_submission_marker = routing.get("submission_dependencies") or {}
+    state_submission_marker = state.get("submission_dependencies") or {}
+    submission_path = directory / "submission-dependencies.json"
+    submission_dependencies: dict[str, Any] = {}
+    if submit and (
+        routing_submission_marker != expected_submission_marker
+        or state_submission_marker != expected_submission_marker
+        or not submission_path.is_file()
+    ):
+        raise SystemExit("Submission dependency policy is missing or inconsistent")
+    if routing_submission_marker or state_submission_marker or submission_path.exists():
+        if (
+            routing_submission_marker != expected_submission_marker
+            or state_submission_marker != expected_submission_marker
+        ):
+            raise SystemExit("Submission dependency marker is missing or inconsistent")
+        submission_dependencies = read_json(submission_path)
+        dependency_errors = validate_submission_dependencies(
+            submission_dependencies,
+            task_id,
+            role_assignments,
+        )
+        if dependency_errors:
+            raise SystemExit("Invalid submission dependencies: " + "; ".join(dependency_errors))
+
+    expected_delegation_marker = {"status": "recorded", "ref": "delegation-policy.json"}
+    routing_delegation_marker = routing.get("delegation_policy") or {}
+    state_delegation_marker = state.get("delegation_policy") or {}
+    delegation_path = directory / "delegation-policy.json"
+    if submit and (
+        routing_delegation_marker != expected_delegation_marker
+        or state_delegation_marker != expected_delegation_marker
+        or not delegation_path.is_file()
+    ):
+        raise SystemExit("Delegation policy is missing or inconsistent")
+    if routing_delegation_marker or state_delegation_marker or delegation_path.exists():
+        if (
+            routing_delegation_marker != expected_delegation_marker
+            or state_delegation_marker != expected_delegation_marker
+        ):
+            raise SystemExit("Delegation policy marker is missing or inconsistent")
+        delegation_policy = read_json(delegation_path)
+        delegation_errors = validate_delegation_policy(
+            delegation_policy,
+            task_id,
+            manual_mode=manual_mode,
+        )
+        if delegation_errors:
+            raise SystemExit("Invalid delegation policy: " + "; ".join(delegation_errors))
+        if delegation_policy.get("violations"):
+            raise SystemExit("Delegated dispatch is blocked by a recorded live self-modification violation")
+
+    if submit and submission_dependencies:
+        dependency_errors = unmet_dependencies_for_phases(
+            submission_dependencies,
+            phases,
+            read_json_lines_strict(directory / "dispatch-receipts.jsonl"),
+            directory,
+            read_json(directory / "evidence-status.json"),
+        )
+        if dependency_errors:
+            raise SystemExit("Dispatch blocked by unmet prerequisites: " + ", ".join(dependency_errors))
+    if submit and read_json(directory / "automation-policy.json").get("selected_action") == "block_for_approval":
+        raise SystemExit("Dispatch is blocked until approval evidence and automation policy are reconciled")
+
     recorded_budgets = routing.get("dispatch_payload_budgets") or {}
     for target in targets:
         dispatch_ref = directory / "agents" / target / "dispatch.md"
@@ -2385,9 +2536,9 @@ def dispatch_task(root: Path, task_id: str, agent: str = "all", submit: bool = F
                 f"chars={actual_chars}/{budget['max_chars']} "
                 f"reference_tokens={actual_reference_tokens}/{budget['max_reference_tokens']}"
             )
-    runtime_record = routing.get("runtime_adapter") or {}
-    requested_runtime = normalize_runtime(runtime)
-    runtime_kind = runtime_from_adapter_record(runtime_record) if requested_runtime == "auto" else requested_runtime
+    if manual_mode and submit:
+        raise SystemExit("Manual Mode cannot use --submit. Copy dispatches manually and record ordered manual attestations.")
+
     preflight = collect_runtime_preflight(targets, runtime=runtime_kind)
     failed = [
         name
@@ -2400,20 +2551,23 @@ def dispatch_task(root: Path, task_id: str, agent: str = "all", submit: bool = F
         raise SystemExit("Runtime preflight failed for: " + target_summary)
     write_json(directory / "runtime-preflight.json", preflight)
     commands = []
-    for target in targets:
-        dispatch_ref = directory / "agents" / target / "dispatch.md"
-        expected = expected_refs_for_agents([target], role_assignments).get(target, [])
-        if runtime_kind == "manual":
-            if submit:
-                raise SystemExit("Manual Mode cannot use --submit. Copy dispatches manually and record manual_result_attested when evidence exists.")
+    for target, target_role in phases:
+        expected = role_expected_refs(target, target_role)
+        if manual_mode:
             expected_text = ", ".join(expected) if expected else "task-local evidence"
-            commands.append(f"Manual Mode: copy agents/{target}/dispatch.md to {target}; expected evidence: {expected_text}")
+            commands.append(
+                f"Manual Mode: phase={target_role}; copy agents/{target}/dispatch.md to {target}; "
+                f"expected evidence: {expected_text}; attest ordering from submission-dependencies.json"
+            )
             continue
         if runtime_kind == "queue":
             expected_text = ", ".join(expected) if expected else "task-local evidence"
-            commands.append(f"VALP Queue Mode: enqueue agents/{target}/dispatch.md for {target}; expected evidence: {expected_text}")
+            commands.append(
+                f"VALP Queue Mode: phase={target_role}; enqueue agents/{target}/dispatch.md for {target}; "
+                f"expected evidence: {expected_text}"
+            )
             if submit:
-                write_queue_submission(directory, task_id, target, expected)
+                write_queue_submission(directory, task_id, target, target_role, expected)
             continue
         if runtime_kind != "herdr":
             raise SystemExit(f"Runtime {runtime_kind} is not supported by this reference dispatch helper.")

@@ -16,15 +16,18 @@ EXAMPLE_SCHEMA_BY_NAME = {
     "context-pack.json": "context-pack.schema.json",
     "context-selection.json": "context-selection.schema.json",
     "correction-cycle.json": "correction-cycle.schema.json",
+    "delegation-policy.json": "delegation-policy.schema.json",
     "evidence-board.json": "evidence-board.schema.json",
     "evidence-status.json": "evidence-status.schema.json",
     "local-overlay.json": "local-overlay.schema.json",
     "mask-list.json": "mask-list.schema.json",
     "routing-feedback.json": "routing-feedback.schema.json",
     "learning-feedback.json": "learning-feedback.schema.json",
+    "historical-audit-boundary.json": "historical-audit-boundary.schema.json",
     "routing.json": "routing.schema.json",
     "skill-recommendations.json": "skill-recommendations.schema.json",
     "state.json": "state.schema.json",
+    "submission-dependencies.json": "submission-dependencies.schema.json",
     "trigger-policy.json": "trigger-policy.schema.json",
 }
 

@@ -1,0 +1,35 @@
+{
+  "schema_version": "valp-submission-dependencies.v1",
+  "task_id": "TASK-EXAMPLE-001",
+  "ordering_source": "dispatch-receipts.jsonl#line-order",
+  "dependencies": [
+    {
+      "id": "coordinator-before-implementer",
+      "prerequisite_role": "coordinator",
+      "prerequisite_agent": "hermes",
+      "dependent_role": "implementer",
+      "dependent_agent": "codex",
+      "prerequisite_refs": [
+        "agents/hermes/self-review.md"
+      ],
+      "dependent_refs": [
+        "agents/codex/evidence.md",
+        "evidence/verification.md"
+      ]
+    },
+    {
+      "id": "implementer-before-reviewer",
+      "prerequisite_role": "implementer",
+      "prerequisite_agent": "codex",
+      "dependent_role": "reviewer",
+      "dependent_agent": "claude",
+      "prerequisite_refs": [
+        "agents/codex/evidence.md",
+        "evidence/verification.md"
+      ],
+      "dependent_refs": [
+        "agents/claude/review.md"
+      ]
+    }
+  ]
+}

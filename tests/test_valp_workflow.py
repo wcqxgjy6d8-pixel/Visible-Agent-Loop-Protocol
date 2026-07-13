@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from valp_cli.cli import main
+from valp_cli.submission import build_submission_dependencies, dependency_order_errors
 from valp_cli.workflow import (
     classify_profile,
     classify_approval_risks,
@@ -100,6 +101,12 @@ class ValpWorkflowTests(unittest.TestCase):
         self.assertIn("deploy", kinds)
         self.assertIn("release", kinds)
         self.assertIn("external_private_data", kinds)
+
+        config_kinds = {
+            item["kind"]
+            for item in classify_approval_risks("Install a plugin and patch a skill for the live agent.")
+        }
+        self.assertEqual(config_kinds, {"plugin_config", "skill_config"})
         self.assertEqual(classify_approval_risks("Write author notes."), [])
         credential_kinds = {item["kind"] for item in classify_approval_risks("Rotate credentials.")}
         self.assertIn("auth", credential_kinds)
@@ -433,6 +440,7 @@ class ValpWorkflowTests(unittest.TestCase):
                 self.assertLessEqual((len(dispatch) + 3) // 4, budget["max_reference_tokens"])
                 self.assertEqual(budget["actual_chars"], len(dispatch))
                 self.assertIn("## Permission Boundary", dispatch)
+                self.assertIn("Do not write skills, plugins, memory, MCP configuration, or agent configuration", dispatch)
                 self.assertIn("## Expected Evidence", dispatch)
                 self.assertIn("Payload budget:", dispatch)
 
@@ -446,9 +454,433 @@ class ValpWorkflowTests(unittest.TestCase):
                     root,
                     "TASK-DISPATCH-BUDGET",
                     agent="codex",
+                    role="coordinator",
                     submit=True,
                     runtime="queue",
                 )
+
+            delegation_policy = read_json(task_dir / "delegation-policy.json")
+            self.assertEqual(
+                delegation_policy["live_self_modification"]["mode"],
+                "forbidden",
+            )
+
+    def test_dispatch_submit_enforces_role_evidence_dependencies(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-12T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "hermes": {
+                    "active": True,
+                    "role": ["coordination", "state", "approval"],
+                    "strengths": ["coordination", "state gates"],
+                    "skills": [],
+                    "mcp_servers": [],
+                },
+                "codex": {
+                    "active": True,
+                    "role": ["implementation", "verification"],
+                    "strengths": ["edits files", "runs tests"],
+                    "skills": [],
+                    "mcp_servers": [],
+                },
+                "claude": {
+                    "active": True,
+                    "role": ["review", "code_review", "risk_review"],
+                    "strengths": ["read-only review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    task_dir = publish_task(
+                        root,
+                        "TASK-STAGED-DISPATCH",
+                        "Fix agent runtime code and review it",
+                        runtime="queue",
+                    )
+
+            dependencies = read_json(task_dir / "submission-dependencies.json")
+            self.assertEqual(
+                [item["id"] for item in dependencies["dependencies"]],
+                ["coordinator-before-implementer", "implementer-before-reviewer"],
+            )
+            self.assertEqual(
+                dependencies["dependencies"][0]["prerequisite_refs"],
+                ["agents/hermes/self-review.md"],
+            )
+            self.assertEqual(
+                dependencies["dependencies"][1]["prerequisite_refs"],
+                ["agents/codex/evidence.md", "evidence/verification.md"],
+            )
+            state = read_json(task_dir / "state.json")
+            delegation_marker = state.pop("delegation_policy")
+            (task_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "Delegation policy"):
+                dispatch_task(
+                    root,
+                    "TASK-STAGED-DISPATCH",
+                    agent="hermes",
+                    role="coordinator",
+                    submit=True,
+                    runtime="queue",
+                )
+            state["delegation_policy"] = delegation_marker
+            (task_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+            delegation_path = task_dir / "delegation-policy.json"
+            delegation_policy = read_json(delegation_path)
+            delegation_policy["violations"] = [
+                {
+                    "agent": "hermes",
+                    "surface": "skills",
+                    "evidence_ref": "evidence/live-config-violation.md",
+                    "detected_at": "2026-07-12T00:00:30Z",
+                }
+            ]
+            delegation_path.write_text(json.dumps(delegation_policy), encoding="utf-8")
+            receipts = task_dir / "dispatch-receipts.jsonl"
+            receipts_before = receipts.read_bytes()
+            preflight_path = task_dir / "runtime-preflight.json"
+            preflight_before = preflight_path.read_bytes() if preflight_path.exists() else None
+            with patch("valp_cli.workflow.collect_runtime_preflight") as collect_preflight:
+                with self.assertRaisesRegex(SystemExit, "live self-modification violation"):
+                    dispatch_task(
+                        root,
+                        "TASK-STAGED-DISPATCH",
+                        agent="hermes",
+                        role="coordinator",
+                        submit=True,
+                        runtime="queue",
+                    )
+            collect_preflight.assert_not_called()
+            self.assertEqual(receipts.read_bytes(), receipts_before)
+            if preflight_before is None:
+                self.assertFalse(preflight_path.exists())
+            else:
+                self.assertEqual(preflight_path.read_bytes(), preflight_before)
+            self.assertFalse((task_dir / "queue" / "hermes-coordinator.json").exists())
+            delegation_policy["violations"] = []
+            delegation_path.write_text(json.dumps(delegation_policy), encoding="utf-8")
+
+            with self.assertRaisesRegex(SystemExit, "unmet prerequisites"):
+                dispatch_task(root, "TASK-STAGED-DISPATCH", submit=True, runtime="queue")
+            receipts_before = receipts.read_bytes()
+            preflight_before = preflight_path.read_bytes() if preflight_path.exists() else None
+            with patch("valp_cli.workflow.collect_runtime_preflight") as collect_preflight:
+                with self.assertRaisesRegex(SystemExit, "unmet prerequisites"):
+                    dispatch_task(
+                        root,
+                        "TASK-STAGED-DISPATCH",
+                        agent="codex",
+                        role="implementer",
+                        submit=True,
+                        runtime="queue",
+                    )
+            collect_preflight.assert_not_called()
+            self.assertEqual(receipts.read_bytes(), receipts_before)
+            if preflight_before is None:
+                self.assertFalse(preflight_path.exists())
+            else:
+                self.assertEqual(preflight_path.read_bytes(), preflight_before)
+            self.assertFalse((task_dir / "queue" / "codex-implementer.json").exists())
+
+            (task_dir / "agents" / "hermes" / "self-review.md").write_text("gate passed\n", encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "unmet prerequisites"):
+                dispatch_task(
+                    root,
+                    "TASK-STAGED-DISPATCH",
+                    agent="codex",
+                    role="implementer",
+                    submit=True,
+                    runtime="queue",
+                )
+
+            with receipts.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "ts": "2026-07-12T00:01:00Z",
+                            "agent": "hermes",
+                            "role": "coordinator",
+                            "event": "dispatch_completed",
+                            "expected_refs": ["agents/hermes/self-review.md"],
+                        }
+                    )
+                    + "\n"
+                )
+            dispatch_task(
+                root,
+                "TASK-STAGED-DISPATCH",
+                agent="codex",
+                role="implementer",
+                submit=True,
+                runtime="queue",
+            )
+
+            (task_dir / "agents" / "codex" / "evidence.md").write_text("implemented\n", encoding="utf-8")
+            (task_dir / "evidence").mkdir(exist_ok=True)
+            (task_dir / "evidence" / "verification.md").write_text("verified\n", encoding="utf-8")
+            (task_dir / "evidence-status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-evidence-status.v1",
+                        "evidence": {
+                            "agents/codex/evidence.md": {"status": "invalid"},
+                            "evidence/verification.md": {"status": "valid"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with receipts.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "ts": "2026-07-12T00:02:00Z",
+                            "agent": "codex",
+                            "role": "implementer",
+                            "event": "dispatch_completed",
+                            "expected_refs": ["agents/codex/evidence.md", "evidence/verification.md"],
+                        }
+                    )
+                    + "\n"
+                )
+            with self.assertRaisesRegex(SystemExit, "unmet prerequisites"):
+                dispatch_task(
+                    root,
+                    "TASK-STAGED-DISPATCH",
+                    agent="claude",
+                    role="reviewer",
+                    submit=True,
+                    runtime="queue",
+                )
+
+            evidence_status = read_json(task_dir / "evidence-status.json")
+            evidence_status["evidence"]["agents/codex/evidence.md"]["status"] = "valid"
+            (task_dir / "evidence-status.json").write_text(json.dumps(evidence_status), encoding="utf-8")
+            dispatch_task(
+                root,
+                "TASK-STAGED-DISPATCH",
+                agent="claude",
+                role="reviewer",
+                submit=True,
+                runtime="queue",
+            )
+            self.assertTrue((task_dir / "queue" / "claude-reviewer.json").is_file())
+
+    def test_dependency_order_uses_receipt_line_order_not_timestamps(self) -> None:
+        dependencies = build_submission_dependencies(
+            "TASK-ORDERED-RECEIPTS",
+            {"coordinator": "hermes", "implementer": "codex"},
+        )
+        prerequisite = {
+            "ts": "2026-07-12T00:02:00Z",
+            "agent": "hermes",
+            "role": "coordinator",
+            "event": "dispatch_completed",
+            "expected_refs": ["agents/hermes/self-review.md"],
+        }
+        dependent = {
+            "ts": "2026-07-12T00:01:00Z",
+            "agent": "codex",
+            "role": "implementer",
+            "event": "dispatch_submitted",
+            "expected_refs": ["agents/codex/evidence.md", "evidence/verification.md"],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = Path(tmp)
+            self_review = task_dir / "agents" / "hermes" / "self-review.md"
+            self_review.parent.mkdir(parents=True)
+            self_review.write_text("gate passed\n", encoding="utf-8")
+            evidence_status = {
+                "evidence": {"agents/hermes/self-review.md": {"status": "valid"}}
+            }
+
+            self.assertEqual(
+                dependency_order_errors(
+                    dependencies,
+                    [prerequisite, dependent],
+                    task_dir,
+                    evidence_status,
+                    manual_mode=False,
+                ),
+                [],
+            )
+            errors = dependency_order_errors(
+                dependencies,
+                [dependent, prerequisite],
+                task_dir,
+                evidence_status,
+                manual_mode=False,
+            )
+            self.assertEqual(len(errors), 1)
+            self.assertIn("before receipt line 1", errors[0])
+
+    def test_colocated_reviewer_role_dispatches_only_after_implementer_completion(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-12T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": [
+                        "coordination",
+                        "state",
+                        "approval",
+                        "implementation",
+                        "verification",
+                        "review",
+                        "code_review",
+                        "risk_review",
+                    ],
+                    "strengths": ["coordinates, implements, verifies, and reviews"],
+                    "skills": [],
+                    "mcp_servers": [],
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    task_dir = publish_task(
+                        root,
+                        "TASK-COLOCATED-ROLES",
+                        "Fix runtime code, verify it, and review the result.",
+                        runtime="queue",
+                    )
+
+            routing = read_json(task_dir / "routing.json")
+            self.assertEqual(
+                routing["role_assignments"],
+                {"coordinator": "codex", "implementer": "codex", "reviewer": "codex"},
+            )
+            for ref, content in {
+                "agents/codex/self-review.md": "gate passed\n",
+                "agents/codex/evidence.md": "implemented\n",
+                "evidence/verification.md": "verified\n",
+            }.items():
+                path = task_dir / ref
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+            (task_dir / "evidence-status.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-evidence-status.v1",
+                        "evidence": {
+                            "agents/codex/self-review.md": {"status": "valid"},
+                            "agents/codex/evidence.md": {"status": "valid"},
+                            "evidence/verification.md": {"status": "valid"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            receipts = task_dir / "dispatch-receipts.jsonl"
+            with receipts.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "ts": "2026-07-12T00:01:00Z",
+                            "agent": "codex",
+                            "role": "coordinator",
+                            "event": "dispatch_completed",
+                            "expected_refs": ["agents/codex/self-review.md"],
+                        }
+                    )
+                    + "\n"
+                )
+            with self.assertRaisesRegex(SystemExit, "unmet prerequisites"):
+                main(
+                    [
+                        "dispatch",
+                        "TASK-COLOCATED-ROLES",
+                        "--workspace",
+                        str(root),
+                        "--agent",
+                        "codex",
+                        "--role",
+                        "reviewer",
+                        "--runtime",
+                        "queue",
+                        "--submit",
+                    ]
+                )
+            self.assertFalse((task_dir / "queue" / "codex-reviewer.json").exists())
+
+            with receipts.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "ts": "2026-07-12T00:02:00Z",
+                            "agent": "codex",
+                            "role": "implementer",
+                            "event": "dispatch_completed",
+                            "expected_refs": ["agents/codex/evidence.md", "evidence/verification.md"],
+                        }
+                    )
+                    + "\n"
+                )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(
+                    main(
+                        [
+                            "dispatch",
+                            "TASK-COLOCATED-ROLES",
+                            "--workspace",
+                            str(root),
+                            "--agent",
+                            "codex",
+                            "--role",
+                            "reviewer",
+                            "--runtime",
+                            "queue",
+                            "--submit",
+                        ]
+                    ),
+                    0,
+                )
+            self.assertIn("Submitted dispatch", output.getvalue())
+            self.assertTrue((task_dir / "queue" / "codex-reviewer.json").is_file())
+            self.assertFalse((task_dir / "queue" / "codex-coordinator.json").exists())
+            self.assertFalse((task_dir / "queue" / "codex-implementer.json").exists())
+
+    def test_submission_dependencies_cover_all_producer_profiles(self) -> None:
+        research = build_submission_dependencies(
+            "TASK-RESEARCH",
+            {"coordinator": "hermes", "researcher": "codex", "reviewer": "claude"},
+        )
+        self.assertEqual(
+            [item["id"] for item in research["dependencies"]],
+            ["coordinator-before-researcher", "researcher-before-reviewer"],
+        )
+
+        apple = build_submission_dependencies(
+            "TASK-APPLE",
+            {
+                "coordinator": "hermes",
+                "implementer": "codex",
+                "prototype": "agy",
+                "reviewer": "claude",
+            },
+        )
+        self.assertEqual(
+            [item["id"] for item in apple["dependencies"]],
+            [
+                "coordinator-before-implementer",
+                "coordinator-before-prototype",
+                "implementer-before-reviewer",
+                "prototype-before-reviewer",
+            ],
+        )
 
     def test_dispatch_uses_queue_adapter_without_herdr_command(self) -> None:
         capabilities = {

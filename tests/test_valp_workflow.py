@@ -1512,7 +1512,7 @@ class ValpWorkflowTests(unittest.TestCase):
             policy_ref = f"wait-policies/{digest}.json"
             snapshot_path = task_dir / policy_ref
             snapshot_path.parent.mkdir(exist_ok=True)
-            snapshot_path.write_text(serialized, encoding="utf-8")
+            workflow_module.atomic_write_text(snapshot_path, serialized)
 
             state = read_json(task_dir / "state.json")
             state["suspension"].update({

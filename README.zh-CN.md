@@ -23,8 +23,9 @@ VALP 要求任务过程留下可审计的证据：
 ## v0.3 提案方向
 
 当前实现和发布版本仍是 `0.2.0`。[RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)
-提出的是 `0.3.0-draft` 目标，不是已经实现、已经生效或已经稳定的功能；
-它不会改变当前 schemas、reference CLI、Runtime 支持范围或发布状态。
+整体仍未完成，也没有达到稳定状态。它的 deterministic-wake 子集已经在本地
+reference core、schemas 和 audit 中实现并通过测试；其余 installation control
+plane 仍是提案，不会改变当前 Runtime 支持范围或发布状态，也不代表稳定 v0.3。
 
 如果把 Prompt、Tools、Agents 看成 Software 3.0 的执行层，VALP 更像外面的
 控制与验收层：它不负责让模型突然更聪明，而是让控制决策和 done claim
@@ -66,7 +67,7 @@ bin/valp audit examples/minimal-task
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=7
+Summary: pass=13 warn=0 fail=0
 ```
 
 再看 [Minimal audit demo](docs/minimal-audit-demo.md)，它会展示：

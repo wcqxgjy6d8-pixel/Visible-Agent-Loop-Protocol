@@ -85,7 +85,12 @@ notes:
         required=True,
         help="External event that resumes coordinator turns",
     )
-    resume.add_argument("--ref", dest="resume_ref", help="Task-local evidence ref; required for runtime_failure")
+    resume.add_argument(
+        "--ref",
+        dest="resume_ref",
+        required=True,
+        help="Task-local valp-exception-wake.v1 evidence ref",
+    )
     resume.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     audit = sub.add_parser("audit", help="Audit a VALP task evidence folder")

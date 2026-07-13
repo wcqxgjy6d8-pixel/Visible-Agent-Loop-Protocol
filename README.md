@@ -70,10 +70,13 @@ for the current evidence and gap matrix.
 
 ## Proposed v0.3 Direction
 
-The current release remains `0.2.0`. [RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)
-is a proposal for `0.3.0-draft`; it is not implemented, normative, or stable.
-It does not change the current schemas, reference CLI, runtime support, or
-release claims.
+The current release remains `0.2.0`. RFC 0001 remains incomplete as a proposal
+for `0.3.0-draft`; read the [full draft](docs/rfcs/0001-v0.3-installation-control-plane.md).
+It is not fully incorporated or stable. Its deterministic-wake subset is
+locally implemented and tested in the reference core, schemas, and audit. The
+remaining installation-control-plane proposal does not change current
+runtime-support or release claims, and this subset does not establish v0.3
+stability.
 
 In Software 3.0 terms, VALP is control-plane code around work driven by prompts,
 tools, and agents. It does not make a model smarter. It makes control decisions
@@ -191,7 +194,7 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=10
+Summary: pass=13 warn=0 fail=0
 ```
 
 To see the audit fail when expected evidence is removed, run the
@@ -378,10 +381,10 @@ The repository includes four self-verifying task examples:
 
 | Example | What it proves | Expected audit |
 |---|---|---|
-| `examples/minimal-task/` | Manual Mode evidence can be audited without a runtime | `PASS`, `pass=13 warn=0 fail=0 skip=10` |
-| `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, correction-cycle, recommendation, review, and final synthesis audit gates | `PASS`, `pass=22 warn=0 fail=0 skip=1` |
-| `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=21 warn=0 fail=0 skip=2` |
-| `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=14 warn=0 fail=0 skip=9` |
+| `examples/minimal-task/` | Manual Mode evidence can be audited without a runtime | `PASS`, `pass=13 warn=0 fail=0` |
+| `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, correction-cycle, recommendation, review, and final synthesis audit gates | `PASS`, `pass=22 warn=0 fail=0` |
+| `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=21 warn=0 fail=0` |
+| `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=14 warn=0 fail=0` |
 | `docs/case-studies/visible-dispatch-process-proof.md` | Short public video of a real VALP/HERDR publish-and-dispatch process; not a standalone Full Mode completion case study | Process proof only |
 
 Run the complete smoke check:
@@ -403,7 +406,7 @@ that exports VALP receipts and evidence.
 |---|---|---|---|
 | macOS | HERDR stable installer or Homebrew | Full Mode | Reference runtime path |
 | Linux | HERDR stable installer, manual binary, or package manager | Full Mode | Reference runtime path |
-| Windows stable workflow | SSH to Linux/macOS host running HERDR | Remote Mode | Full Mode guarantees live on the remote host |
+| Windows stable workflow | SSH to Linux/macOS host running HERDR | Remote Mode | Remote guarantees are conditional on adapter evidence exported by that host; no live continuation E2E is claimed here |
 | Windows local workflow | HERDR Windows preview beta | Conditional Full Mode | Verify beta limitations before claiming Full Mode |
 | Windows without HERDR | Manual Mode today; runner/queue adapter implementation required for Full Mode | Manual / adapter-specific | Windows Terminal can display panes, but does not itself provide receipts |
 | No compatible runtime | Manual files and evidence only | Manual Mode | Useful for learning and audit trails; no runtime proof |

@@ -308,10 +308,11 @@ The command maps the Done Criteria into these audit items:
 ```text
 VALP audit: PASS
 Task: /path/to/Visible-Agent-Loop-Protocol/examples/full-mode-task
-Summary: pass=22 warn=0 fail=0 skip=1
+Summary: pass=22 warn=0 fail=0
 ```
 
-The example has one skip because it does not use squad routing.
+Not-applicable gates are still reported as `skip`; their total may change as
+the audit adds or refines gates, so public examples do not freeze that count.
 
 ## Current Scope
 

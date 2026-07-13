@@ -5,15 +5,16 @@
   "required": ["schema_version", "task_id", "profile", "status", "selected_agents"],
   "properties": {
     "schema_version": {
-      "const": "valp-visible-loop-state.v1"
+      "enum": ["valp-visible-loop-state.v1", "valp-visible-loop-state.v2"]
     },
     "task_id": {"type": "string"},
     "profile": {"type": "string"},
     "loop_layer": {"type": "string"},
     "status": {
       "type": "string",
-      "description": "Includes the non-terminal suspended state when a runtime pauses coordinator model turns."
+      "description": "Includes suspended while a runtime pauses coordinator model turns."
     },
+    "revision": {"type": "integer", "minimum": 0},
     "risk": {"type": "object"},
     "selected_agents": {
       "type": "array",
@@ -38,6 +39,7 @@
       },
       "additionalProperties": false
     },
+    "delegation_violation": {"type": "object"},
     "capabilities_needed": {
       "type": "array",
       "items": {"type": "string"}
@@ -58,7 +60,37 @@
       "type": "object",
       "additionalProperties": {"$ref": "#/$defs/dispatchPayloadBudget"}
     },
-    "suspension": {
+    "suspension": {"type": "object"},
+    "skill_recommendations": {"type": "object"},
+    "visible_attention": {"type": "object"},
+    "routing_confidence": {"type": "object"},
+    "routing_feedback": {"type": "object"},
+    "learning_feedback": {"type": "object"},
+    "gates": {"type": "object"},
+    "approval_required": {"type": "array"},
+    "updated_at": {"type": "string"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"schema_version": {"const": "valp-visible-loop-state.v2"}},
+        "required": ["schema_version"]
+      },
+      "then": {
+        "required": ["revision"],
+        "properties": {
+          "suspension": {"$ref": "urn:valp:schema:deterministic-suspension:v1"}
+        }
+      },
+      "else": {
+        "properties": {
+          "suspension": {"$ref": "#/$defs/legacySuspension"}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "legacySuspension": {
       "type": "object",
       "required": [
         "status",
@@ -92,16 +124,6 @@
       },
       "additionalProperties": false
     },
-    "skill_recommendations": {"type": "object"},
-    "visible_attention": {"type": "object"},
-    "routing_confidence": {"type": "object"},
-    "routing_feedback": {"type": "object"},
-    "learning_feedback": {"type": "object"},
-    "gates": {"type": "object"},
-    "approval_required": {"type": "array"},
-    "updated_at": {"type": "string"}
-  },
-  "$defs": {
     "dispatchPayloadBudget": {
       "type": "object",
       "required": ["role", "max_chars", "max_reference_tokens", "token_estimator"],

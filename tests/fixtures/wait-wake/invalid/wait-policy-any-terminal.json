@@ -1,0 +1,25 @@
+{
+  "schema_version": "valp-wait-policy.v1",
+  "task_id": "TASK-INVALID-WAIT",
+  "wait_policy_id": "unsafe-any-terminal",
+  "mode": "any_terminal",
+  "exception_policy": "exception_short_circuit",
+  "dependency_ref": "submission-dependencies.json",
+  "required_work_items": [
+    {
+      "work_item_id": "implementation:codex",
+      "agent": "codex",
+      "role": "implementer",
+      "dispatch_id": "dispatch-1",
+      "dispatch_generation": 1,
+      "expected_refs": ["agents/codex/evidence.md"]
+    }
+  ],
+  "exception_events": [
+    "dispatch_blocked",
+    "runtime_failure",
+    "cancellation",
+    "timeout",
+    "user_input"
+  ]
+}

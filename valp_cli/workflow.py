@@ -1,24 +1,32 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+import errno
+import hashlib
 import json
 import math
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterator
 
 from .delegation import build_delegation_policy, validate_delegation_policy
 from .risk import classify_approval_risks
 from .submission import (
+    INVALID_EVIDENCE_STATUSES,
     build_submission_dependencies,
+    deterministic_receipt_ledger_errors,
+    has_concrete_runtime_submission_proof,
     role_expected_refs,
     roles_for_agent,
     unmet_dependencies_for_phases,
     validate_submission_dependencies,
+    work_item_identity,
 )
 
 
@@ -107,6 +115,7 @@ DISPATCH_ROLE_BUDGETS = {
     "other": {"max_chars": 2200, "max_reference_tokens": 550},
 }
 SUSPENSION_RESUME_EVENTS = {"receipt", "timeout", "runtime_failure", "cancellation", "user_input"}
+EXTERNAL_RESUME_EVENTS = {"runtime_failure", "cancellation", "user_input"}
 DELIVERY_RECEIPT_EVENTS = {"dispatch_submitted", "manual_delivery_attested"}
 TERMINAL_WORKER_RECEIPT_EVENTS = {
     "dispatch_completed",
@@ -114,15 +123,106 @@ TERMINAL_WORKER_RECEIPT_EVENTS = {
     "manual_result_attested",
     "manual_blocked",
 }
+WAKE_REASONS_BY_RESUME_EVENT = {
+    "receipt": {"dependency_ready", "dispatch_blocked", "manual_blocked"},
+    "timeout": {"timeout"},
+    "runtime_failure": {"runtime_failure"},
+    "cancellation": {"cancellation"},
+    "user_input": {"user_input"},
+}
+TASK_STATUS_BY_WAKE_REASON = {
+    "dependency_ready": "executing",
+    "user_input": "executing",
+    "dispatch_blocked": "blocked",
+    "manual_blocked": "blocked",
+    "timeout": "blocked",
+    "runtime_failure": "blocked",
+    "cancellation": "cancelled",
+}
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def write_json(path: Path, data: dict[str, Any]) -> None:
+DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS = {
+    errno.EINVAL,
+    getattr(errno, "ENOTSUP", errno.EINVAL),
+    getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+}
+FILE_LOCK_CONTENTION_ERRNOS = {
+    errno.EACCES,
+    errno.EAGAIN,
+    getattr(errno, "EWOULDBLOCK", errno.EAGAIN),
+    getattr(errno, "EDEADLK", errno.EAGAIN),
+}
+TASK_LOCK_TIMEOUT_SECONDS = 30.0
+TASK_LOCK_RETRY_SECONDS = 0.05
+
+
+def fsync_directory(directory: Path) -> bool:
+    if os.name == "nt":
+        return False
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        descriptor = os.open(directory, flags)
+    except OSError as exc:
+        if exc.errno in DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS:
+            return False
+        raise
+    try:
+        try:
+            os.fsync(descriptor)
+        except OSError as exc:
+            if exc.errno in DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS:
+                return False
+            raise
+    finally:
+        os.close(descriptor)
+    return True
+
+
+def retry_file_lock(
+    attempt: Callable[[], None],
+    timeout_seconds: float = TASK_LOCK_TIMEOUT_SECONDS,
+    retry_seconds: float = TASK_LOCK_RETRY_SECONDS,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            attempt()
+            return
+        except OSError as exc:
+            if exc.errno not in FILE_LOCK_CONTENTION_ERRNOS:
+                raise
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Timed out acquiring task state lock after {timeout_seconds:g} seconds"
+                ) from exc
+            time.sleep(retry_seconds)
+
+
+def atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    existing_mode = path.stat().st_mode & 0o777 if path.exists() else None
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if existing_mode is not None:
+            os.chmod(temporary_path, existing_mode)
+        os.replace(temporary_path, path)
+        fsync_directory(path.parent)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+
+def write_json(path: Path, data: dict[str, Any]) -> None:
+    atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -166,6 +266,72 @@ def read_json_lines_strict(path: Path) -> list[dict[str, Any]]:
             raise SystemExit(f"Invalid JSONL record at {path.name}:{line_number}: expected object")
         records.append(record)
     return records
+
+
+def load_dispatch_receipts(directory: Path, task_id: str) -> list[dict[str, Any]]:
+    receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
+    errors = deterministic_receipt_ledger_errors(receipts, task_id)
+    if errors:
+        raise SystemExit("Invalid dispatch receipt ledger: " + "; ".join(errors[:5]))
+    return receipts
+
+
+def read_json_strict(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise SystemExit(f"Missing {path.name}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Invalid JSON at {path.name}: {exc.msg}") from exc
+    if not isinstance(data, dict):
+        raise SystemExit(f"Invalid JSON at {path.name}: expected object")
+    return data
+
+
+def append_json_line_durable(path: Path, record: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    created = not path.exists()
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    if created:
+        fsync_directory(path.parent)
+
+
+@contextmanager
+def task_state_lock(directory: Path) -> Iterator[None]:
+    lock_path = directory / ".valp-state.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as handle:
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            retry_file_lock(
+                lambda: msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            )
+        else:
+            import fcntl
+
+            retry_file_lock(
+                lambda: fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            )
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def append_timeline_event(directory: Path, event: str, summary: str, **details: Any) -> None:
@@ -1331,10 +1497,11 @@ Generated during routing.
     (directory / "task.md").write_text(task_md, encoding="utf-8")
     approval_gate = "needs_approval" if approval_risks else "not_required"
     state = {
-        "schema_version": "valp-visible-loop-state.v1",
+        "schema_version": "valp-visible-loop-state.v2",
         "task_id": task_id,
         "profile": selected_profile,
         "status": "published",
+        "revision": 0,
         "risk": {
             "approval_required": bool(approval_risks),
             "matches": approval_risks,
@@ -1410,10 +1577,13 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
     }
     expected_by_agent = expected_refs_for_agents(selected_agents, role_assignments)
     submission_dependencies = build_submission_dependencies(task_id, role_assignments)
+    existing_delegation_policy = read_json(directory / "delegation-policy.json")
+    recorded_delegation_violations = existing_delegation_policy.get("violations", [])
     delegation_policy = build_delegation_policy(
         task_id,
         manual_mode=runtime_adapter.get("class") == "manual",
     )
+    delegation_policy["violations"] = recorded_delegation_violations
     write_json(directory / "submission-dependencies.json", submission_dependencies)
     write_json(directory / "delegation-policy.json", delegation_policy)
     routing = {
@@ -1542,6 +1712,14 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             "updated_at": now_iso(),
         }
     )
+    if delegation_policy.get("violations"):
+        state["status"] = "blocked"
+        state.setdefault("gates", {})["expected_evidence"] = "blocked"
+        state["delegation_violation"] = {
+            "status": "unresolved",
+            "count": len(delegation_policy["violations"]),
+            "ref": "delegation-policy.json#violations",
+        }
     write_json(state_path, state)
     return routing
 
@@ -2006,6 +2184,7 @@ def write_dispatches(
             or line.startswith("- Work item ")
         ]
         compact_skills = "\n".join(compact_skill_lines) or "- Full recommendation records: `skill-recommendations.json`."
+        minimal_skills = "- Load provider-reachable matches from `skill-recommendations.json` only when relevant."
         attention_slice = attention_slice_for_agent(agent, visible_attention)
         budget = dispatch_budget_for_agent(agent, routing.get("role_assignments") or {})
 
@@ -2077,6 +2256,11 @@ Write expected evidence with blockers, confidence, and `## Recommendations`.
                 bounded_text(task_brief, 240),
                 f"- Attention head(s): task-local role slice. See `visible-routing.md` and `context-pack.json`.",
                 compact_skills,
+            ),
+            (
+                bounded_text(task_brief, 160),
+                "- See `visible-routing.md` and `context-pack.json` for the task-local role slice.",
+                minimal_skills,
             ),
         ]
         dispatch = ""
@@ -2202,13 +2386,6 @@ def append_dispatch_written_receipts(directory: Path, selected_agents: list[str]
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def append_receipt(directory: Path, record: dict[str, Any]) -> None:
-    receipts_path = directory / "dispatch-receipts.jsonl"
-    receipts_path.parent.mkdir(parents=True, exist_ok=True)
-    with receipts_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-
 def write_queue_submission(
     directory: Path,
     task_id: str,
@@ -2218,11 +2395,25 @@ def write_queue_submission(
 ) -> dict[str, Any]:
     queue_id = f"{task_id}-{target}-{role}"
     worker_id = f"worker-{target}-{role}"
+    dependency_document = read_json(directory / "submission-dependencies.json")
+    identity = next(
+        (
+            item
+            for item in dependency_document.get("work_items") or []
+            if isinstance(item, dict)
+            and item.get("agent") == target
+            and item.get("role") == role
+        ),
+        work_item_identity(task_id, target, role),
+    )
     queue_record = {
         "schema_version": "valp-queue-dispatch.v1",
         "task_id": task_id,
         "agent": target,
         "role": role,
+        "work_item_id": identity["work_item_id"],
+        "dispatch_id": identity["dispatch_id"],
+        "dispatch_generation": identity["dispatch_generation"],
         "queue_id": queue_id,
         "worker_id": worker_id,
         "status": "queued",
@@ -2232,77 +2423,1079 @@ def write_queue_submission(
         "note": "Synthetic reference queue submission. Completion still requires dispatch_completed plus expected evidence.",
     }
     queue_ref = f"queue/{target}-{role}.json"
-    write_json(directory / queue_ref, queue_record)
-    append_receipt(
-        directory,
-        {
-            "ts": now_iso(),
-            "agent": target,
-            "role": role,
-            "event": "dispatch_submitted",
-            "dispatch_ref": f"agents/{target}/dispatch.md",
-            "expected_refs": expected,
-            "proof": {
-                "runtime": "VALP headless queue",
-                "queue_id": queue_id,
-                "worker_id": worker_id,
-                "queue_record": queue_ref,
+    queue_path = directory / queue_ref
+    proof = {
+        "runtime": "VALP headless queue",
+        "queue_id": queue_id,
+        "worker_id": worker_id,
+        "queue_record": queue_ref,
+    }
+    with task_state_lock(directory):
+        existing_queue_record = read_json(queue_path)
+        if queue_path.exists():
+            expected_queue_fields = set(queue_record)
+            if (
+                set(existing_queue_record) != expected_queue_fields
+                or any(
+                    existing_queue_record.get(key) != value
+                    for key, value in queue_record.items()
+                    if key != "created_at"
+                )
+                or not isinstance(existing_queue_record.get("created_at"), str)
+                or not str(existing_queue_record["created_at"]).strip()
+            ):
+                raise SystemExit("Existing queue submission conflicts with the routed work item")
+            queue_record = existing_queue_record
+        else:
+            write_json(queue_path, queue_record)
+        existing_receipts = load_dispatch_receipts(directory, task_id)
+        logical_receipts = [
+            receipt
+            for receipt in existing_receipts
+            if receipt.get("schema_version") == "valp-dispatch-receipt.v2"
+            and receipt.get("task_id") == task_id
+            and receipt.get("agent") == target
+            and receipt.get("role") == role
+            and receipt.get("work_item_id") == identity["work_item_id"]
+            and receipt.get("dispatch_id") == identity["dispatch_id"]
+            and receipt.get("dispatch_generation") == identity["dispatch_generation"]
+            and receipt.get("event") == "dispatch_submitted"
+        ]
+        if logical_receipts:
+            conflicting = [
+                receipt
+                for receipt in logical_receipts
+                if receipt.get("dispatch_ref") != f"agents/{target}/dispatch.md"
+                or receipt.get("expected_refs") != expected
+                or receipt.get("proof") != proof
+            ]
+            if conflicting or len({str(receipt.get("receipt_id")) for receipt in logical_receipts}) != 1:
+                raise SystemExit("Existing queue submission receipt conflicts with the routed work item")
+            return queue_record
+        event_sequence = max(
+            [
+                int(record["event_sequence"])
+                for record in existing_receipts
+                if record.get("schema_version") == "valp-dispatch-receipt.v2"
+                and type(record.get("event_sequence")) is int
+            ],
+            default=0,
+        ) + 1
+        append_json_line_durable(
+            directory / "dispatch-receipts.jsonl",
+            {
+                "schema_version": "valp-dispatch-receipt.v2",
+                "receipt_id": (
+                    f"{task_id}:{identity['work_item_id']}:{identity['dispatch_id']}:"
+                    f"{identity['dispatch_generation']}:dispatch_submitted"
+                ),
+                "task_id": task_id,
+                "event_sequence": event_sequence,
+                "ts": now_iso(),
+                "agent": target,
+                "role": role,
+                "work_item_id": identity["work_item_id"],
+                "dispatch_id": identity["dispatch_id"],
+                "dispatch_generation": identity["dispatch_generation"],
+                "event": "dispatch_submitted",
+                "dispatch_ref": f"agents/{target}/dispatch.md",
+                "expected_refs": expected,
+                "proof": proof,
+                "summary": (
+                    "Headless queue adapter accepted the dispatch. "
+                    "Completion still requires expected evidence."
+                ),
             },
-            "summary": "Headless queue adapter accepted the dispatch. Completion still requires expected evidence.",
-        },
-    )
+        )
     return queue_record
+
+
+def wait_event_id(
+    task_id: str,
+    event: str,
+    suspension_id: str,
+    event_sequence: int,
+    resulting_revision: int,
+) -> str:
+    value = f"{task_id}:{event}:{suspension_id}:{event_sequence}:{resulting_revision}"
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def deterministic_wake_id(
+    task_id: str,
+    suspension_epoch: int,
+    resume_event: str,
+    resume_ref: str | None,
+    external_event: dict[str, Any] | None = None,
+) -> str:
+    wake_source = (
+        str(external_event.get("source_digest") or "")
+        if external_event is not None
+        else resume_ref or ""
+    )
+    wake_key = f"{task_id}:{suspension_epoch}:{resume_event}:{wake_source}"
+    return "sha256:" + hashlib.sha256(wake_key.encode("utf-8")).hexdigest()
+
+
+def wake_reason_pair_error(resume_event: str, wake_reason: str) -> str | None:
+    if wake_reason not in WAKE_REASONS_BY_RESUME_EVENT.get(resume_event, set()):
+        return f"Illegal resume_event/wake_reason combination: {resume_event}/{wake_reason}"
+    return None
+
+
+def wake_status_pair_error(wake_reason: str, task_status: str) -> str | None:
+    expected_status = TASK_STATUS_BY_WAKE_REASON.get(wake_reason)
+    if expected_status is None or task_status != expected_status:
+        return f"Illegal wake_reason/resulting task status combination: {wake_reason}/{task_status}"
+    return None
+
+
+WORK_ITEM_STATE_FIELDS = (
+    "completed_work_item_ids",
+    "pending_work_item_ids",
+    "failed_work_item_ids",
+)
+DETERMINISTIC_SUSPENSION_REQUIRED_FIELDS = {
+    "status",
+    "suspension_id",
+    "suspension_epoch",
+    "state_revision_at_entry",
+    "wait_policy_ref",
+    "wait_policy_id",
+    "strict_identity",
+    "event_sequence_at_entry",
+    "receipt_event_sequence_at_entry",
+    "receipt_cursor_at_entry",
+    "required_work_items",
+    "required_work_item_ids",
+    "pending_work_item_ids",
+    "completed_work_item_ids",
+    "failed_work_item_ids",
+    "entered_at",
+    "deadline_at",
+    "execution_deadline",
+    "waiting_for_agents",
+    "receipt_count_at_entry",
+    "allowed_resume_events",
+}
+DETERMINISTIC_SUSPENSION_OPTIONAL_FIELDS = {
+    "checkpoint_ref",
+    "receipt_cursor",
+    "resume_event",
+    "resumed_at",
+    "resume_ref",
+    "accepted_wake",
+}
+
+
+def deterministic_suspension_shape_error(suspension: dict[str, Any]) -> str | None:
+    fields = set(suspension)
+    missing = DETERMINISTIC_SUSPENSION_REQUIRED_FIELDS - fields
+    unknown = fields - (
+        DETERMINISTIC_SUSPENSION_REQUIRED_FIELDS | DETERMINISTIC_SUSPENSION_OPTIONAL_FIELDS
+    )
+    if missing:
+        return "Deterministic suspension is missing closed fields: " + ", ".join(sorted(missing))
+    if unknown:
+        return "Deterministic suspension has unknown control fields: " + ", ".join(sorted(unknown))
+    return None
+
+
+def suspension_checkpoint_error(
+    directory: Path,
+    suspension: dict[str, Any],
+) -> str | None:
+    checkpoint_ref = suspension.get("checkpoint_ref")
+    if checkpoint_ref is None:
+        return None
+    if not isinstance(checkpoint_ref, str) or not safe_task_evidence_ref(checkpoint_ref):
+        return "Suspension checkpoint_ref must be a safe task-local ref"
+    checkpoint_path = (directory / checkpoint_ref).resolve()
+    try:
+        checkpoint_path.relative_to(directory.resolve())
+    except ValueError:
+        return "Suspension checkpoint_ref escapes the task directory"
+    if not checkpoint_path.is_file() or checkpoint_path.stat().st_size == 0:
+        return "Suspension checkpoint_ref does not name a durable non-empty checkpoint"
+    return None
+
+
+def wait_work_item_policy_error(
+    suspension: dict[str, Any],
+    policy: dict[str, Any],
+    policy_ref: str = "wait-policy.json",
+) -> str | None:
+    if not suspension.get("strict_identity"):
+        return None
+    expected_items = policy.get("required_work_items")
+    if not isinstance(expected_items, list) or not expected_items:
+        return "Strict suspension has no valid wait policy work-item table"
+    expected_ids = [
+        item.get("work_item_id")
+        for item in expected_items
+        if isinstance(item, dict)
+    ]
+    if (
+        suspension.get("wait_policy_ref") != policy_ref
+        or suspension.get("wait_policy_id") != policy.get("wait_policy_id")
+        or suspension.get("required_work_items") != expected_items
+        or suspension.get("required_work_item_ids") != expected_ids
+    ):
+        return "Committed suspension work-item barrier does not match wait policy"
+    return None
+
+
+def wait_work_item_transition_error(
+    previous_suspension: dict[str, Any] | None,
+    event: dict[str, Any],
+) -> str | None:
+    projection = event.get("projection")
+    if not isinstance(projection, dict) or not isinstance(projection.get("suspension"), dict):
+        return "Wait event projection is missing"
+    current = projection["suspension"]
+    shape_error = deterministic_suspension_shape_error(current)
+    if shape_error:
+        return shape_error
+    required = current.get("required_work_item_ids")
+    work_items = current.get("required_work_items")
+    if (
+        not isinstance(required, list)
+        or not required
+        or any(not isinstance(value, str) or not value for value in required)
+        or len(required) != len(set(required))
+        or not isinstance(work_items, list)
+        or any(not isinstance(item, dict) for item in work_items)
+        or [item.get("work_item_id") for item in work_items] != required
+    ):
+        return "Wait event work-item identity set is invalid"
+    values: dict[str, list[str]] = {}
+    for field in WORK_ITEM_STATE_FIELDS:
+        raw = current.get(field)
+        if (
+            not isinstance(raw, list)
+            or any(not isinstance(value, str) or not value for value in raw)
+            or len(raw) != len(set(raw))
+            or any(value not in required for value in raw)
+        ):
+            return f"Wait event {field} is invalid"
+        values[field] = raw
+    completed = values["completed_work_item_ids"]
+    pending = values["pending_work_item_ids"]
+    failed = values["failed_work_item_ids"]
+    if set(completed).intersection(pending) or set(completed).union(pending) != set(required):
+        return "Wait event completed and pending work-item sets do not partition required work"
+    if set(completed).intersection(failed):
+        return "Wait event cannot mark a completed work item as failed"
+
+    event_name = str(event.get("event") or "")
+    if event_name == "coordinator_suspended":
+        if completed or failed or pending != required:
+            return "New suspension work-item sets do not match the required barrier"
+        return None
+    if not isinstance(previous_suspension, dict):
+        return "Wait event work-item transition has no preceding projection"
+    if (
+        current.get("suspension_id") != previous_suspension.get("suspension_id")
+        or current.get("suspension_epoch") != previous_suspension.get("suspension_epoch")
+        or current.get("required_work_items") != previous_suspension.get("required_work_items")
+        or required != previous_suspension.get("required_work_item_ids")
+    ):
+        return "Wait event changed suspension work-item identity"
+    previous_values = {
+        field: previous_suspension.get(field)
+        for field in WORK_ITEM_STATE_FIELDS
+    }
+    if any(not isinstance(value, list) for value in previous_values.values()):
+        return "Preceding wait projection has invalid work-item sets"
+
+    previous_completed = previous_values["completed_work_item_ids"]
+    previous_pending = previous_values["pending_work_item_ids"]
+    previous_failed = previous_values["failed_work_item_ids"]
+    if event_name == "work_item_completed":
+        work_item_id = event.get("work_item_id")
+        if not isinstance(work_item_id, str) or work_item_id not in previous_pending:
+            return "Completed work-item event does not identify pending work"
+        if (
+            completed != [*previous_completed, work_item_id]
+            or pending != [value for value in previous_pending if value != work_item_id]
+            or failed != previous_failed
+        ):
+            return "Completed work-item event has an invalid set transition"
+        return None
+    if event_name != "coordinator_resumed":
+        return "Wait event has an unsupported work-item transition"
+
+    wake_reason = str(event.get("wake_reason") or "")
+    if wake_reason == "dependency_ready":
+        if (
+            len(previous_pending) != 1
+            or completed != [*previous_completed, previous_pending[0]]
+            or pending
+            or failed != previous_failed
+        ):
+            return "dependency_ready wake has an invalid work-item set transition"
+        return None
+    if wake_reason in {"dispatch_blocked", "manual_blocked"}:
+        added_failed = failed[len(previous_failed):]
+        if (
+            completed != previous_completed
+            or pending != previous_pending
+            or failed[:len(previous_failed)] != previous_failed
+            or len(added_failed) != 1
+            or added_failed[0] not in previous_pending
+        ):
+            return "Blocked work-item wake has an invalid set transition"
+        return None
+    if any(values[field] != previous_values[field] for field in WORK_ITEM_STATE_FIELDS):
+        return "Exception wake changed committed work-item sets"
+    return None
+
+
+def wait_receipt_event_error(
+    event: dict[str, Any],
+    previous_suspension: dict[str, Any] | None,
+    receipts: list[dict[str, Any]],
+    task_id: str,
+) -> str | None:
+    event_name = str(event.get("event") or "")
+    wake_reason = str(event.get("wake_reason") or "")
+    if event_name == "work_item_completed":
+        receipt_ref = event.get("receipt_ref")
+        expected_events = {"dispatch_completed", "manual_result_attested"}
+        expected_work_item_id = event.get("work_item_id")
+    elif event_name == "coordinator_resumed" and event.get("resume_event") == "receipt":
+        receipt_ref = event.get("resume_ref")
+        if wake_reason == "dependency_ready":
+            expected_events = {"dispatch_completed", "manual_result_attested"}
+        elif wake_reason in {"dispatch_blocked", "manual_blocked"}:
+            expected_events = {wake_reason}
+        else:
+            return "Receipt-driven wake has an unsupported wake reason"
+        expected_work_item_id = None
+    else:
+        return None
+    if not isinstance(receipt_ref, str) or not receipt_ref.startswith("dispatch-receipts.jsonl#"):
+        return "Wait event has an invalid receipt ref"
+    try:
+        receipt_index = int(receipt_ref.rsplit("#", 1)[1])
+    except (ValueError, IndexError):
+        return "Wait event has an invalid receipt ref"
+    if receipt_index < 1 or receipt_index > len(receipts):
+        return "Wait event receipt ref does not exist"
+    receipt = receipts[receipt_index - 1]
+    qualifying_receipt_id = str(receipt.get("receipt_id") or receipt_ref)
+    if event.get("qualifying_receipt_id") != qualifying_receipt_id:
+        return "Wait event qualifying receipt ID does not match its ledger ref"
+    if receipt.get("event") not in expected_events:
+        return "Wait event receipt no longer supports its terminal event"
+    projection = event.get("projection") or {}
+    suspension = projection.get("suspension") or {}
+    required_items = suspension.get("required_work_items") or []
+    strict_identity = bool(suspension.get("strict_identity"))
+    if strict_identity:
+        matching_items = [
+            item
+            for item in required_items
+            if isinstance(item, dict) and item.get("work_item_id") == receipt.get("work_item_id")
+        ]
+    else:
+        matching_items = [
+            item
+            for item in required_items
+            if isinstance(item, dict) and item.get("agent") == receipt.get("agent")
+        ]
+    if len(matching_items) != 1:
+        return "Wait event receipt does not identify one required work item"
+    item = matching_items[0]
+    if expected_work_item_id is not None and item.get("work_item_id") != expected_work_item_id:
+        return "Completed wait event work item does not match its receipt"
+    if not receipt_matches_work_item(
+        receipt,
+        item,
+        task_id,
+        strict_identity,
+        suspension_epoch=int(suspension.get("suspension_epoch") or 0),
+        event_sequence_at_entry=int(suspension.get("receipt_event_sequence_at_entry") or 0),
+    ):
+        return "Wait event receipt identity does not match its suspension"
+    work_item_id = str(item.get("work_item_id") or "")
+    if event_name == "coordinator_resumed" and isinstance(previous_suspension, dict):
+        if wake_reason == "dependency_ready" and work_item_id not in (
+            previous_suspension.get("pending_work_item_ids") or []
+        ):
+            return "dependency_ready receipt does not complete the preceding pending work item"
+        if wake_reason in {"dispatch_blocked", "manual_blocked"}:
+            previous_failed = previous_suspension.get("failed_work_item_ids") or []
+            current_failed = suspension.get("failed_work_item_ids") or []
+            if current_failed[len(previous_failed):] != [work_item_id]:
+                return "Blocked wake receipt does not match the newly failed work item"
+    return None
+
+
+def validated_wait_events(directory: Path, task_id: str) -> list[dict[str, Any]]:
+    events = read_json_lines_strict(directory / "wait-events.jsonl")
+    previous_sequence = 0
+    previous_revision: int | None = None
+    previous_suspension: dict[str, Any] | None = None
+    policies: dict[str, dict[str, Any]] = {}
+    receipts: list[dict[str, Any]] | None = None
+    for event in events:
+        sequence = event.get("event_sequence")
+        before = event.get("state_revision_before")
+        after = event.get("state_revision_after")
+        if event.get("schema_version") != "valp-wait-event.v1" or event.get("task_id") != task_id:
+            raise SystemExit("Invalid wait event identity")
+        if type(sequence) is not int or sequence != previous_sequence + 1:
+            raise SystemExit("Wait event sequence is not contiguous")
+        if type(before) is not int or type(after) is not int or after != before + 1:
+            raise SystemExit("Wait event revision transition is invalid")
+        expected_event_id = wait_event_id(
+            task_id,
+            str(event.get("event") or ""),
+            str(event.get("suspension_id") or ""),
+            sequence,
+            after,
+        )
+        if event.get("event_id") != expected_event_id:
+            raise SystemExit("Wait event_id does not match its deterministic derivation")
+        if previous_revision is not None and before != previous_revision:
+            raise SystemExit("Wait event revision history is not contiguous")
+        projection = event.get("projection")
+        if not isinstance(projection, dict) or not isinstance(projection.get("suspension"), dict):
+            raise SystemExit("Wait event projection is missing")
+        checkpoint_error = suspension_checkpoint_error(directory, projection["suspension"])
+        if checkpoint_error:
+            raise SystemExit(checkpoint_error)
+        if event.get("event") == "coordinator_resumed":
+            pair_error = wake_reason_pair_error(
+                str(event.get("resume_event") or ""),
+                str(event.get("wake_reason") or ""),
+            )
+            if pair_error:
+                raise SystemExit(pair_error)
+            status_error = wake_status_pair_error(
+                str(event.get("wake_reason") or ""),
+                str(projection.get("status") or ""),
+            )
+            if status_error:
+                raise SystemExit(status_error)
+        if projection["suspension"].get("strict_identity"):
+            policy_ref = str(projection["suspension"].get("wait_policy_ref") or "")
+            if policy_ref not in policies:
+                policies[policy_ref] = load_wait_policy(
+                    directory,
+                    task_id,
+                    policy_ref=policy_ref,
+                    validate_dependency_ref=True,
+                )
+            policy_error = wait_work_item_policy_error(
+                projection["suspension"],
+                policies[policy_ref],
+                policy_ref,
+            )
+            if policy_error:
+                raise SystemExit(policy_error)
+        transition_error = wait_work_item_transition_error(previous_suspension, event)
+        if transition_error:
+            raise SystemExit(transition_error)
+        if event.get("event") == "work_item_completed" or (
+            event.get("event") == "coordinator_resumed" and event.get("resume_event") == "receipt"
+        ):
+            if receipts is None:
+                receipts = load_dispatch_receipts(directory, task_id)
+            receipt_error = wait_receipt_event_error(
+                event,
+                previous_suspension,
+                receipts,
+                task_id,
+            )
+            if receipt_error:
+                raise SystemExit(receipt_error)
+        if event.get("event") == "coordinator_resumed":
+            projected_suspension = projection["suspension"]
+            accepted_wake = projected_suspension.get("accepted_wake") or {}
+            resume_event = str(event.get("resume_event") or "")
+            if resume_event in EXTERNAL_RESUME_EVENTS:
+                external_event = event.get("external_event")
+                if not isinstance(external_event, dict) or accepted_wake.get("external_event") != external_event:
+                    raise SystemExit("Committed exception wake metadata is inconsistent")
+                try:
+                    current_external_event = load_exception_wake_evidence(
+                        directory,
+                        task_id,
+                        projected_suspension,
+                        resume_event,
+                        str(event.get("resume_ref") or ""),
+                    )
+                except SystemExit as exc:
+                    raise SystemExit("Committed exception wake source evidence is invalid: " + str(exc)) from exc
+                if current_external_event != external_event:
+                    raise SystemExit("Committed exception wake source evidence changed")
+            elif event.get("external_event") is not None:
+                raise SystemExit("Non-external wake contains exception wake metadata")
+            expected_wake_id = deterministic_wake_id(
+                task_id,
+                int(event.get("suspension_epoch") or 0),
+                resume_event,
+                event.get("resume_ref"),
+                event.get("external_event"),
+            )
+            expected_result_ref = f"wake-results/{expected_wake_id.removeprefix('sha256:')}.json"
+            if (
+                event.get("wake_id") != expected_wake_id
+                or accepted_wake.get("wake_id") != expected_wake_id
+                or accepted_wake.get("wake_event_id") != expected_event_id
+                or event.get("result_ref") != expected_result_ref
+                or accepted_wake.get("result_ref") != expected_result_ref
+            ):
+                raise SystemExit("Committed wake identity does not match its deterministic derivation")
+            wake_result = read_json_strict(directory / expected_result_ref)
+            status_error = wake_status_pair_error(
+                str(event.get("wake_reason") or ""),
+                str(wake_result.get("resulting_task_status") or ""),
+            )
+            if status_error:
+                raise SystemExit(status_error)
+            if any(
+                wake_result.get(field) != projected_suspension.get(field)
+                for field in WORK_ITEM_STATE_FIELDS
+            ):
+                raise SystemExit("Wake result work-item sets do not match the accepted suspension")
+        previous_sequence = sequence
+        previous_revision = after
+        previous_suspension = projection["suspension"]
+    return events
+
+
+def exact_state_revision(state: dict[str, Any]) -> int:
+    revision = state.get("revision")
+    if type(revision) is not int or revision < 0:
+        raise SystemExit("Task state revision must be an exact non-negative integer")
+    return revision
+
+
+def recover_wait_projection(directory: Path, state: dict[str, Any]) -> dict[str, Any]:
+    task_id = str(state.get("task_id") or "")
+    events = validated_wait_events(directory, task_id)
+    if not events:
+        return state
+    latest = events[-1]
+    projection = latest["projection"]
+    projected_suspension = projection["suspension"]
+    current_suspension = state.get("suspension") or {}
+    state_revision = exact_state_revision(state)
+    event_revision = int(latest["state_revision_after"])
+    same_suspension = (
+        current_suspension.get("suspension_id") == projected_suspension.get("suspension_id")
+    )
+    waiting_projection_drifted = (
+        projected_suspension.get("status") == "waiting"
+        and same_suspension
+        and (
+            state.get("status") != projection.get("status")
+            or current_suspension != projected_suspension
+        )
+    )
+    missing_committed_projection = state_revision < event_revision
+    if state_revision > event_revision and current_suspension.get("status") == "waiting":
+        raise SystemExit("State revision advanced without a committed wake event")
+    if missing_committed_projection or waiting_projection_drifted:
+        recovered = dict(state)
+        recovered["status"] = projection["status"]
+        recovered["suspension"] = projected_suspension
+        recovered["updated_at"] = projection["updated_at"]
+        recovered["revision"] = event_revision
+        write_json(directory / "state.json", recovered)
+        append_timeline_event(
+            directory,
+            "wait_projection_recovered",
+            "Recovered task wait projection from committed wait event",
+            event_id=latest.get("event_id"),
+            event_sequence=latest.get("event_sequence"),
+        )
+        return recovered
+    return state
+
+
+def commit_wait_state(
+    directory: Path,
+    state: dict[str, Any],
+    event: str,
+    summary: str,
+    **details: Any,
+) -> dict[str, Any]:
+    task_id = str(state.get("task_id") or "")
+    suspension = state.get("suspension") or {}
+    events = validated_wait_events(directory, task_id)
+    event_sequence = len(events) + 1
+    before = exact_state_revision(state)
+    if events and int(events[-1]["state_revision_after"]) != before:
+        raise SystemExit("State revision does not match committed wait history")
+    after = before + 1
+    state["revision"] = after
+    event_id = wait_event_id(
+        task_id,
+        event,
+        str(suspension.get("suspension_id") or ""),
+        event_sequence,
+        after,
+    )
+    record = {
+        "schema_version": "valp-wait-event.v1",
+        "task_id": task_id,
+        "event_id": event_id,
+        "event_sequence": event_sequence,
+        "event": event,
+        "recorded_at": now_iso(),
+        "state_revision_before": before,
+        "state_revision_after": after,
+        "suspension_id": suspension.get("suspension_id"),
+        "suspension_epoch": suspension.get("suspension_epoch"),
+        "projection": {
+            "status": state.get("status"),
+            "suspension": suspension,
+            "updated_at": state.get("updated_at"),
+        },
+        **details,
+    }
+    append_json_line_durable(directory / "wait-events.jsonl", record)
+    write_json(directory / "state.json", state)
+    append_timeline_event(
+        directory,
+        event,
+        summary,
+        event_id=event_id,
+        event_sequence=event_sequence,
+        state_revision=after,
+        **details,
+    )
+    return record
+
+
+WAIT_WORK_ITEM_FIELDS = {
+    "work_item_id",
+    "agent",
+    "role",
+    "dispatch_id",
+    "dispatch_generation",
+    "expected_refs",
+}
+EXCEPTION_WAKE_FIELDS = {
+    "schema_version",
+    "task_id",
+    "suspension_id",
+    "suspension_epoch",
+    "event",
+    "principal",
+    "reason",
+    "recorded_at",
+    "supporting_refs",
+}
+EXCEPTION_WAKE_PRINCIPAL_FIELDS = {"type", "id"}
+EXCEPTION_WAKE_PRINCIPAL_TYPES = {
+    "runtime_failure": {"runtime"},
+    "cancellation": {"user", "runtime", "policy"},
+    "user_input": {"user"},
+}
+WAIT_EXCEPTION_EVENTS = {
+    "dispatch_blocked",
+    "manual_blocked",
+    "runtime_failure",
+    "cancellation",
+    "timeout",
+    "user_input",
+}
+REQUIRED_WAIT_EXCEPTION_EVENTS = {
+    "dispatch_blocked",
+    "runtime_failure",
+    "cancellation",
+    "timeout",
+    "user_input",
+}
+
+
+def load_wait_policy(
+    directory: Path,
+    task_id: str,
+    role_assignments: dict[str, Any] | None = None,
+    *,
+    policy_ref: str = "wait-policy.json",
+    validate_dependency_ref: bool = True,
+) -> dict[str, Any]:
+    if policy_ref == "wait-policy.json":
+        policy_path = directory / policy_ref
+    elif re.fullmatch(r"wait-policies/[0-9a-f]{64}\.json", policy_ref):
+        policy_path = directory / policy_ref
+    else:
+        raise SystemExit("Wait policy snapshot ref is invalid")
+    if not policy_path.exists():
+        return {}
+    if policy_ref != "wait-policy.json":
+        expected_digest = policy_path.stem
+        actual_digest = hashlib.sha256(policy_path.read_bytes()).hexdigest()
+        if actual_digest != expected_digest:
+            raise SystemExit("Wait policy snapshot digest does not match its ref")
+    policy = read_json_strict(policy_path)
+    if set(policy) != {
+        "schema_version",
+        "task_id",
+        "wait_policy_id",
+        "mode",
+        "exception_policy",
+        "dependency_ref",
+        "required_work_items",
+        "exception_events",
+    }:
+        raise SystemExit("wait-policy.json has unexpected or missing fields")
+    if policy.get("schema_version") != "valp-wait-policy.v1" or policy.get("task_id") != task_id:
+        raise SystemExit("wait-policy.json identity is invalid")
+    if policy.get("mode") != "dependency_ready":
+        raise SystemExit("Deterministic wait requires dependency_ready mode")
+    if policy.get("exception_policy") != "exception_short_circuit":
+        raise SystemExit("Deterministic wait requires exception_short_circuit")
+    exception_events = policy.get("exception_events")
+    if (
+        not isinstance(exception_events, list)
+        or len(exception_events) != len(set(str(event) for event in exception_events))
+        or any(not isinstance(event, str) or event not in WAIT_EXCEPTION_EVENTS for event in exception_events)
+        or not REQUIRED_WAIT_EXCEPTION_EVENTS.issubset(set(exception_events))
+    ):
+        raise SystemExit("wait-policy.json exception_events are invalid")
+    dependency_ref = str(policy.get("dependency_ref") or "")
+    if dependency_ref != "submission-dependencies.json":
+        raise SystemExit("wait-policy.json must reference submission-dependencies.json")
+    dependencies: dict[str, Any] = {}
+    if validate_dependency_ref:
+        dependencies = read_json_strict(directory / dependency_ref)
+        if dependencies.get("task_id") != task_id:
+            raise SystemExit("Wait policy dependency task_id does not match")
+        if dependencies.get("schema_version") != "valp-submission-dependencies.v2":
+            raise SystemExit("Deterministic wait requires submission dependency work item identities")
+        if role_assignments is not None:
+            dependency_errors = validate_submission_dependencies(
+                dependencies,
+                task_id,
+                {str(role): str(agent) for role, agent in role_assignments.items()},
+            )
+            if dependency_errors:
+                raise SystemExit(
+                    "Submission dependency work items do not match routed role assignments: "
+                    + "; ".join(dependency_errors)
+                )
+    work_items = policy.get("required_work_items")
+    if not isinstance(work_items, list) or not work_items:
+        raise SystemExit("wait-policy.json requires at least one work item")
+    ids: list[str] = []
+    for item in work_items:
+        if not isinstance(item, dict) or set(item) != WAIT_WORK_ITEM_FIELDS:
+            raise SystemExit("wait-policy.json contains an invalid work item")
+        work_item_id = str(item.get("work_item_id") or "")
+        if not work_item_id or not str(item.get("agent") or "") or not str(item.get("role") or ""):
+            raise SystemExit("wait-policy.json work item identity is incomplete")
+        if not str(item.get("dispatch_id") or ""):
+            raise SystemExit("wait-policy.json dispatch_id is missing")
+        if type(item.get("dispatch_generation")) is not int or int(item["dispatch_generation"]) < 1:
+            raise SystemExit("wait-policy.json dispatch_generation is invalid")
+        expected_refs = item.get("expected_refs")
+        if not isinstance(expected_refs, list) or not expected_refs:
+            raise SystemExit("wait-policy.json expected_refs are missing")
+        if any(not safe_task_evidence_ref(str(ref)) for ref in expected_refs):
+            raise SystemExit("wait-policy.json contains an unsafe expected ref")
+        ids.append(work_item_id)
+    if len(ids) != len(set(ids)):
+        raise SystemExit("wait-policy.json work_item_id values must be unique")
+    if validate_dependency_ref:
+        dependency_work_items = dependencies.get("work_items")
+        if not isinstance(dependency_work_items, list):
+            raise SystemExit("submission dependency work items are missing")
+        for item in work_items:
+            if item not in dependency_work_items:
+                raise SystemExit(
+                    "wait-policy.json references an unknown dependency work item: "
+                    + str(item.get("work_item_id"))
+                )
+    return policy
+
+
+def snapshot_wait_policy(directory: Path, policy: dict[str, Any]) -> str:
+    serialized = json.dumps(policy, indent=2, ensure_ascii=False) + "\n"
+    digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    policy_ref = f"wait-policies/{digest}.json"
+    snapshot_path = directory / policy_ref
+    if snapshot_path.exists():
+        if snapshot_path.read_text(encoding="utf-8") != serialized:
+            raise SystemExit("Wait policy snapshot conflicts with its content digest")
+    else:
+        atomic_write_text(snapshot_path, serialized)
+    return policy_ref
+
+
+def load_exception_wake_evidence(
+    directory: Path,
+    task_id: str,
+    suspension: dict[str, Any],
+    resume_event: str,
+    resume_ref: str | None,
+) -> dict[str, Any]:
+    if not resume_ref or not safe_task_evidence_ref(resume_ref):
+        raise SystemExit("External resume requires a safe task-local exception wake evidence ref")
+    source_path = (directory / resume_ref).resolve()
+    try:
+        source_path.relative_to(directory.resolve())
+    except ValueError:
+        raise SystemExit("Exception wake evidence ref escapes the task directory")
+    if not source_path.is_file():
+        raise SystemExit("Exception wake evidence ref does not exist")
+    raw = source_path.read_bytes()
+    if not raw:
+        raise SystemExit("Exception wake evidence is empty")
+    try:
+        evidence = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit("Exception wake evidence must be valid UTF-8 JSON") from exc
+    if not isinstance(evidence, dict) or set(evidence) != EXCEPTION_WAKE_FIELDS:
+        raise SystemExit("Exception wake evidence has unexpected or missing fields")
+    if evidence.get("schema_version") != "valp-exception-wake.v1":
+        raise SystemExit("Exception wake evidence has an unsupported schema version")
+    expected_identity = {
+        "task_id": task_id,
+        "suspension_id": suspension.get("suspension_id"),
+        "suspension_epoch": suspension.get("suspension_epoch"),
+        "event": resume_event,
+    }
+    if any(evidence.get(key) != value for key, value in expected_identity.items()):
+        raise SystemExit("Exception wake evidence does not match the current suspension identity")
+    principal = evidence.get("principal")
+    if not isinstance(principal, dict) or set(principal) != EXCEPTION_WAKE_PRINCIPAL_FIELDS:
+        raise SystemExit("Exception wake evidence principal is invalid")
+    principal_type = str(principal.get("type") or "")
+    principal_id = str(principal.get("id") or "").strip()
+    if principal_type not in EXCEPTION_WAKE_PRINCIPAL_TYPES[resume_event] or not principal_id:
+        raise SystemExit("Exception wake evidence principal does not match the event")
+    reason = evidence.get("reason")
+    recorded_at = evidence.get("recorded_at")
+    if not isinstance(reason, str) or not reason.strip():
+        raise SystemExit("Exception wake evidence reason is missing")
+    if not isinstance(recorded_at, str) or not recorded_at.strip():
+        raise SystemExit("Exception wake evidence recorded_at is missing")
+    supporting_refs = evidence.get("supporting_refs")
+    if (
+        not isinstance(supporting_refs, list)
+        or len(supporting_refs) != len(set(str(ref) for ref in supporting_refs))
+        or any(not isinstance(ref, str) or not safe_task_evidence_ref(ref) for ref in supporting_refs)
+    ):
+        raise SystemExit("Exception wake evidence supporting_refs are invalid")
+    if resume_event == "runtime_failure" and not supporting_refs:
+        raise SystemExit("Runtime failure wake requires supporting evidence")
+    for supporting_ref in supporting_refs:
+        if supporting_ref == resume_ref:
+            raise SystemExit("Exception wake evidence cannot cite itself as supporting evidence")
+        supporting_path = (directory / supporting_ref).resolve()
+        try:
+            supporting_path.relative_to(directory.resolve())
+        except ValueError:
+            raise SystemExit("Exception wake supporting evidence escapes the task directory")
+        if not supporting_path.is_file() or supporting_path.stat().st_size == 0:
+            raise SystemExit("Exception wake supporting evidence is missing or empty")
+    if suspension.get("strict_identity"):
+        policy = load_wait_policy(
+            directory,
+            task_id,
+            policy_ref=str(suspension.get("wait_policy_ref") or ""),
+            validate_dependency_ref=True,
+        )
+        if resume_event not in (policy.get("exception_events") or []):
+            raise SystemExit("Exception wake event is not allowed by the current wait policy")
+    elif resume_event not in (suspension.get("allowed_resume_events") or []):
+        raise SystemExit("Exception wake event is not allowed by the current suspension")
+    return {
+        "source_ref": resume_ref,
+        "source_digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+        "principal": {"type": principal_type, "id": principal_id},
+        "reason": reason,
+        "recorded_at": recorded_at,
+        "supporting_refs": list(supporting_refs),
+    }
+
+
+def receipt_matches_work_item(
+    receipt: dict[str, Any],
+    item: dict[str, Any],
+    task_id: str,
+    strict_identity: bool,
+    suspension_epoch: int | None = None,
+    event_sequence_at_entry: int | None = None,
+) -> bool:
+    if strict_identity:
+        if receipt.get("schema_version") != "valp-dispatch-receipt.v2":
+            return False
+        expected = {
+            "task_id": task_id,
+            "agent": item.get("agent"),
+            "role": item.get("role"),
+            "work_item_id": item.get("work_item_id"),
+            "dispatch_id": item.get("dispatch_id"),
+            "dispatch_generation": item.get("dispatch_generation"),
+        }
+        if any(receipt.get(key) != value for key, value in expected.items()):
+            return False
+        if (
+            not str(receipt.get("receipt_id") or "")
+            or type(receipt.get("event_sequence")) is not int
+            or type(receipt.get("dispatch_generation")) is not int
+        ):
+            return False
+        if receipt.get("event") in TERMINAL_WORKER_RECEIPT_EVENTS:
+            if (
+                suspension_epoch is None
+                or type(receipt.get("suspension_epoch")) is not int
+                or receipt.get("suspension_epoch") != suspension_epoch
+            ):
+                return False
+            if event_sequence_at_entry is None or int(receipt["event_sequence"]) <= event_sequence_at_entry:
+                return False
+    elif str(receipt.get("agent")) != str(item.get("agent")):
+        return False
+    receipt_refs = {str(ref) for ref in receipt.get("expected_refs") or []}
+    return set(str(ref) for ref in item.get("expected_refs") or []).issubset(receipt_refs)
+
+
+def work_item_evidence_is_valid(directory: Path, item: dict[str, Any]) -> bool:
+    evidence_status = read_json(directory / "evidence-status.json")
+    records = evidence_status.get("evidence") or evidence_status.get("items") or {}
+    for raw_ref in item.get("expected_refs") or []:
+        ref = str(raw_ref)
+        if not safe_task_evidence_ref(ref) or not task_evidence_exists(directory, ref):
+            return False
+        status = "valid"
+        if isinstance(records, dict):
+            record = records.get(ref)
+            if isinstance(record, dict):
+                status = str(record.get("status") or "valid").lower()
+            elif isinstance(record, str):
+                status = record.lower()
+        elif isinstance(records, list):
+            for record in records:
+                if isinstance(record, dict) and record.get("ref") == ref:
+                    status = str(record.get("status") or "valid").lower()
+                    break
+        if status in INVALID_EVIDENCE_STATUSES:
+            return False
+    return True
 
 
 def suspend_task(root: Path, task_id: str, timeout_seconds: float = 300.0) -> dict[str, Any]:
     root = workspace_root(root)
     directory = task_dir(root, task_id)
     state_path = directory / "state.json"
-    state = read_json(state_path)
-    if not state:
-        raise SystemExit(f"Missing state.json for task {task_id}")
-    if state.get("status") == "suspended":
-        return state.get("suspension") or {}
     if not math.isfinite(timeout_seconds) or timeout_seconds < 0:
         raise SystemExit("Wait timeout must be a finite non-negative number")
-    if state.get("status") in {"done", "failed", "cancelled"}:
-        raise SystemExit(f"Cannot suspend task in terminal state: {state.get('status')}")
+    with task_state_lock(directory):
+        state = recover_wait_projection(directory, read_json_strict(state_path))
+        if state.get("status") == "suspended":
+            return state.get("suspension") or {}
+        if state.get("schema_version") != "valp-visible-loop-state.v2":
+            raise SystemExit("Legacy v1 task state is read-only; deterministic wait requires state v2")
+        if state.get("status") in {"done", "failed", "cancelled"}:
+            raise SystemExit(f"Cannot suspend task in terminal state: {state.get('status')}")
 
-    receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
-    selected_agents = [str(agent) for agent in (state.get("selected_agents") or [])]
-    latest_receipts: dict[str, dict[str, Any]] = {}
-    for record in receipts:
-        latest_receipts[str(record.get("agent"))] = record
-    waiting_for_agents = [
-        agent
-        for agent in selected_agents
-        if (latest_receipts.get(agent) or {}).get("event") in DELIVERY_RECEIPT_EVENTS
-    ]
-    if not waiting_for_agents:
-        raise SystemExit("Cannot suspend before a selected worker has delivery proof")
+        receipts = load_dispatch_receipts(directory, task_id)
+        policy = load_wait_policy(
+            directory,
+            task_id,
+            state.get("role_assignments") or {},
+        )
+        runtime_class = str((state.get("runtime_adapter") or {}).get("class") or "")
+        if not policy and runtime_class != "manual":
+            raise SystemExit("Full and Remote Mode deterministic wait requires wait-policy.json")
+        strict_identity = bool(policy)
+        if policy:
+            policy_ref = snapshot_wait_policy(directory, policy)
+            required_work_items = [dict(item) for item in policy["required_work_items"]]
+            for item in required_work_items:
+                delivered = any(
+                    record.get("event") == "dispatch_submitted"
+                    and receipt_matches_work_item(record, item, task_id, strict_identity=True)
+                    and has_concrete_runtime_submission_proof(record)
+                    for record in receipts
+                )
+                if not delivered:
+                    raise SystemExit(
+                        "Cannot suspend before concrete adapter delivery proof for work item "
+                        + str(item.get("work_item_id"))
+                    )
+        else:
+            policy_ref = None
+            selected_agents = [str(agent) for agent in (state.get("selected_agents") or [])]
+            latest_receipts: dict[str, dict[str, Any]] = {}
+            for record in receipts:
+                latest_receipts[str(record.get("agent"))] = record
+            required_work_items = [
+                {
+                    "work_item_id": f"legacy:{agent}",
+                    "agent": agent,
+                    "role": str((latest_receipts.get(agent) or {}).get("role") or "other"),
+                    "dispatch_id": str((latest_receipts.get(agent) or {}).get("dispatch_id") or f"legacy:{agent}"),
+                    "dispatch_generation": int((latest_receipts.get(agent) or {}).get("dispatch_generation") or 1),
+                    "expected_refs": [str(ref) for ref in (latest_receipts.get(agent) or {}).get("expected_refs") or []],
+                }
+                for agent in selected_agents
+                if (latest_receipts.get(agent) or {}).get("event") in DELIVERY_RECEIPT_EVENTS
+            ]
+        if not required_work_items:
+            raise SystemExit("Cannot suspend before a selected worker has delivery proof")
+        waiting_for_agents = list(dict.fromkeys(str(item["agent"]) for item in required_work_items))
 
-    entered_at = datetime.now(timezone.utc).replace(microsecond=0)
-    deadline_at = entered_at + timedelta(seconds=max(0.0, timeout_seconds))
-    suspension = {
-        "status": "waiting",
-        "entered_at": entered_at.isoformat().replace("+00:00", "Z"),
-        "deadline_at": deadline_at.isoformat().replace("+00:00", "Z"),
-        "waiting_for_agents": waiting_for_agents,
-        "receipt_count_at_entry": len(receipts),
-        "allowed_resume_events": sorted(SUSPENSION_RESUME_EVENTS),
-    }
-    state["status"] = "suspended"
-    state["suspension"] = suspension
-    state["updated_at"] = now_iso()
-    write_json(state_path, state)
-    append_timeline_event(
-        directory,
-        "coordinator_suspended",
-        "Coordinator model turns suspended while workers run",
-        waiting_for_agents=waiting_for_agents,
-        deadline_at=suspension["deadline_at"],
-    )
-    return suspension
+        entered_at = datetime.now(timezone.utc).replace(microsecond=0)
+        deadline_at = entered_at + timedelta(seconds=max(0.0, timeout_seconds))
+        committed_events = validated_wait_events(directory, task_id)
+        suspension_epoch = max(
+            [
+                int(event.get("suspension_epoch") or 0)
+                for event in committed_events
+                if type(event.get("suspension_epoch")) is int
+            ],
+            default=0,
+        ) + 1
+        state_revision_at_entry = exact_state_revision(state)
+        suspension_seed = f"{task_id}:{suspension_epoch}:{state_revision_at_entry}:{len(receipts)}"
+        suspension_id = "sha256:" + hashlib.sha256(suspension_seed.encode("utf-8")).hexdigest()
+        suspension = {
+            "status": "waiting",
+            "suspension_id": suspension_id,
+            "suspension_epoch": suspension_epoch,
+            "state_revision_at_entry": state_revision_at_entry,
+            "wait_policy_ref": policy_ref,
+            "wait_policy_id": policy.get("wait_policy_id") if policy else "legacy-agent-wait",
+            "strict_identity": strict_identity,
+            "event_sequence_at_entry": len(committed_events),
+            "receipt_event_sequence_at_entry": max(
+                [int(record.get("event_sequence")) for record in receipts if isinstance(record.get("event_sequence"), int)],
+                default=0,
+            ),
+            "receipt_cursor_at_entry": len(receipts),
+            "required_work_items": required_work_items,
+            "required_work_item_ids": [str(item["work_item_id"]) for item in required_work_items],
+            "pending_work_item_ids": [str(item["work_item_id"]) for item in required_work_items],
+            "completed_work_item_ids": [],
+            "failed_work_item_ids": [],
+            "entered_at": entered_at.isoformat().replace("+00:00", "Z"),
+            "deadline_at": deadline_at.isoformat().replace("+00:00", "Z"),
+            "execution_deadline": deadline_at.isoformat().replace("+00:00", "Z"),
+            "waiting_for_agents": waiting_for_agents,
+            "receipt_count_at_entry": len(receipts),
+            "allowed_resume_events": sorted(SUSPENSION_RESUME_EVENTS),
+        }
+        state["status"] = "suspended"
+        state["suspension"] = suspension
+        state["updated_at"] = now_iso()
+        commit_wait_state(
+            directory,
+            state,
+            "coordinator_suspended",
+            "Coordinator model turns suspended while workers run",
+        )
+        return suspension
 
 
 def resume_suspended_task(
@@ -2316,55 +3509,229 @@ def resume_suspended_task(
     root = workspace_root(root)
     directory = task_dir(root, task_id)
     state_path = directory / "state.json"
-    state = read_json(state_path)
-    suspension = state.get("suspension") or {}
-    if state.get("status") != "suspended" or suspension.get("status") != "waiting":
-        raise SystemExit(f"Task {task_id} is not suspended")
-    if resume_event == "runtime_failure":
-        if not resume_ref or not safe_task_evidence_ref(resume_ref) or not task_evidence_exists(directory, resume_ref):
-            raise SystemExit("runtime_failure resume requires an existing task-local evidence ref")
-    if resume_event == "receipt":
-        if not resume_ref or not resume_ref.startswith("dispatch-receipts.jsonl#"):
-            raise SystemExit("receipt resume requires a dispatch receipt ref")
-        try:
-            receipt_index = int(resume_ref.rsplit("#", 1)[1])
-        except (ValueError, IndexError):
-            raise SystemExit("Invalid dispatch receipt ref")
-        receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
-        if receipt_index < 1 or receipt_index > len(receipts):
-            raise SystemExit("Dispatch receipt ref does not exist")
-        if receipt_index <= int(suspension.get("receipt_count_at_entry") or 0):
-            raise SystemExit("Dispatch receipt predates suspension")
-        receipt = receipts[receipt_index - 1]
-        if receipt.get("event") not in TERMINAL_WORKER_RECEIPT_EVENTS:
-            raise SystemExit("Dispatch receipt is not a terminal worker receipt")
-        if str(receipt.get("agent")) not in {str(agent) for agent in (suspension.get("waiting_for_agents") or [])}:
-            raise SystemExit("Dispatch receipt does not belong to a waiting agent")
+    with task_state_lock(directory):
+        state = recover_wait_projection(directory, read_json_strict(state_path))
+        suspension = state.get("suspension") or {}
+        wake_reason = resume_event
+        qualifying_receipt_id: str | None = None
+        external_event = (
+            load_exception_wake_evidence(
+                directory,
+                task_id,
+                suspension,
+                resume_event,
+                resume_ref,
+            )
+            if resume_event in EXTERNAL_RESUME_EVENTS
+            else None
+        )
+        if state.get("status") != "suspended" or suspension.get("status") != "waiting":
+            accepted = suspension.get("accepted_wake") or {}
+            if accepted:
+                if (
+                    accepted.get("resume_event") == resume_event
+                    and accepted.get("resume_ref") == resume_ref
+                    and (
+                        external_event is None
+                        or accepted.get("external_event") == external_event
+                    )
+                ):
+                    return suspension
+                raise SystemExit(f"Conflicting wake for completed suspension epoch {suspension.get('suspension_epoch')}")
+            raise SystemExit(f"Task {task_id} is not suspended")
+        if resume_event == "timeout":
+            deadline_text = str(suspension.get("deadline_at") or "")
+            try:
+                deadline = datetime.fromisoformat(deadline_text.replace("Z", "+00:00"))
+            except ValueError:
+                raise SystemExit("Suspension deadline is missing or invalid")
+            if deadline.tzinfo is None:
+                raise SystemExit("Suspension deadline must include a timezone")
+            if datetime.now(timezone.utc) < deadline.astimezone(timezone.utc):
+                raise SystemExit("Cannot resume from timeout before the recorded deadline")
+        if resume_event == "receipt":
+            if not resume_ref or not resume_ref.startswith("dispatch-receipts.jsonl#"):
+                raise SystemExit("receipt resume requires a dispatch receipt ref")
+            try:
+                receipt_index = int(resume_ref.rsplit("#", 1)[1])
+            except (ValueError, IndexError):
+                raise SystemExit("Invalid dispatch receipt ref")
+            receipts = load_dispatch_receipts(directory, task_id)
+            if receipt_index < 1 or receipt_index > len(receipts):
+                raise SystemExit("Dispatch receipt ref does not exist")
+            if receipt_index <= int(suspension.get("receipt_count_at_entry") or 0):
+                raise SystemExit("Dispatch receipt predates suspension")
+            receipt = receipts[receipt_index - 1]
+            if receipt.get("event") not in TERMINAL_WORKER_RECEIPT_EVENTS:
+                raise SystemExit("Dispatch receipt is not a terminal worker receipt")
+            strict_identity = bool(suspension.get("strict_identity"))
+            required_work_items = suspension.get("required_work_items") or []
+            matching_items = [
+                item
+                for item in required_work_items
+                if isinstance(item, dict)
+                and receipt_matches_work_item(
+                    receipt,
+                    item,
+                    task_id,
+                    strict_identity,
+                    suspension_epoch=int(suspension.get("suspension_epoch") or 0),
+                    event_sequence_at_entry=int(suspension.get("receipt_event_sequence_at_entry") or 0),
+                )
+            ]
+            if len(matching_items) != 1:
+                raise SystemExit("Dispatch receipt does not match one required work item identity")
+            item = matching_items[0]
+            work_item_id = str(item["work_item_id"])
+            receipt_event = str(receipt.get("event") or "")
+            qualifying_receipt_id = str(receipt.get("receipt_id") or resume_ref)
+            runtime_class = str((state.get("runtime_adapter") or {}).get("class") or "")
+            if strict_identity and receipt_event in {"manual_result_attested", "manual_blocked"} and runtime_class != "manual":
+                raise SystemExit("Manual receipt cannot wake a Full or Remote Mode suspension")
+            if any(
+                event.get("qualifying_receipt_id") == qualifying_receipt_id
+                for event in validated_wait_events(directory, task_id)
+            ):
+                return suspension
+            if receipt_event in {"dispatch_completed", "manual_result_attested"}:
+                if not work_item_evidence_is_valid(directory, item):
+                    raise SystemExit("Completion receipt expected evidence is missing or invalid")
+                completed = list(suspension.get("completed_work_item_ids") or [])
+                pending = list(suspension.get("pending_work_item_ids") or [])
+                if pending == [work_item_id]:
+                    invalid_work_items = [
+                        str(required_item.get("work_item_id") or "unknown")
+                        for required_item in required_work_items
+                        if isinstance(required_item, dict)
+                        and not work_item_evidence_is_valid(directory, required_item)
+                    ]
+                    if invalid_work_items:
+                        raise SystemExit(
+                            "dependency_ready required work item evidence is missing or invalid: "
+                            + ", ".join(invalid_work_items)
+                        )
+                if work_item_id not in completed:
+                    completed.append(work_item_id)
+                pending = [value for value in pending if value != work_item_id]
+                suspension["completed_work_item_ids"] = completed
+                suspension["pending_work_item_ids"] = pending
+                suspension["receipt_cursor"] = max(
+                    int(suspension.get("receipt_cursor") or suspension.get("receipt_cursor_at_entry") or 0),
+                    receipt_index,
+                )
+                state["suspension"] = suspension
+                state["updated_at"] = now_iso()
+                if pending:
+                    commit_wait_state(
+                        directory,
+                        state,
+                        "work_item_completed",
+                        "Required work item completed; dependency barrier remains pending",
+                        work_item_id=work_item_id,
+                        qualifying_receipt_id=qualifying_receipt_id,
+                        receipt_ref=resume_ref,
+                    )
+                    return suspension
+                wake_reason = "dependency_ready"
+            else:
+                failed = list(suspension.get("failed_work_item_ids") or [])
+                if work_item_id not in failed:
+                    failed.append(work_item_id)
+                suspension["failed_work_item_ids"] = failed
+                wake_reason = receipt_event
 
-    resumed_at = now_iso()
-    suspension.update({
-        "status": "resumed",
-        "resume_event": resume_event,
-        "resumed_at": resumed_at,
-    })
-    if resume_ref:
-        suspension["resume_ref"] = resume_ref
-    state["status"] = {
-        "timeout": "blocked",
-        "runtime_failure": "blocked",
-        "cancellation": "cancelled",
-    }.get(resume_event, "executing")
-    state["suspension"] = suspension
-    state["updated_at"] = resumed_at
-    write_json(state_path, state)
-    append_timeline_event(
-        directory,
-        "coordinator_resumed",
-        f"Coordinator resumed from {resume_event}",
-        resume_event=resume_event,
-        resume_ref=resume_ref,
-    )
-    return suspension
+        pair_error = wake_reason_pair_error(resume_event, wake_reason)
+        if pair_error:
+            raise SystemExit(pair_error)
+        resumed_at = now_iso()
+        events = validated_wait_events(directory, task_id)
+        accepted_sequence = len(events) + 1
+        resulting_revision = exact_state_revision(state) + 1
+        event_id = wait_event_id(
+            task_id,
+            "coordinator_resumed",
+            str(suspension.get("suspension_id") or ""),
+            accepted_sequence,
+            resulting_revision,
+        )
+        wake_id = deterministic_wake_id(
+            task_id,
+            int(suspension.get("suspension_epoch") or 0),
+            resume_event,
+            resume_ref,
+            external_event,
+        )
+        result_ref = f"wake-results/{wake_id.removeprefix('sha256:')}.json"
+        accepted_wake = {
+            "wake_id": wake_id,
+            "wake_event_id": event_id,
+            "wake_reason": wake_reason,
+            "resume_event": resume_event,
+            "resume_ref": resume_ref,
+            "accepted_sequence": accepted_sequence,
+            "resulting_state_revision": resulting_revision,
+            "result_ref": result_ref,
+        }
+        if external_event is not None:
+            accepted_wake["external_event"] = external_event
+        suspension.update({
+            "status": "resumed",
+            "resume_event": resume_event,
+            "resumed_at": resumed_at,
+            "accepted_wake": accepted_wake,
+        })
+        if resume_ref:
+            suspension["resume_ref"] = resume_ref
+        state["status"] = TASK_STATUS_BY_WAKE_REASON[wake_reason]
+        state["suspension"] = suspension
+        state["updated_at"] = resumed_at
+        wake_result = {
+            "schema_version": "valp-wake-result.v1",
+            "task_id": task_id,
+            "suspension_id": suspension.get("suspension_id"),
+            "suspension_epoch": suspension.get("suspension_epoch"),
+            **suspension["accepted_wake"],
+            "resulting_task_status": state["status"],
+            "completed_work_item_ids": list(suspension.get("completed_work_item_ids") or []),
+            "pending_work_item_ids": list(suspension.get("pending_work_item_ids") or []),
+            "failed_work_item_ids": list(suspension.get("failed_work_item_ids") or []),
+            "recorded_at": resumed_at,
+        }
+        result_path = directory / result_ref
+        if result_path.exists():
+            existing_result = read_json_strict(result_path)
+            existing_recorded_at = existing_result.get("recorded_at")
+            if not isinstance(existing_recorded_at, str) or not existing_recorded_at:
+                raise SystemExit("Pre-existing wake result conflicts with the pending commit")
+            resumed_at = existing_recorded_at
+            suspension["resumed_at"] = resumed_at
+            state["updated_at"] = resumed_at
+            wake_result["recorded_at"] = resumed_at
+            expected_bytes = (
+                json.dumps(wake_result, indent=2, ensure_ascii=False) + "\n"
+            ).encode("utf-8")
+            if result_path.read_bytes() != expected_bytes:
+                raise SystemExit("Pre-existing wake result conflicts with the pending commit")
+        else:
+            write_json(result_path, wake_result)
+        event_details = {
+            "resume_event": resume_event,
+            "resume_ref": resume_ref,
+            "wake_reason": wake_reason,
+            "wake_id": wake_id,
+            "result_ref": result_ref,
+            "qualifying_receipt_id": qualifying_receipt_id,
+        }
+        if external_event is not None:
+            event_details["external_event"] = external_event
+        commit_wait_state(
+            directory,
+            state,
+            "coordinator_resumed",
+            f"Coordinator resumed from {resume_event}",
+            **event_details,
+        )
+        return suspension
 
 
 def wait_for_task(
@@ -2378,26 +3745,57 @@ def wait_for_task(
     root = workspace_root(root)
     directory = task_dir(root, task_id)
     suspension = suspend_task(root, task_id, timeout_seconds=timeout_seconds)
+    scan_cursor = int(
+        suspension.get("receipt_cursor")
+        or suspension.get("receipt_count_at_entry")
+        or 0
+    )
     while True:
-        state = read_json(directory / "state.json")
-        current = state.get("suspension") or suspension
-        if state.get("status") != "suspended" or current.get("status") != "waiting":
-            return current
+        with task_state_lock(directory):
+            state = recover_wait_projection(directory, read_json_strict(directory / "state.json"))
+            current = state.get("suspension") or suspension
+            if state.get("status") != "suspended" or current.get("status") != "waiting":
+                if current.get("accepted_wake"):
+                    return current
+                raise SystemExit(f"Task {task_id} left suspended state without an accepted wake")
 
-        receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
-        receipt_count = int(current.get("receipt_count_at_entry") or 0)
+        receipts = load_dispatch_receipts(directory, task_id)
+        receipt_count = max(
+            scan_cursor,
+            int(current.get("receipt_cursor") or current.get("receipt_count_at_entry") or 0),
+        )
         waiting_for_agents = {str(agent) for agent in (current.get("waiting_for_agents") or [])}
         for receipt_index, record in enumerate(receipts[receipt_count:], start=receipt_count + 1):
+            scan_cursor = receipt_index
             if str(record.get("agent")) not in waiting_for_agents:
                 continue
             if record.get("event") not in TERMINAL_WORKER_RECEIPT_EVENTS:
                 continue
-            return resume_suspended_task(
+            strict_identity = bool(current.get("strict_identity"))
+            if not any(
+                isinstance(item, dict)
+                and receipt_matches_work_item(
+                    record,
+                    item,
+                    task_id,
+                    strict_identity,
+                    suspension_epoch=int(current.get("suspension_epoch") or 0),
+                    event_sequence_at_entry=int(
+                        current.get("receipt_event_sequence_at_entry") or 0
+                    ),
+                )
+                for item in current.get("required_work_items") or []
+            ):
+                continue
+            reduced = resume_suspended_task(
                 root,
                 task_id,
                 "receipt",
                 resume_ref=f"dispatch-receipts.jsonl#{receipt_index}",
             )
+            if reduced.get("status") == "resumed":
+                return reduced
+            current = reduced
 
         deadline_text = str(current.get("deadline_at") or "").replace("Z", "+00:00")
         deadline = datetime.fromisoformat(deadline_text)
@@ -2509,9 +3907,10 @@ def dispatch_task(
         dependency_errors = unmet_dependencies_for_phases(
             submission_dependencies,
             phases,
-            read_json_lines_strict(directory / "dispatch-receipts.jsonl"),
+            load_dispatch_receipts(directory, task_id),
             directory,
             read_json(directory / "evidence-status.json"),
+            manual_mode=manual_mode,
         )
         if dependency_errors:
             raise SystemExit("Dispatch blocked by unmet prerequisites: " + ", ".join(dependency_errors))

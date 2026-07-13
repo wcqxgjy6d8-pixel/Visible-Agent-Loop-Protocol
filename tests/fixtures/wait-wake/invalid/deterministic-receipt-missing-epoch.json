@@ -1,0 +1,15 @@
+{
+  "schema_version": "valp-dispatch-receipt.v2",
+  "receipt_id": "receipt-invalid",
+  "task_id": "TASK-INVALID-WAIT",
+  "event_sequence": 2,
+  "ts": "2026-07-13T10:28:55Z",
+  "agent": "codex",
+  "role": "implementer",
+  "work_item_id": "implementation:codex",
+  "dispatch_id": "dispatch-1",
+  "dispatch_generation": 1,
+  "event": "dispatch_completed",
+  "dispatch_ref": "agents/codex/dispatch.md",
+  "expected_refs": ["agents/codex/evidence.md"]
+}

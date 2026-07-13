@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Exception Wake Evidence",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "task_id",
+    "suspension_id",
+    "suspension_epoch",
+    "event",
+    "principal",
+    "reason",
+    "recorded_at",
+    "supporting_refs"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-exception-wake.v1"},
+    "task_id": {"type": "string", "minLength": 1},
+    "suspension_id": {"$ref": "#/$defs/digestId"},
+    "suspension_epoch": {"type": "integer", "minimum": 1},
+    "event": {"enum": ["runtime_failure", "cancellation", "user_input"]},
+    "principal": {"$ref": "#/$defs/principal"},
+    "reason": {"type": "string", "minLength": 1},
+    "recorded_at": {"type": "string", "minLength": 1},
+    "supporting_refs": {"$ref": "#/$defs/evidenceRefs"}
+  },
+  "$defs": {
+    "digestId": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "principal": {
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"enum": ["user", "runtime", "policy"]},
+        "id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"event": {"const": "runtime_failure"}}, "required": ["event"]},
+      "then": {
+        "properties": {
+          "principal": {"properties": {"type": {"const": "runtime"}}},
+          "supporting_refs": {"minItems": 1}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"event": {"const": "user_input"}}, "required": ["event"]},
+      "then": {
+        "properties": {
+          "principal": {"properties": {"type": {"const": "user"}}}
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

@@ -13,6 +13,7 @@ Start here:
 - [中文注解](zh-CN/README.md)
 - [Protocol specification](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SPEC.md)
 - [Proposed v0.3 installation control plane RFC](rfcs/0001-v0.3-installation-control-plane.md)
+- [Twelve-layer N/I/P audit matrix](twelve-layer-nip-matrix.md)
 - [Quickstart](quickstart.md)
 - [Compound learning loop](compound-learning-loop.md)
 - [When Agent "Done" Is Not Done](when-agent-done-is-not-done.md)
@@ -36,10 +37,12 @@ not a hosted production platform.
 
 ## Proposed v0.3 Direction
 
-The current implementation and release remain `0.2.0`. The
+The current release remains `0.2.0`. The
 [v0.3 installation control plane RFC](rfcs/0001-v0.3-installation-control-plane.md)
-targets `0.3.0-draft` and is proposed work. It is not implemented or stable,
-and it does not change current behavior.
+targets `0.3.0-draft`. RFC 0001 remains incomplete and is not stable as a
+whole. Its deterministic-wake subset is locally implemented and tested in the
+reference core, schemas, and audit; the remaining installation-control-plane
+work does not change current release or runtime-support claims.
 
 The proposal extends VALP's evidence discipline from individual tasks to the
 installation control plane: the user selects an Installation Leader;

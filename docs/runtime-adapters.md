@@ -119,6 +119,25 @@ The adapter may store this data in a database, JSONL ledger, local task folder,
 or platform API. The storage is implementation-specific; the exported evidence
 contract is not.
 
+## Cross-Adapter Suspended-Wait Contract
+
+This contract applies to pane, daemon, hosted, queue, and remote adapters. When
+any adapter claims deterministic suspended waiting, it must block outside the
+coordinator model and export a versioned wait policy, identity-bound receipts,
+a revisioned suspension projection, an append-only accepted event ledger, and
+an immutable wake result. Success requires the `dependency_ready` barrier;
+blocked work, runtime failure, cancellation, timeout, and user input are
+exception short circuits into visible handling, not completion proof.
+
+The reference core proves one accepted wake transition per suspension epoch,
+idempotent wake-result replay, and event-to-projection recovery from a committed
+wait event. It does not prove exactly-once coordinator process continuation. An
+adapter may make that stronger claim only with a wake-ID-bound continuation
+invocation receipt and restart/restore evidence showing duplicate invocation is
+suppressed across recovery. Otherwise it must downgrade the continuation
+capability claim. An optional `checkpoint_ref` is only an opaque safe, existing,
+non-empty task-local ref and is not restorability or invocation evidence.
+
 ## Coordinator Patterns
 
 VALP does not choose a universal leader.
@@ -205,10 +224,20 @@ The adapter must map runtime queue states into VALP:
 
 Queue success is not enough. VALP still requires evidence.
 
-When an adapter claims suspended waiting, it must block outside the coordinator
-model and wake only for a newer terminal worker receipt, the recorded timeout,
-runtime failure, cancellation, or explicit user input. It must export the
-suspension record and timeline events. A wakeup is not completion proof.
+Daemon adapters use the shared cross-adapter suspended-wait contract above. A
+queue wakeup is not completion proof.
+
+The reference file-backed core flushes ledger records and replacement files and,
+on POSIX filesystems that support it, synchronizes parent-directory metadata.
+Unexpected directory-sync failures propagate instead of being silently ignored.
+The current Windows reference path retains atomic replacement and process-crash
+event-to-projection recovery, but does not prove sudden-power-loss directory
+durability; adapters that need that guarantee must provide and evidence a
+platform-specific equivalent.
+Reference file-ledger locks use nonblocking acquisition with a 30-second,
+contention-only retry deadline on POSIX and Windows. Unexpected lock errors and
+deadline exhaustion fail visibly. Advisory-lock behavior on network filesystems
+remains an adapter/filesystem capability that must be tested rather than assumed.
 
 Recommended queue evidence:
 
@@ -218,7 +247,7 @@ worker id
 provider/backend id
 dispatch payload ref
 status transition log
-suspension and deterministic resume event, if used
+wait policy, suspension epoch, revision, accepted event, and wake result, if used
 output or artifact ref
 expected evidence refs
 failure reason, if any
@@ -263,7 +292,9 @@ not a Full Mode adapter.
 
 ## Remote Adapter
 
-Remote Mode is valid when the runtime runs on another machine.
+Remote Mode is valid when the runtime runs on another machine and exports the
+required evidence contract. Remote guarantees are conditional on adapter
+evidence from that host; SSH connectivity or local terminal state is not proof.
 
 The remote runtime owns:
 

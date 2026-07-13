@@ -101,7 +101,9 @@ See [runtime-adapters.md](runtime-adapters.md) and
 ## Remote Mode
 
 Remote Mode is valid when a local machine connects to a machine running a
-VALP-compatible runtime.
+VALP-compatible runtime that exports the required remote evidence. Remote
+guarantees are conditional on adapter evidence for submission, state, receipts,
+and expected evidence; SSH connectivity alone is not proof.
 
 The remote runtime owns agent state, agent session state, submission proof, and
 receipts. The local client must not pretend local terminal state proves remote

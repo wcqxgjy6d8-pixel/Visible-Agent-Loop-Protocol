@@ -3,13 +3,34 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 from dataclasses import dataclass, asdict
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .delegation import validate_delegation_policy
 from .risk import classify_approval_risks
-from .submission import dependency_order_errors, validate_submission_dependencies
+from .submission import (
+    dependency_order_errors,
+    deterministic_receipt_ledger_errors,
+    has_concrete_runtime_submission_proof,
+    validate_submission_dependencies,
+)
+from .workflow import (
+    EXTERNAL_RESUME_EVENTS,
+    REQUIRED_WAIT_EXCEPTION_EVENTS,
+    WAIT_EXCEPTION_EVENTS,
+    deterministic_wake_id,
+    load_exception_wake_evidence,
+    load_wait_policy,
+    suspension_checkpoint_error,
+    wait_event_id,
+    wait_receipt_event_error,
+    wake_reason_pair_error,
+    wake_status_pair_error,
+    wait_work_item_policy_error,
+    wait_work_item_transition_error,
+)
 
 
 PASS = "pass"
@@ -26,6 +47,25 @@ VISIBLE_ATTENTION_REQUIRED_PROFILES = {
     "agent-runtime",
     "ops-release",
     "prototype",
+}
+WAKE_RESULT_BASE_FIELDS = {
+    "schema_version",
+    "task_id",
+    "suspension_id",
+    "suspension_epoch",
+    "wake_id",
+    "wake_event_id",
+    "wake_reason",
+    "resume_event",
+    "resume_ref",
+    "accepted_sequence",
+    "resulting_state_revision",
+    "result_ref",
+    "resulting_task_status",
+    "completed_work_item_ids",
+    "pending_work_item_ids",
+    "failed_work_item_ids",
+    "recorded_at",
 }
 
 @dataclass
@@ -65,12 +105,14 @@ class TaskAudit:
         self.submission_dependencies = self._load_json("submission-dependencies.json")
         self.delegation_policy = self._load_json("delegation-policy.json")
         self.historical_audit_boundary = self._load_json("historical-audit-boundary.json")
+        self.wait_policy = self._load_json("wait-policy.json")
         self.attention_map = self._load_json("attention-map.json")
         self.context_selection = self._load_json("context-selection.json")
         self.mask_list = self._load_json("mask-list.json")
         self.evidence_board = self._load_json("evidence-board.json")
         self.correction_cycle = self._load_json("correction-cycle.json")
         self.receipts = self._load_jsonl("dispatch-receipts.jsonl")
+        self.wait_events = self._load_jsonl("wait-events.jsonl")
         self.approval_requests = self._load_jsonl("approvals/requested.jsonl")
         self.approval_decisions = self._load_jsonl("approvals/user-decisions.jsonl")
         self.task_text = self._read_text("task.md")
@@ -82,6 +124,7 @@ class TaskAudit:
         items = [
             self.check_profile_and_routing(),
             self.check_runtime_adapter_and_state_mapping(),
+            self.check_deterministic_wake(),
             self.check_local_overlay(),
             self.check_selected_agents_and_context(),
             self.check_provider_matrix(),
@@ -155,6 +198,544 @@ class TaskAudit:
                 evidence,
             )
         return self._pass("runtime_adapter", "Runtime adapter and task state mapping are recorded", "Runtime adapter and state mapping found", evidence)
+
+    def check_deterministic_wake(self) -> AuditItem:
+        evidence = self._existing(
+            [
+                "state.json",
+                "wait-policy.json",
+                "wait-events.jsonl",
+                "dispatch-receipts.jsonl",
+            ]
+        )
+        suspension = self.state.get("suspension") or {}
+        claimed = bool(self.wait_policy or self.wait_events or self.state.get("schema_version") == "valp-visible-loop-state.v2" and suspension)
+        if not claimed:
+            return self._skip(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "Task does not claim deterministic wait/wake conformance",
+                evidence,
+            )
+        if self.state.get("schema_version") != "valp-visible-loop-state.v2":
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "Deterministic wait artifacts require state schema v2",
+                evidence,
+            )
+        runtime = self.routing.get("runtime_adapter") or self.state.get("runtime_adapter") or {}
+        manual_degraded = (
+            runtime.get("class") == "manual"
+            and bool(suspension)
+            and not suspension.get("strict_identity")
+        )
+        if not self.wait_policy and not manual_degraded:
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "Missing wait-policy.json for deterministic suspension",
+                evidence,
+            )
+        policy_errors = self._deterministic_wait_policy_errors() if self.wait_policy else []
+        if policy_errors:
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "; ".join(policy_errors[:5]),
+                evidence,
+            )
+        receipt_identity_errors = deterministic_receipt_ledger_errors(
+            self.receipts,
+            str(self.state.get("task_id") or ""),
+        )
+        if receipt_identity_errors:
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "Invalid deterministic receipt ledger: "
+                + "; ".join(receipt_identity_errors[:5]),
+                evidence,
+            )
+        ledger_errors = self.jsonl_errors.get("wait-events.jsonl") or []
+        if ledger_errors:
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "Invalid wait-events.jsonl: " + "; ".join(ledger_errors[:3]),
+                evidence,
+            )
+        if not self.wait_events:
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "Missing committed wait-events.jsonl for deterministic state projection",
+                evidence,
+            )
+        previous_sequence = 0
+        previous_revision: int | None = None
+        previous_suspension: dict[str, Any] | None = None
+        task_id = str(self.state.get("task_id") or "")
+        for event in self.wait_events:
+            sequence = event.get("event_sequence")
+            before = event.get("state_revision_before")
+            after = event.get("state_revision_after")
+            if event.get("schema_version") != "valp-wait-event.v1" or event.get("task_id") != task_id:
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    "Wait event identity does not match the task",
+                    evidence,
+                )
+            if type(sequence) is not int or sequence != previous_sequence + 1:
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    "Wait event sequence is not contiguous",
+                    evidence,
+                )
+            if type(before) is not int or type(after) is not int or after != before + 1:
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    "Wait event revision transition is invalid",
+                    evidence,
+                )
+            if previous_revision is not None and before != previous_revision:
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    "Wait event revision chain is not contiguous",
+                    evidence,
+                )
+            expected_event_id = wait_event_id(
+                task_id,
+                str(event.get("event") or ""),
+                str(event.get("suspension_id") or ""),
+                int(sequence),
+                int(after),
+            )
+            if event.get("event_id") != expected_event_id:
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    "Wait event id does not match its derived identity",
+                    evidence,
+                )
+            projected_suspension = (event.get("projection") or {}).get("suspension")
+            if not isinstance(projected_suspension, dict):
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    "Wait event projection is missing",
+                    evidence,
+                )
+            checkpoint_error = suspension_checkpoint_error(self.task_dir, projected_suspension)
+            if checkpoint_error:
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    checkpoint_error,
+                    evidence,
+                )
+            if event.get("event") == "coordinator_resumed":
+                pair_error = wake_reason_pair_error(
+                    str(event.get("resume_event") or ""),
+                    str(event.get("wake_reason") or ""),
+                )
+                if pair_error:
+                    return self._fail(
+                        "deterministic_wake",
+                        "Deterministic wait state is identity-bound and replayable",
+                        pair_error,
+                        evidence,
+                    )
+                status_error = wake_status_pair_error(
+                    str(event.get("wake_reason") or ""),
+                    str((event.get("projection") or {}).get("status") or ""),
+                )
+                if status_error:
+                    return self._fail(
+                        "deterministic_wake",
+                        "Deterministic wait state is identity-bound and replayable",
+                        status_error,
+                        evidence,
+                    )
+            if projected_suspension.get("strict_identity"):
+                policy_ref = str(projected_suspension.get("wait_policy_ref") or "")
+                try:
+                    event_policy = load_wait_policy(
+                        self.task_dir,
+                        task_id,
+                        policy_ref=policy_ref,
+                        validate_dependency_ref=True,
+                    )
+                except SystemExit as exc:
+                    return self._fail(
+                        "deterministic_wake",
+                        "Deterministic wait state is identity-bound and replayable",
+                        str(exc),
+                        evidence,
+                    )
+                if policy_ref and policy_ref not in evidence:
+                    evidence.append(policy_ref)
+                policy_error = wait_work_item_policy_error(
+                    projected_suspension,
+                    event_policy,
+                    policy_ref,
+                )
+                if policy_error:
+                    return self._fail(
+                        "deterministic_wake",
+                        "Deterministic wait state is identity-bound and replayable",
+                        policy_error,
+                        evidence,
+                    )
+            transition_error = wait_work_item_transition_error(previous_suspension, event)
+            if transition_error:
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    transition_error,
+                    evidence,
+                )
+            receipt_error = wait_receipt_event_error(
+                event,
+                previous_suspension,
+                self.receipts,
+                task_id,
+            )
+            if receipt_error:
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    receipt_error,
+                    evidence,
+                )
+            previous_sequence = sequence
+            previous_revision = after
+            previous_suspension = projected_suspension
+        latest = self.wait_events[-1]
+        projection = latest.get("projection") or {}
+        state_revision = self.state.get("revision")
+        latest_revision = latest.get("state_revision_after")
+        if type(state_revision) is not int or state_revision < 0 or state_revision != latest_revision:
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "State revision does not match the last committed wait event",
+                evidence,
+            )
+        if suspension != projection.get("suspension"):
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "Suspension projection does not match the last committed wait event",
+                evidence,
+            )
+        if suspension.get("status") == "resumed" and self.state.get("status") == "suspended":
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "Resumed suspension cannot have a current suspended task status",
+                evidence,
+            )
+        if not suspension.get("strict_identity"):
+            return self._warn(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "Legacy agent-only wait is explicitly degraded and is not deterministic conformance",
+                evidence,
+            )
+        if suspension.get("status") == "waiting":
+            if self.state.get("status") != "suspended" or suspension.get("accepted_wake"):
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    "Waiting suspension has an invalid task status or accepted wake",
+                    evidence,
+                )
+            return self._pass(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                f"Waiting on {len(suspension.get('pending_work_item_ids') or [])} work items with committed projection",
+                evidence,
+            )
+        accepted = suspension.get("accepted_wake") or {}
+        resumed_events = [
+            event
+            for event in self.wait_events
+            if event.get("event") == "coordinator_resumed"
+            and event.get("suspension_epoch") == suspension.get("suspension_epoch")
+        ]
+        if len(resumed_events) != 1:
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "A suspension epoch must have exactly one committed wake event",
+                evidence,
+            )
+        resumed_event = resumed_events[0]
+        expected_wake_id = deterministic_wake_id(
+            task_id,
+            int(suspension.get("suspension_epoch") or 0),
+            str(accepted.get("resume_event") or ""),
+            accepted.get("resume_ref"),
+            accepted.get("external_event"),
+        )
+        expected_result_ref = f"wake-results/{expected_wake_id.removeprefix('sha256:')}.json"
+        if (
+            accepted.get("wake_id") != expected_wake_id
+            or resumed_event.get("wake_id") != expected_wake_id
+            or accepted.get("result_ref") != expected_result_ref
+            or resumed_event.get("result_ref") != expected_result_ref
+        ):
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "Wake id or result ref does not match its derived identity",
+                evidence,
+            )
+        expected_wake_fields = {
+            "wake_id": resumed_event.get("wake_id"),
+            "wake_event_id": resumed_event.get("event_id"),
+            "wake_reason": resumed_event.get("wake_reason"),
+            "resume_event": resumed_event.get("resume_event"),
+            "resume_ref": resumed_event.get("resume_ref"),
+            "accepted_sequence": resumed_event.get("event_sequence"),
+            "resulting_state_revision": resumed_event.get("state_revision_after"),
+            "result_ref": resumed_event.get("result_ref"),
+        }
+        if any(accepted.get(key) != value for key, value in expected_wake_fields.items()):
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "Accepted wake does not match its committed event",
+                evidence,
+            )
+        result_ref = str(accepted.get("result_ref") or "")
+        if not self._is_safe_task_ref(result_ref) or not self._task_local_ref_exists(result_ref):
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "Accepted wake result_ref is missing or unsafe",
+                evidence,
+            )
+        wake_result = self._load_json(result_ref)
+        resume_event = str(accepted.get("resume_event") or "")
+        expected_result_fields = set(WAKE_RESULT_BASE_FIELDS)
+        if resume_event in EXTERNAL_RESUME_EVENTS:
+            expected_result_fields.add("external_event")
+        if set(wake_result) != expected_result_fields:
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "Wake result has unexpected or missing closed fields",
+                [*evidence, result_ref],
+            )
+        result_fields = {
+            "task_id": task_id,
+            "suspension_id": suspension.get("suspension_id"),
+            "suspension_epoch": suspension.get("suspension_epoch"),
+            "wake_id": accepted.get("wake_id"),
+            "wake_event_id": accepted.get("wake_event_id"),
+            "wake_reason": accepted.get("wake_reason"),
+            "resume_event": accepted.get("resume_event"),
+            "resume_ref": accepted.get("resume_ref"),
+            "accepted_sequence": accepted.get("accepted_sequence"),
+            "resulting_state_revision": accepted.get("resulting_state_revision"),
+            "result_ref": result_ref,
+            "resulting_task_status": projection.get("status"),
+            "completed_work_item_ids": suspension.get("completed_work_item_ids"),
+            "pending_work_item_ids": suspension.get("pending_work_item_ids"),
+            "failed_work_item_ids": suspension.get("failed_work_item_ids"),
+        }
+        if wake_result.get("schema_version") != "valp-wake-result.v1" or any(
+            wake_result.get(key) != value for key, value in result_fields.items()
+        ):
+            return self._fail(
+                "deterministic_wake",
+                "Deterministic wait state is identity-bound and replayable",
+                "Wake result does not match accepted state and event",
+                [*evidence, result_ref],
+            )
+        if resume_event in EXTERNAL_RESUME_EVENTS:
+            external_event = accepted.get("external_event")
+            if (
+                not isinstance(external_event, dict)
+                or resumed_event.get("external_event") != external_event
+                or wake_result.get("external_event") != external_event
+            ):
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    "External wake metadata does not match state, event, and result",
+                    [*evidence, result_ref],
+                )
+            try:
+                current_external_event = load_exception_wake_evidence(
+                    self.task_dir,
+                    task_id,
+                    suspension,
+                    resume_event,
+                    str(accepted.get("resume_ref") or ""),
+                )
+            except SystemExit as exc:
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    "External wake source evidence is invalid: " + str(exc),
+                    [*evidence, result_ref],
+                )
+            if current_external_event != external_event:
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    "External wake source digest or attribution changed after acceptance",
+                    [*evidence, result_ref, str(external_event.get("source_ref") or "")],
+                )
+        if accepted.get("wake_reason") == "dependency_ready":
+            required_ids = set(str(value) for value in suspension.get("required_work_item_ids") or [])
+            completed_ids = set(str(value) for value in suspension.get("completed_work_item_ids") or [])
+            if suspension.get("pending_work_item_ids") or required_ids != completed_ids:
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    "dependency_ready wake was accepted before its work-item barrier",
+                    [*evidence, result_ref],
+                )
+            missing_receipts: list[str] = []
+            receipt_sequence_at_entry = int(suspension.get("receipt_event_sequence_at_entry") or 0)
+            for item in suspension.get("required_work_items") or []:
+                if not isinstance(item, dict):
+                    continue
+                expected_refs = set(str(ref) for ref in item.get("expected_refs") or [])
+                matching_receipts = [
+                    receipt
+                    for receipt in self.receipts
+                    if receipt.get("schema_version") == "valp-dispatch-receipt.v2"
+                    and receipt.get("task_id") == task_id
+                    and receipt.get("event") == "dispatch_completed"
+                    and receipt.get("agent") == item.get("agent")
+                    and receipt.get("role") == item.get("role")
+                    and receipt.get("work_item_id") == item.get("work_item_id")
+                    and receipt.get("dispatch_id") == item.get("dispatch_id")
+                    and receipt.get("dispatch_generation") == item.get("dispatch_generation")
+                    and receipt.get("suspension_epoch") == suspension.get("suspension_epoch")
+                    and isinstance(receipt.get("event_sequence"), int)
+                    and int(receipt["event_sequence"]) > receipt_sequence_at_entry
+                    and expected_refs.issubset(
+                        set(str(ref) for ref in receipt.get("expected_refs") or [])
+                    )
+                ]
+                if not matching_receipts:
+                    missing_receipts.append(str(item.get("work_item_id") or "unknown"))
+            if missing_receipts:
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    "dependency_ready completion receipts are missing or mismatched: "
+                    + ", ".join(missing_receipts[:5]),
+                    [*evidence, result_ref],
+                )
+            invalid_evidence = [
+                str(ref)
+                for item in suspension.get("required_work_items") or []
+                if isinstance(item, dict)
+                for ref in item.get("expected_refs") or []
+                if (
+                    not self._task_local_ref_exists(str(ref))
+                    or self._evidence_status(str(ref)) in {"invalid", "superseded", "rejected", "blocked"}
+                )
+            ]
+            if invalid_evidence:
+                return self._fail(
+                    "deterministic_wake",
+                    "Deterministic wait state is identity-bound and replayable",
+                    "dependency_ready expected evidence is missing or invalid: "
+                    + ", ".join(invalid_evidence[:5]),
+                    [*evidence, result_ref],
+                )
+        return self._pass(
+            "deterministic_wake",
+            "Deterministic wait state is identity-bound and replayable",
+            f"Accepted one {accepted.get('wake_reason')} wake at sequence {accepted.get('accepted_sequence')}",
+            [*evidence, result_ref],
+        )
+
+    def _deterministic_wait_policy_errors(self) -> list[str]:
+        policy = self.wait_policy
+        errors: list[str] = []
+        if policy.get("schema_version") != "valp-wait-policy.v1":
+            errors.append("wait-policy.json has the wrong schema_version")
+        if policy.get("task_id") != self.state.get("task_id"):
+            errors.append("wait-policy.json task_id does not match")
+        if policy.get("mode") != "dependency_ready":
+            errors.append("wait-policy.json mode must be dependency_ready")
+        if policy.get("exception_policy") != "exception_short_circuit":
+            errors.append("wait-policy.json exception policy must short-circuit")
+        exception_events = policy.get("exception_events")
+        if (
+            not isinstance(exception_events, list)
+            or len(exception_events) != len(set(str(event) for event in exception_events))
+            or any(not isinstance(event, str) or event not in WAIT_EXCEPTION_EVENTS for event in exception_events)
+            or not REQUIRED_WAIT_EXCEPTION_EVENTS.issubset(set(exception_events))
+        ):
+            errors.append("wait-policy.json exception_events are invalid")
+        if policy.get("dependency_ref") != "submission-dependencies.json":
+            errors.append("wait-policy.json must reuse submission-dependencies.json")
+        work_items = policy.get("required_work_items")
+        if not isinstance(work_items, list) or not work_items:
+            errors.append("wait-policy.json requires work-item identities")
+        else:
+            ids = [str(item.get("work_item_id") or "") for item in work_items if isinstance(item, dict)]
+            if len(ids) != len(work_items) or not all(ids) or len(ids) != len(set(ids)):
+                errors.append("wait-policy.json work_item_id values are invalid")
+            required_fields = {
+                "work_item_id",
+                "agent",
+                "role",
+                "dispatch_id",
+                "dispatch_generation",
+                "expected_refs",
+            }
+            if any(not isinstance(item, dict) or set(item) != required_fields for item in work_items):
+                errors.append("wait-policy.json work-item identity fields are invalid")
+        if self.submission_dependencies.get("schema_version") != "valp-submission-dependencies.v2":
+            errors.append("deterministic wait requires submission dependency work-item identities")
+        else:
+            dependency_items = self.submission_dependencies.get("work_items")
+            if not isinstance(dependency_items, list):
+                errors.append("submission dependency work-item table is missing")
+            elif isinstance(work_items, list):
+                role_assignments = self.state.get("role_assignments") or self.routing.get("role_assignments") or {}
+                dependency_errors = validate_submission_dependencies(
+                    self.submission_dependencies,
+                    str(self.state.get("task_id") or ""),
+                    {str(role): str(agent) for role, agent in role_assignments.items()},
+                )
+                errors.extend(dependency_errors)
+                unknown = [
+                    str(item.get("work_item_id") or "unknown")
+                    for item in work_items
+                    if isinstance(item, dict) and item not in dependency_items
+                ]
+                if unknown:
+                    errors.append(
+                        "wait policy references unknown dependency work items: "
+                        + ", ".join(unknown[:5])
+                    )
+        exception_events = set(str(value) for value in policy.get("exception_events") or [])
+        required_exceptions = {
+            "dispatch_blocked",
+            "runtime_failure",
+            "cancellation",
+            "timeout",
+            "user_input",
+        }
+        if not required_exceptions.issubset(exception_events):
+            errors.append("wait-policy.json exception events are incomplete")
+        return errors
 
     def check_local_overlay(self) -> AuditItem:
         evidence = self._existing(["routing.json", "state.json"])
@@ -312,7 +893,12 @@ class TaskAudit:
         expected_marker = {"status": "recorded", "ref": "delegation-policy.json"}
         routing_marker = self.routing.get("delegation_policy") or {}
         state_marker = self.state.get("delegation_policy") or {}
-        required = bool(routing_marker) or bool(state_marker) or bool(self.delegation_policy)
+        required = (
+            self.state.get("schema_version") == "valp-visible-loop-state.v2"
+            or bool(routing_marker)
+            or bool(state_marker)
+            or bool(self.delegation_policy)
+        )
         if not required:
             return self._skip(
                 "delegation_policy",
@@ -554,11 +1140,81 @@ class TaskAudit:
                 "Invalid dispatch receipt ledger: " + "; ".join(receipt_errors[:5]),
                 evidence,
             )
+        deterministic_errors = deterministic_receipt_ledger_errors(
+            self.receipts,
+            str(self.state.get("task_id") or self.routing.get("task_id") or ""),
+        )
+        if deterministic_errors:
+            return self._fail(
+                "dispatch_receipts",
+                "Dispatch receipts satisfy the required gates",
+                "Invalid deterministic receipt ledger: " + "; ".join(deterministic_errors[:5]),
+                evidence,
+            )
         if not self.receipts:
             return self._fail("dispatch_receipts", "Dispatch receipts satisfy the required gates", "Missing or empty dispatch-receipts.jsonl", evidence)
         runtime = self.routing.get("runtime_adapter") or self.state.get("runtime_adapter") or {}
         manual_mode = runtime.get("class") == "manual"
         completed_events = {"manual_result_attested", "dispatch_completed"} if manual_mode else {"dispatch_completed"}
+        work_items = self.submission_dependencies.get("work_items")
+        if (
+            self.state.get("schema_version") == "valp-visible-loop-state.v2"
+            and self.submission_dependencies.get("schema_version") == "valp-submission-dependencies.v2"
+            and isinstance(work_items, list)
+        ):
+            failures: list[str] = []
+            for item in work_items:
+                if not isinstance(item, dict):
+                    failures.append("invalid work-item identity")
+                    continue
+                work_item_id = str(item.get("work_item_id") or "unknown")
+                matching = [
+                    (index, receipt)
+                    for index, receipt in enumerate(self.receipts)
+                    if (
+                        self._receipt_matches_manual_work_item(receipt, item)
+                        if manual_mode
+                        else self._receipt_matches_work_item_identity(receipt, item)
+                    )
+                ]
+                if not matching:
+                    failures.append(f"missing receipt for work item {work_item_id}")
+                    continue
+                completion_index, latest = matching[-1]
+                if latest.get("event") not in completed_events:
+                    failures.append(
+                        f"latest receipt is not completion for work item {work_item_id}="
+                        + str(latest.get("event") or "missing")
+                    )
+                    continue
+                if manual_mode:
+                    submitted = any(
+                        index < completion_index and receipt.get("event") == "manual_delivery_attested"
+                        for index, receipt in matching
+                    )
+                else:
+                    submitted = any(
+                        index < completion_index and has_concrete_runtime_submission_proof(receipt)
+                        for index, receipt in matching
+                    )
+                if not submitted:
+                    failures.append(
+                        f"missing identity-matched submission proof before completion for {work_item_id}"
+                    )
+            if failures:
+                return self._fail(
+                    "dispatch_receipts",
+                    "Dispatch receipts satisfy the required gates",
+                    "; ".join(failures),
+                    evidence,
+                )
+            mode_description = "manual delivery" if manual_mode else "runtime submission"
+            return self._pass(
+                "dispatch_receipts",
+                "Dispatch receipts satisfy the required gates",
+                f"Each v2 work item has completion and identity-matched {mode_description} proof",
+                evidence,
+            )
         latest = self._latest_receipts_by_agent()
         missing = [agent for agent in agents if agent not in latest]
         incomplete = [
@@ -595,7 +1251,12 @@ class TaskAudit:
         expected_marker = {"status": "recorded", "ref": "submission-dependencies.json"}
         routing_marker = self.routing.get("submission_dependencies") or {}
         state_marker = self.state.get("submission_dependencies") or {}
-        required = bool(routing_marker) or bool(state_marker) or bool(self.submission_dependencies)
+        required = (
+            self.state.get("schema_version") == "valp-visible-loop-state.v2"
+            or bool(routing_marker)
+            or bool(state_marker)
+            or bool(self.submission_dependencies)
+        )
         if not required:
             return self._skip(
                 "submission_dependencies",
@@ -1155,10 +1816,30 @@ class TaskAudit:
             errors.append("rule introduction revision is invalid")
         if historical_revision == introduced_revision:
             errors.append("historical and rule introduction revisions must differ")
+        if re.fullmatch(r"[0-9a-f]{40}", historical_revision) and not self._source_commit_exists(historical_revision):
+            errors.append("historical source revision is not a verifiable commit")
+        if re.fullmatch(r"[0-9a-f]{40}", introduced_revision) and not self._source_commit_exists(introduced_revision):
+            errors.append("rule introduction revision is not a verifiable commit")
+        if (
+            self._source_commit_exists(historical_revision)
+            and self._source_commit_exists(introduced_revision)
+            and not self._source_commit_is_ancestor(historical_revision, introduced_revision)
+        ):
+            errors.append("historical source revision is not ancestral to rule introduction")
         if not str(auditor_boundary.get("historical_cli_version") or ""):
             errors.append("historical CLI version is missing")
         if not str(boundary.get("recorded_at") or ""):
             errors.append("historical audit boundary recorded_at is missing")
+        if decision_task_id and decision_task_id != task_id:
+            errors.extend(
+                self._historical_reconciliation_errors(
+                    decision_task_id,
+                    decision_ref,
+                    task_id,
+                    historical_revision,
+                    introduced_revision,
+                )
+            )
 
         accepted = boundary.get("accepted_legacy_artifacts")
         if not isinstance(accepted, list):
@@ -1216,6 +1897,83 @@ class TaskAudit:
                 errors.append(f"historical disposition is invalid for {agent}")
             if not str(entry.get("reason") or ""):
                 errors.append(f"historical acceptance reason is missing for {agent}")
+        return errors
+
+    def _source_commit_exists(self, revision: str) -> bool:
+        if not re.fullmatch(r"[0-9a-f]{40}", revision):
+            return False
+        source_root = Path(__file__).resolve().parents[1]
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(source_root), "cat-file", "-e", f"{revision}^{{commit}}"],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        except OSError:
+            return False
+        return result.returncode == 0
+
+    def _source_commit_is_ancestor(self, historical_revision: str, introduced_revision: str) -> bool:
+        source_root = Path(__file__).resolve().parents[1]
+        try:
+            result = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(source_root),
+                    "merge-base",
+                    "--is-ancestor",
+                    historical_revision,
+                    introduced_revision,
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        except OSError:
+            return False
+        return result.returncode == 0
+
+    def _historical_reconciliation_errors(
+        self,
+        decision_task_id: str,
+        decision_ref: str,
+        source_task_id: str,
+        historical_revision: str,
+        introduced_revision: str,
+    ) -> list[str]:
+        if self.task_dir.parent.name != "tasks" or self.task_dir.parent.parent.name != ".herdr-loop":
+            return ["historical reconciliation task cannot be resolved from this task folder"]
+        workspace_root = self.task_dir.parent.parent.parent.resolve()
+        reconciliation_dir = workspace_root / ".herdr-loop" / "tasks" / decision_task_id
+        errors: list[str] = []
+        task_path = reconciliation_dir / "task.md"
+        state_path = reconciliation_dir / "state.json"
+        if not task_path.is_file():
+            errors.append("historical reconciliation task.md is missing")
+        try:
+            reconciliation_state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            reconciliation_state = {}
+        if (
+            reconciliation_state.get("task_id") != decision_task_id
+            or reconciliation_state.get("status") != "done"
+        ):
+            errors.append("historical reconciliation task is not terminal done")
+        decision_path = workspace_root / decision_ref
+        try:
+            decision_text = decision_path.read_text(encoding="utf-8")
+        except OSError:
+            decision_text = ""
+        required_bindings = [
+            source_task_id,
+            "context_pack.dispatch_payload_budget",
+            historical_revision,
+            introduced_revision,
+        ]
+        if not decision_text or any(value not in decision_text for value in required_bindings):
+            errors.append("historical reconciliation decision does not bind task, rule, and revisions")
         return errors
 
     def _selected_agents(self) -> list[str]:
@@ -1554,25 +2312,43 @@ class TaskAudit:
 
     def _has_runtime_submission_proof(self, agent: str) -> bool:
         for receipt in self.receipts:
-            if receipt.get("agent") != agent or receipt.get("event") != "dispatch_submitted":
-                continue
-            proof = receipt.get("proof")
-            if not isinstance(proof, dict) or not proof:
-                continue
-            proof_text = json.dumps(proof, sort_keys=True).lower()
-            forbidden = [
-                "dry_run",
-                "dry-run",
-                "simulation",
-                "simulated",
-                "subagent",
-                "sub-agent",
-                "manual_attestation",
-            ]
-            if any(term in proof_text for term in forbidden):
-                continue
-            return True
+            if receipt.get("agent") == agent and has_concrete_runtime_submission_proof(receipt):
+                return True
         return False
+
+    def _receipt_matches_work_item_identity(
+        self,
+        receipt: dict[str, Any],
+        item: dict[str, Any],
+    ) -> bool:
+        expected = {
+            "task_id": str(self.state.get("task_id") or self.routing.get("task_id") or ""),
+            "agent": item.get("agent"),
+            "role": item.get("role"),
+            "work_item_id": item.get("work_item_id"),
+            "dispatch_id": item.get("dispatch_id"),
+            "dispatch_generation": item.get("dispatch_generation"),
+        }
+        receipt_refs = {str(ref) for ref in receipt.get("expected_refs") or []}
+        expected_refs = {str(ref) for ref in item.get("expected_refs") or []}
+        return (
+            receipt.get("schema_version") == "valp-dispatch-receipt.v2"
+            and all(receipt.get(key) == value for key, value in expected.items())
+            and expected_refs.issubset(receipt_refs)
+        )
+
+    def _receipt_matches_manual_work_item(
+        self,
+        receipt: dict[str, Any],
+        item: dict[str, Any],
+    ) -> bool:
+        receipt_refs = {str(ref) for ref in receipt.get("expected_refs") or []}
+        expected_refs = {str(ref) for ref in item.get("expected_refs") or []}
+        return (
+            receipt.get("agent") == item.get("agent")
+            and receipt.get("role") == item.get("role")
+            and expected_refs.issubset(receipt_refs)
+        )
 
     def _review_evidence_exists(self) -> bool:
         if (self.task_dir / "agents/claude/review.md").exists():

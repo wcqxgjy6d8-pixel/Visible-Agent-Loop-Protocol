@@ -28,10 +28,11 @@ VALP 要求任务过程留下可审计的证据：
 
 ## v0.3 提案：从任务验收到安装级控制平面
 
-当前规范、实现和发布版本仍是 `0.2.0`。
-[RFC 0001](../rfcs/0001-v0.3-installation-control-plane.md) 的状态是
-**Proposed**，目标是 `0.3.0-draft`；它不是当前 `SPEC.md` 的规范语义，
-也不代表 schemas、CLI、Runtime adapter 或稳定版本已经实现。
+当前发布版本仍是 `0.2.0`。
+[RFC 0001](../rfcs/0001-v0.3-installation-control-plane.md) 整体仍未完成，
+也没有达到稳定状态。它的 deterministic-wake 子集已在本地实现，并由仓库
+测试覆盖；其余 installation control-plane 仍是提案，不改变当前 Runtime
+支持范围或发布状态。
 
 可以把变化理解成：`0.2.0` 主要检查“这个任务凭什么算 Done”，v0.3 提案
 进一步检查“管理所有任务的安装级控制平面凭什么可信”。
@@ -81,7 +82,7 @@ bin/valp audit examples/minimal-task
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=10
+Summary: pass=13 warn=0 fail=0
 ```
 
 再看这个演示：

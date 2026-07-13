@@ -1,0 +1,28 @@
+{
+  "schema_version": "valp-wait-policy.v1",
+  "task_id": "TASK-WAIT-EXAMPLE",
+  "wait_policy_id": "next-step-implementation",
+  "mode": "dependency_ready",
+  "exception_policy": "exception_short_circuit",
+  "dependency_ref": "submission-dependencies.json",
+  "required_work_items": [
+    {
+      "work_item_id": "implementation:codex",
+      "agent": "codex",
+      "role": "implementer",
+      "dispatch_id": "dispatch-implementation-1",
+      "dispatch_generation": 1,
+      "expected_refs": [
+        "agents/codex/evidence.md",
+        "evidence/verification.md"
+      ]
+    }
+  ],
+  "exception_events": [
+    "dispatch_blocked",
+    "runtime_failure",
+    "cancellation",
+    "timeout",
+    "user_input"
+  ]
+}

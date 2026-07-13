@@ -44,7 +44,7 @@
       PASS
     </text>
     <text x="258" y="322" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="22" fill="#d1fae5">
-      pass=13 warn=0 fail=0 skip=10
+      pass=13 warn=0 fail=0
     </text>
 
     <text x="112" y="382" font-family="Menlo, SFMono-Regular, Consolas, monospace" font-size="23" fill="#93c5fd">

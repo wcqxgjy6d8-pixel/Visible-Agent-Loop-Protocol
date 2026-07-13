@@ -36,7 +36,7 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=10
+Summary: pass=13 warn=0 fail=0
 ```
 
 To verify all bundled examples and CLI tests in one command:
@@ -115,7 +115,7 @@ evidence and final synthesis.
 |---|---|---|---|
 | macOS | HERDR stable installer or Homebrew | Full Mode | Reference runtime path |
 | Linux | HERDR stable installer or package manager | Full Mode | Reference runtime path |
-| Windows stable workflow | SSH into a Linux/macOS HERDR host | Remote Mode | Full Mode guarantees live on the remote host |
+| Windows stable workflow | SSH into a Linux/macOS HERDR host | Remote Mode | Remote guarantees are conditional on adapter evidence exported by that host; no live continuation E2E is claimed here |
 | Windows local workflow | HERDR Windows preview beta | Conditional Full Mode | Verify beta limitations before claiming Full Mode |
 | Windows without HERDR | Manual Mode today; runner adapter planned | Manual / future adapter | Windows Terminal panes are display, not runtime proof |
 | No runtime | Manual files only | Manual Mode | No runtime proof |
@@ -218,7 +218,7 @@ output looks like:
 
 ```text
 VALP audit: FAIL
-Summary: pass=8 warn=2 fail=5 skip=4
+Summary: pass=8 warn=2 fail=5
 [FAIL] dispatch_receipts: latest receipt is not dispatch_completed
 [FAIL] expected_evidence: Missing expected evidence
 [FAIL] final_synthesis: Missing final synthesis
@@ -316,19 +316,33 @@ To actually submit through the local HERDR adapter:
 bin/valp dispatch TASK-001 --workspace /path/to/workspace --submit
 ```
 
+Before Full or Remote Mode can wait, author the task's closed
+`.herdr-loop/tasks/TASK-001/wait-policy.json`. Start from
+`examples/wait-policy.json`, keep `dependency_ref` set to
+`submission-dependencies.json`, and copy the exact work-item objects needed for
+this barrier from that task's dependency artifact. `valp wait` rejects a
+missing policy or work items without concrete delivery proof. Manual Mode may
+wait without this file, but its audit result is explicitly degraded.
+
 After delivery proof exists, suspend coordinator model turns while workers run:
 
 ```bash
 bin/valp wait TASK-001 --workspace /path/to/workspace --timeout 300
 ```
 
-The runtime process returns only for a newer terminal receipt, timeout, runtime
-failure, cancellation, or explicit user input. Another runtime or user-facing
-surface can wake it explicitly with:
+The runtime process returns only for the final qualifying dependency-ready barrier receipt
+or an exception short circuit: a matching blocked work item, timeout, runtime
+failure, cancellation, or explicit user input. Intermediate completions and
+unrelated terminal receipts do not return from `valp wait`. Another runtime or
+user-facing surface can wake it explicitly with:
 
 ```bash
-bin/valp resume TASK-001 --workspace /path/to/workspace --event user_input
+bin/valp resume TASK-001 --workspace /path/to/workspace --event user_input --ref evidence/wake-requests/user-input.json
 ```
+
+The `--ref` file must be a closed task-local `valp-exception-wake.v1` artifact
+bound to the current task, suspension id, epoch, event, principal, and reason;
+see `examples/exception-wake.json` for the shape.
 
 Suspension is non-terminal. It does not satisfy evidence, review, approval,
 recommendation-resolution, synthesis, or audit gates.

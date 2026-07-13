@@ -1,0 +1,14 @@
+{
+  "schema_version": "valp-exception-wake.v1",
+  "task_id": "TASK-WAIT-EXAMPLE",
+  "suspension_id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "suspension_epoch": 1,
+  "event": "user_input",
+  "principal": {
+    "type": "user",
+    "id": "local-user"
+  },
+  "reason": "The user supplied new task input.",
+  "recorded_at": "2026-07-13T10:29:00Z",
+  "supporting_refs": []
+}

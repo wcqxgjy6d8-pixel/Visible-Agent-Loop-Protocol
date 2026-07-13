@@ -44,6 +44,12 @@ from valp_cli.workflow import (
 
 
 class ValpWorkflowTests(unittest.TestCase):
+    def test_atomic_write_text_preserves_utf8_lf_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            workflow_module.atomic_write_text(path, '{"line": "value"}\n')
+            self.assertEqual(path.read_bytes(), b'{"line": "value"}\n')
+
     def test_directory_fsync_propagates_io_errors_and_scopes_unsupported_filesystems(self) -> None:
         if os.name == "nt":
             self.skipTest("Windows directory durability is an explicit reference-adapter limitation")

@@ -33,7 +33,7 @@
     "state_revision_at_entry": {"type": "integer", "minimum": 0},
     "checkpoint_ref": {
       "type": "string",
-      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"
     },
     "wait_policy_ref": {
       "type": ["string", "null"],
@@ -221,7 +221,7 @@
       "properties": {
         "source_ref": {
           "type": "string",
-          "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+          "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"
         },
         "source_digest": {"$ref": "#/$defs/digestId"},
         "principal": {
@@ -240,7 +240,7 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+            "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"
           }
         }
       },

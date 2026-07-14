@@ -21,6 +21,25 @@ REAL_DOC_EXAMPLE = ROOT / "examples" / "real-doc-calibration-task"
 
 
 class ValpAuditTests(unittest.TestCase):
+    def test_v2_state_audit_rejects_unknown_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / ".herdr-loop" / "tasks" / "TASK-STATE-STATUS"
+            task.mkdir(parents=True)
+            (task / "state.json").write_text(
+                json.dumps({
+                    "schema_version": "valp-visible-loop-state.v2",
+                    "task_id": "TASK-STATE-STATUS",
+                    "profile": "agent-runtime",
+                    "status": "invented_state",
+                    "revision": 0,
+                    "selected_agents": [],
+                }),
+                encoding="utf-8",
+            )
+            item = TaskAudit(task).check_state_status_vocabulary()
+            self.assertEqual(item.status, FAIL)
+            self.assertIn("Unknown state-v2 status", item.message)
+
     def test_full_mode_example_passes(self) -> None:
         report = TaskAudit(EXAMPLE).run()
         self.assertEqual(report.status, PASS)

@@ -10,20 +10,23 @@ multi-agent platform.
 |---|---|
 | Protocol | `0.2.0` |
 | Repository license | MIT |
-| Reference CLI | `bin/valp` with `publish`, `scan`, `route`, `dispatch`, `wait`, `resume`, `preflight`, `audit`, and `doctor` |
+| Reference CLI | `bin/valp` with task workflow, v0.3 installation, leader, capability, migration, plugin, hello, conformance, audit, and doctor commands |
 | Reference runtime | HERDR for the documented Full Mode path |
-| Other runtime adapters | Contract documented; first-class non-HERDR adapters are planned |
+| Other runtime adapters | A local-process draft adapter is implemented; hosted/non-HERDR agent adapters remain open |
 | Public examples | Three bundled fixtures, one sanitized real Manual Mode documentation case study, and one visible dispatch process video |
 | Public release | Stable evaluation release `v0.2.0` |
 
-## Proposed v0.3 RFC
+## v0.3 Draft Implementation
 
 [RFC 0001: VALP v0.3 Installation Control Plane](rfcs/0001-v0.3-installation-control-plane.md)
-is a proposal for `0.3.0-draft`. The current release remains `0.2.0`. RFC 0001
-remains incomplete and is not stable as a whole. Its deterministic-wake subset
-is locally implemented and tested in the reference core, schemas, and audit;
-the remaining installation-control-plane contracts do not change current
-runtime-support or release claims.
+is partially implemented as an executable `0.3.0-draft` core. The current stable
+release remains `0.2.0`; RFC 0001 remains incomplete and is not stable as a whole.
+The implementation guide is [docs/v0.3-implementation.md](v0.3-implementation.md).
+
+The shipped draft core covers control-root bootstrap, explicit leader selection,
+leader epochs, message/event ledgers, replayable state, capability layers,
+plugin manifest boundary checks, migration dry-run/apply guards, and isolated
+conformance fixtures.
 
 ## Verified In This Repository
 
@@ -56,6 +59,8 @@ platform.
 | Learning feedback evidence | Covered for schema, examples, and audit gate | `schemas/learning-feedback.schema.json`, `examples/full-mode-task/learning-feedback.json`, `tests/test_valp_audit.py` |
 | Publish/scan/route/dispatch workflow shape | Covered for reference CLI behavior | `tests/test_valp_workflow.py` |
 | Deterministic wake core | Covered locally for dependency barrier, identity rejection, revision CAS, duplicate wake, concurrent wake, and event-to-projection recovery | `valp_cli/workflow.py`, `tests/test_valp_workflow.py` |
+| v0.3 installation core | Covered for bootstrap, explicit leader selection, epoch fencing, CAS, idempotency, replay, capability registry, content-addressed claims/reviews, task Done reducer, plugin boundary, and migration dry-run | `valp_cli/control_plane.py`, `valp_cli/task_control.py`, `valp_cli/plugins.py`, `valp_cli/conformance.py`, `tests/test_control_plane.py` |
+| Local-process adapter | Covered for approved subprocess submission, lifecycle result, output evidence, and failure status | `valp_cli/process_adapter.py`, `schemas/process-adapter-run.schema.json`, `tests/test_control_plane.py` |
 | File-ledger queue concurrency | Covered on the current POSIX test host with synchronized cross-process submitters | `valp_cli/workflow.py`, `tests/test_valp_workflow.py`; real Windows subprocess proof remains open |
 | Wait/wake closed artifacts | Covered for shared closed suspension projections, immutable policy snapshots, event/reason pairing, valid/invalid fixtures, identity-bound external wake evidence, generated-result audit, and projection mismatch failure | `schemas/suspension.schema.json`, `schemas/wait-policy.schema.json`, `schemas/exception-wake.schema.json`, `schemas/wait-event.schema.json`, `schemas/wake-result.schema.json`, `tests/test_schema_examples.py`, `tests/test_valp_audit.py`, `tests/test_valp_workflow.py` |
 | Doctor diagnostics | Covered for current diagnostics | `tests/test_valp_doctor.py` |
@@ -67,7 +72,7 @@ platform.
 | Live HERDR dispatch E2E completion case study | Not covered in repository CI | Requires sanitized task folder plus runtime submission and final audit evidence |
 | Live zero-model-turn deterministic wake and exactly-once coordinator continuation | Not covered in repository CI | Requires a wake-ID-bound continuation invocation receipt plus restart/restore evidence from a real adapter |
 | Non-HERDR real adapter E2E | Not covered | First-class adapter implementation is planned |
-| Full state-machine transition suite | Partially covered | State vocabulary is specified; full transition suite is planned |
+| Full state-machine transition suite | Partially covered | Installation transitions are implemented and tested; the task-level legal transition graph remains planned |
 | Context compression runtime integration | Partially covered | Semantics are documented; live adapter enforcement is not yet covered |
 | Auto Visible watcher E2E | Not covered | Trigger policy semantics exist; watcher implementation is runtime-specific |
 | App-managed first install E2E | Not covered in repository CI | Protocol now defines doctor-first health gate; App installer implementation must prove it |
@@ -93,16 +98,16 @@ and exports the required receipts and evidence.
 | Gap | Why it matters | Current handling |
 |---|---|---|
 | No standalone public live Full Mode completion case study | The visible dispatch video proves publish and runtime dispatch behavior, but not a complete sanitized Full Mode run by itself | Planned before stronger Full Mode promotion |
-| Non-HERDR adapters are not first-class | Runtime-neutral protocol claims need at least one credible non-HERDR implementation | Adapter contract and synthetic queue fixture exist; implementation planned |
+| Hosted/non-HERDR agent adapters are not covered | Runtime-neutral agent claims need an independently operated agent or hosted implementation beyond a local process worker | Local-process adapter proves the adapter boundary; public agent E2E remains required for stable 0.3 |
 | Live Full Mode E2E coverage is limited | CLI tests cannot prove a real runtime can submit, wait, collect, and audit | Keep Full Mode claims tied to adapter proof |
 | Deterministic wake proof is local | File-lock/CAS and event-to-projection recovery tests prove the reference core, not a real HERDR or non-HERDR continuation | Do not claim P2 or cross-runtime conformance until both live paths exist |
 | Windows directory durability is unproven | The reference core flushes files but has no evidenced Windows parent-directory sync equivalent | Do not claim sudden-power-loss durability on Windows; require adapter-specific proof |
 | Windows lock contention lacks native subprocess proof | The retry/deadline policy is platform-neutral, but this local run exercises real cross-process locking only on POSIX | Keep native Windows contention conformance open until run on a Windows host |
-| Task-ref grammar is not yet platform-neutral | Drive-qualified refs can be interpreted differently by POSIX and Windows, and the shared pattern appears across many schemas | Apply one versioned repo-wide schema/runtime tightening; do not patch only wait/wake artifacts |
-| Declared Python range lacks endpoint CI | Package metadata declares Python 3.9-3.12 while public CI currently exercises Python 3.11 | Add lightweight 3.9/3.12 compatibility jobs in a separately authorized config change |
+| Task-ref grammar | Shared POSIX-style relative-ref grammar is enforced across runtime and artifact schemas | Covered for the reference CLI and current artifact family; adapter-specific path handling remains outside the protocol core |
+| Declared Python range lacks endpoint CI | Package metadata declares Python 3.9-3.12 | Public verification now exercises Python 3.9, 3.11, and 3.12 on Linux, macOS, and Windows |
 | App installer behavior is not a protocol runtime | First-launch UX can accidentally hide path, preflight, and submit boundaries | First-install health gate is specified; App must expose doctor/preflight/dry-run results |
 | Windows local Full Mode is conditional | Native Windows runtime support is beta-dependent | Recommend SSH remote for stable Windows workflow |
-| Stable release is early | Users need clear limits around runtime proof and adapter coverage | Use `v0.2.0` for protocol and CLI evaluation; keep live-runtime claims tied to adapter proof |
+| Stable release is early | Users need clear limits around runtime proof and adapter coverage | Use the v0.3 draft core for installation-control-plane evaluation; keep stable/live-runtime claims tied to adapter proof |
 | Small public community | Social proof is low | Avoid community-size overclaims |
 
 ## Promotion Language
@@ -135,5 +140,5 @@ HERDR-free automation path already shipped
 
 1. Turn the visible dispatch process proof into a full sanitized live Full Mode
    completion case study with runtime submission proof and final audit output.
-2. Add the first first-class non-HERDR adapter path.
+2. Add an independently operated hosted or agent-provider adapter path.
 3. Grow RFCs, failure cases, and adapter feedback around the `v0.2.0` release.

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-executable-state.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "installation_id", "revision", "status", "active_leader", "active_leader_epoch", "registry_revision", "active_blockers", "last_event_id", "last_event_digest", "updated_at", "projection_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-executable-state.v1"},
+    "installation_id": {"type": "string", "minLength": 1},
+    "revision": {"type": "integer", "minimum": 0},
+    "status": {"enum": ["uninitialized", "bootstrapping", "discovering_leader_candidates", "awaiting_leader_selection", "activating_leader", "active", "reconciling_capabilities", "rotating_leader", "migrating", "rollback_required", "degraded", "blocked", "retired"]},
+    "active_leader": {"type": ["object", "null"], "additionalProperties": false, "required": ["principal_id", "principal_kind"], "properties": {"principal_id": {"type": "string", "minLength": 1}, "principal_kind": {"type": "string", "minLength": 1}}},
+    "active_leader_epoch": {"type": "integer", "minimum": 0},
+    "registry_revision": {"type": "integer", "minimum": 0},
+    "active_blockers": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "last_event_id": {"type": ["string", "null"]},
+    "last_event_digest": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$"},
+    "updated_at": {"type": "string", "minLength": 1},
+    "projection_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

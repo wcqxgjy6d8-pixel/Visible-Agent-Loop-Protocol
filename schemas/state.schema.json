@@ -79,6 +79,39 @@
       "then": {
         "required": ["revision"],
         "properties": {
+          "status": {
+            "enum": [
+              "new",
+              "published",
+              "scanning_capabilities",
+              "scanning_context",
+              "loading_local_overlay",
+              "selecting_runtime_adapter",
+              "classifying_task",
+              "selecting_profile",
+              "decomposing_tasks",
+              "recommending_skills",
+              "building_provider_matrix",
+              "scoring_routes",
+              "routing_capabilities",
+              "routing_squad",
+              "dispatching",
+              "suspended",
+              "planned",
+              "locked",
+              "executing",
+              "verifying",
+              "reviewing",
+              "resolving_agent_recommendations",
+              "fixing",
+              "approval_required",
+              "recording",
+              "done",
+              "blocked",
+              "failed",
+              "cancelled"
+            ]
+          },
           "suspension": {"$ref": "urn:valp:schema:deterministic-suspension:v1"}
         }
       },

@@ -30,6 +30,7 @@ from .workflow import (
     wake_status_pair_error,
     wait_work_item_policy_error,
     wait_work_item_transition_error,
+    TASK_STATE_STATUSES,
 )
 
 
@@ -124,6 +125,7 @@ class TaskAudit:
         items = [
             self.check_profile_and_routing(),
             self.check_runtime_adapter_and_state_mapping(),
+            self.check_state_status_vocabulary(),
             self.check_deterministic_wake(),
             self.check_local_overlay(),
             self.check_selected_agents_and_context(),
@@ -170,6 +172,29 @@ class TaskAudit:
             fail_count=fail_count,
             skip_count=skip_count,
             items=items,
+        )
+
+    def check_state_status_vocabulary(self) -> AuditItem:
+        if self.state.get("schema_version") != "valp-visible-loop-state.v2":
+            return self._skip(
+                "state_status_vocabulary",
+                "State-v2 status vocabulary is closed",
+                "Legacy state schema is read-only and is not subject to the v2 vocabulary gate",
+                self._existing(["state.json"]),
+            )
+        status = self.state.get("status")
+        if status not in TASK_STATE_STATUSES:
+            return self._fail(
+                "state_status_vocabulary",
+                "State-v2 status vocabulary is closed",
+                f"Unknown state-v2 status: {status!r}",
+                self._existing(["state.json"]),
+            )
+        return self._pass(
+            "state_status_vocabulary",
+            "State-v2 status vocabulary is closed",
+            f"State-v2 status is recognized: {status}",
+            self._existing(["state.json"]),
         )
 
     def check_profile_and_routing(self) -> AuditItem:

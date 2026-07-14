@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-message.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "message_id", "idempotency_key", "installation_id", "sender_principal_id", "sender_kind", "leader_epoch", "expected_state_revision", "kind", "payload_schema", "payload", "content_digest", "sent_at", "accepted", "installation_sequence", "event_id", "result", "result_revision", "message_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-message.v1"},
+    "message_id": {"type": "string", "minLength": 1},
+    "idempotency_key": {"type": "string", "minLength": 1},
+    "installation_id": {"type": "string", "minLength": 1},
+    "sender_principal_id": {"type": "string", "minLength": 1},
+    "sender_kind": {"type": "string", "minLength": 1},
+    "leader_epoch": {"type": "integer", "minimum": 0},
+    "expected_state_revision": {"type": "integer", "minimum": 0},
+    "kind": {"type": "string", "pattern": "^(command|query|result|event)\\.[a-z0-9._-]+$"},
+    "payload_schema": {"type": "string", "minLength": 1},
+    "payload": {"type": "object"},
+    "content_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "sent_at": {"type": "string", "minLength": 1},
+    "accepted": {"const": true},
+    "installation_sequence": {"type": "integer", "minimum": 1},
+    "event_id": {"type": "string", "minLength": 1},
+    "result": {"type": "object", "required": ["message_id", "event_id", "revision", "status"], "properties": {"message_id": {"type": "string", "minLength": 1}, "event_id": {"type": "string", "minLength": 1}, "revision": {"type": "integer", "minimum": 1}, "status": {"type": "string", "minLength": 1}}},
+    "result_revision": {"type": "integer", "minimum": 1},
+    "message_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

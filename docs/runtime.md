@@ -86,6 +86,7 @@ Supported adapter classes include:
 
 - pane controller;
 - daemon queue;
+- local process worker;
 - hosted/local managed-agent platform;
 - remote SSH runtime;
 - manual workflow.

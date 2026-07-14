@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-migration-plan.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "migration_id", "installation_id", "source_protocol_version", "target_protocol_version", "source_root", "target_root", "preserve_original_bytes", "task_file_count", "files", "preconditions", "created_at", "plan_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-migration-plan.v1"},
+    "migration_id": {"type": "string", "minLength": 1},
+    "installation_id": {"type": "string", "minLength": 1},
+    "source_protocol_version": {"type": "string", "minLength": 1},
+    "target_protocol_version": {"type": "string", "minLength": 1},
+    "source_root": {"type": "string", "minLength": 1},
+    "target_root": {"type": "string", "minLength": 1},
+    "preserve_original_bytes": {"const": true},
+    "task_file_count": {"type": "integer", "minimum": 0},
+    "files": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["source_ref", "digest", "bytes"], "properties": {"source_ref": {"type": "string", "minLength": 1}, "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "bytes": {"type": "integer", "minimum": 0}}}},
+    "preconditions": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
+    "created_at": {"type": "string", "minLength": 1},
+    "plan_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

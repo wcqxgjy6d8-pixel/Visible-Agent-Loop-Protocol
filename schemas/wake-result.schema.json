@@ -44,7 +44,7 @@
     },
     "resume_ref": {
       "type": ["string", "null"],
-      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"
     },
     "accepted_sequence": {"type": "integer", "minimum": 1},
     "resulting_state_revision": {"type": "integer", "minimum": 1},
@@ -70,7 +70,7 @@
       "type": "object",
       "required": ["source_ref", "source_digest", "principal", "reason", "recorded_at", "supporting_refs"],
       "properties": {
-        "source_ref": {"type": "string", "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+        "source_ref": {"type": "string", "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"},
         "source_digest": {"$ref": "#/$defs/digestId"},
         "principal": {
           "type": "object",
@@ -86,7 +86,7 @@
         "supporting_refs": {
           "type": "array",
           "uniqueItems": true,
-          "items": {"type": "string", "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"}
+          "items": {"type": "string", "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"}
         }
       },
       "additionalProperties": false

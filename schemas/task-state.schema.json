@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-task-state.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "installation_id", "task_id", "revision", "status", "active_blockers", "gates", "last_event_id", "last_event_digest", "protocol_version", "updated_at", "projection_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-task-state.v1"},
+    "installation_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "revision": {"type": "integer", "minimum": 0},
+    "status": {"enum": ["new", "published", "scanning_capabilities", "scanning_context", "loading_local_overlay", "selecting_runtime_adapter", "classifying_task", "selecting_profile", "decomposing_tasks", "recommending_skills", "building_provider_matrix", "preflighting_runtime", "scoring_routes", "routing_capabilities", "routing_squad", "dispatching", "suspended", "planned", "locked", "executing", "verifying", "reviewing", "resolving_agent_recommendations", "fixing", "approval_required", "recording", "done", "blocked", "failed", "cancelled"]},
+    "active_blockers": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "gates": {"type": "object", "additionalProperties": {}},
+    "last_event_id": {"type": ["string", "null"]},
+    "last_event_digest": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$"},
+    "protocol_version": {"type": "string", "minLength": 1},
+    "updated_at": {"type": "string", "minLength": 1},
+    "projection_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

@@ -28,7 +28,7 @@
     "context_gaps": {"type": "array", "items": {"type": "string"}},
     "learning_feedback_ref": {
       "type": "string",
-      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"
     },
     "rule_change_proposals": {
       "type": "array",
@@ -45,7 +45,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+              "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"
             }
           },
           "disposition": {

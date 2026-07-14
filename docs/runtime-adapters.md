@@ -14,7 +14,8 @@ pretending they provide the same guarantees.
 HERDR is the current reference adapter target in this repository. It is useful
 for proving the documented Full Mode path, but it is not the VALP protocol
 itself. The reference CLI also includes a synthetic `queue` adapter shape for
-testing headless evidence without terminal panes.
+testing headless evidence without terminal panes and a real local-process draft
+adapter for an approved addressable worker.
 
 ## Reference Runtime Status
 
@@ -30,8 +31,8 @@ Externally checked on 2026-07-06:
   license option.
 
 The existence of a public HERDR repository does not remove the adapter gap:
-VALP still needs first-class non-HERDR adapters before it can demonstrate more
-than one automated Full Mode implementation.
+VALP still needs an independently operated hosted or agent-provider adapter
+before it can claim broad automated Full Mode interoperability.
 
 Terminals are display surfaces, not automatically runtime adapters. A terminal
 that can open panes still needs an adapter layer that can submit dispatches,
@@ -43,6 +44,7 @@ read or collect outputs, and write receipts/evidence.
 |---|---|---|
 | pane controller | terminal panes, visible input, submit proof | Full Mode when proof is exported |
 | daemon queue | local daemon claims queued work and reports lifecycle events | Full Mode when state and evidence are exported |
+| local process worker | approved local subprocess with submission, lifecycle, output, and evidence refs | Full Mode for the declared host/profile |
 | hosted/local platform | web board plus local agent workers | Full Mode when audit data is accessible |
 | remote SSH | runtime owns state on another host | Remote Mode |
 | manual | human copies prompts and results | Manual Mode |

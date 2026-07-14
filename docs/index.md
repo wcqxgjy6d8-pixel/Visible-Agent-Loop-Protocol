@@ -12,7 +12,7 @@ Start here:
 - [Repository README](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/README.md)
 - [中文注解](zh-CN/README.md)
 - [Protocol specification](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SPEC.md)
-- [Proposed v0.3 installation control plane RFC](rfcs/0001-v0.3-installation-control-plane.md)
+- [v0.3 draft installation control plane](v0.3-implementation.md) and RFC
 - [Twelve-layer N/I/P audit matrix](twelve-layer-nip-matrix.md)
 - [Quickstart](quickstart.md)
 - [Compound learning loop](compound-learning-loop.md)
@@ -35,16 +35,16 @@ task-local learning feedback that points to proof.
 VALP is currently `0.2.0`. It is an open protocol release plus a reference CLI,
 not a hosted production platform.
 
-## Proposed v0.3 Direction
+## v0.3 Draft Implementation
 
-The current release remains `0.2.0`. The
+The current stable release remains `0.2.0`. The
 [v0.3 installation control plane RFC](rfcs/0001-v0.3-installation-control-plane.md)
 targets `0.3.0-draft`. RFC 0001 remains incomplete and is not stable as a
-whole. Its deterministic-wake subset is locally implemented and tested in the
-reference core, schemas, and audit; the remaining installation-control-plane
-work does not change current release or runtime-support claims.
+whole. Its deterministic-wake and installation-core slices are implemented and
+tested in the reference CLI, schemas, and conformance runner; the remaining
+live-runtime work does not change current release or runtime-support claims.
 
-The proposal extends VALP's evidence discipline from individual tasks to the
+The draft implementation extends VALP's evidence discipline from individual tasks to the
 installation control plane: the user selects an Installation Leader;
 capability truth remains separated into declared, present, callable, and
 task-verified layers; messages, state, claims, failures, and review gain strict

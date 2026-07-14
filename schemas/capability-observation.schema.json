@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-capability-observation.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "observation_id", "installation_id", "registry_sequence", "leader_epoch", "subject_id", "capability_id", "layer", "status", "source_principal_id", "source_kind", "observed_at", "evidence_refs", "content_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-capability-observation.v1"},
+    "observation_id": {"type": "string", "minLength": 1},
+    "installation_id": {"type": "string", "minLength": 1},
+    "registry_sequence": {"type": "integer", "minimum": 1},
+    "leader_epoch": {"type": "integer", "minimum": 0},
+    "subject_id": {"type": "string", "minLength": 1},
+    "capability_id": {"type": "string", "minLength": 1},
+    "layer": {"enum": ["official_claim", "local_presence", "live_callable", "task_verified"]},
+    "status": {"enum": ["present", "absent", "pass", "fail", "unknown", "stale", "blocked", "not_applicable"]},
+    "source_principal_id": {"type": "string", "minLength": 1},
+    "source_kind": {"type": "string", "minLength": 1},
+    "observed_at": {"type": "string", "minLength": 1},
+    "expires_at": {"type": ["string", "null"]},
+    "environment_fingerprint": {"type": ["string", "null"]},
+    "version_or_runtime_report": {"type": ["string", "null"]},
+    "permission_scope": {"type": ["string", "null"]},
+    "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "previous_observation_ref": {"type": ["string", "null"]},
+    "content_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

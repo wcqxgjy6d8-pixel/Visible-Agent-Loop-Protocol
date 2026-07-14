@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-installation.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "installation_id", "control_root", "active_protocol_version", "active_leader_epoch", "installation_status", "created_at", "implementation_id"],
+  "properties": {
+    "schema_version": {"const": "valp-installation.v1"},
+    "installation_id": {"type": "string", "minLength": 1},
+    "control_root": {"type": "string", "minLength": 1},
+    "active_protocol_version": {"type": "string", "minLength": 1},
+    "active_leader_epoch": {"type": "integer", "minimum": 0},
+    "installation_status": {"enum": ["uninitialized", "bootstrapping", "discovering_leader_candidates", "awaiting_leader_selection", "activating_leader", "active", "reconciling_capabilities", "rotating_leader", "migrating", "rollback_required", "degraded", "blocked", "retired"]},
+    "created_at": {"type": "string", "minLength": 1},
+    "implementation_id": {"type": "string", "minLength": 1}
+  }
+}

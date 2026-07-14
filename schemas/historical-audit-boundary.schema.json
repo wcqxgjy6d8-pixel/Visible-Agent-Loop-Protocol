@@ -56,7 +56,7 @@
           "agent": {"type": "string", "minLength": 1},
           "artifact_ref": {
             "type": "string",
-            "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+            "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"
           },
           "byte_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
           "recorded_budget": {

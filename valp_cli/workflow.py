@@ -99,6 +99,40 @@ RUNTIME_TASK_STATE_MAPPING = {
     "cancelled": "cancelled",
 }
 
+TASK_STATE_STATUSES = frozenset(
+    {
+        "new",
+        "published",
+        "scanning_capabilities",
+        "scanning_context",
+        "loading_local_overlay",
+        "selecting_runtime_adapter",
+        "classifying_task",
+        "selecting_profile",
+        "decomposing_tasks",
+        "recommending_skills",
+        "building_provider_matrix",
+        "scoring_routes",
+        "routing_capabilities",
+        "routing_squad",
+        "dispatching",
+        "suspended",
+        "planned",
+        "locked",
+        "executing",
+        "verifying",
+        "reviewing",
+        "resolving_agent_recommendations",
+        "fixing",
+        "approval_required",
+        "recording",
+        "done",
+        "blocked",
+        "failed",
+        "cancelled",
+    }
+)
+
 DEFAULT_MIN_TERMINAL_SIZE = {"width": 60, "height": 20}
 AGENT_MIN_TERMINAL_SIZE = {
     "agy": {"width": 70, "height": 24},
@@ -297,6 +331,116 @@ def append_json_line_durable(path: Path, record: dict[str, Any]) -> None:
         os.fsync(handle.fileno())
     if created:
         fsync_directory(path.parent)
+
+
+def _herdr_suspension_epoch(directory: Path) -> int:
+    state = read_json(directory / "state.json")
+    suspension = state.get("suspension") if isinstance(state, dict) else None
+    if isinstance(suspension, dict) and type(suspension.get("suspension_epoch")) is int:
+        return max(1, int(suspension["suspension_epoch"]))
+    epochs = [
+        int(event.get("suspension_epoch"))
+        for event in read_json_lines_strict(directory / "wait-events.jsonl")
+        if type(event.get("suspension_epoch")) is int
+    ]
+    return max(epochs, default=0) + 1
+
+
+def translate_legacy_herdr_receipts(directory: Path, task_id: str) -> int:
+    """Translate legacy HERDR receipts into identity-bound v2 records.
+
+    The adapter owns pane delivery proof, while VALP owns task/work-item
+    identity. Legacy receipts remain preserved for audit history; translated
+    records are appended exactly once and are the only records accepted by the
+    v2 dependency matcher.
+    """
+    receipts_path = directory / "dispatch-receipts.jsonl"
+    if not receipts_path.exists():
+        return 0
+    dependencies = read_json(directory / "submission-dependencies.json")
+    work_items = [item for item in dependencies.get("work_items") or [] if isinstance(item, dict)]
+    if not work_items:
+        return 0
+    receipts = read_json_lines_strict(receipts_path)
+    existing_ids = {
+        str(record.get("receipt_id"))
+        for record in receipts
+        if record.get("schema_version") == "valp-dispatch-receipt.v2" and record.get("receipt_id")
+    }
+    event_sequence = max(
+        [
+            int(record.get("event_sequence"))
+            for record in receipts
+            if record.get("schema_version") == "valp-dispatch-receipt.v2"
+            and type(record.get("event_sequence")) is int
+        ],
+        default=0,
+    )
+    translated = 0
+    suspension_epoch = _herdr_suspension_epoch(directory)
+    for legacy in receipts:
+        if legacy.get("schema_version") == "valp-dispatch-receipt.v2":
+            continue
+        if legacy.get("event") not in {"dispatch_submitted", "dispatch_completed", "dispatch_blocked"}:
+            continue
+        agent = str(legacy.get("agent") or "")
+        expected_refs = {str(ref) for ref in legacy.get("expected_refs") or []}
+        matches = [
+            item
+            for item in work_items
+            if str(item.get("agent") or "") == agent
+            and expected_refs.issubset({str(ref) for ref in item.get("expected_refs") or []})
+        ]
+        if len(matches) != 1:
+            continue
+        item = matches[0]
+        digest_source = json.dumps(
+            {
+                "task_id": task_id,
+                "item": item,
+                "legacy": legacy,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+        receipt_id = "sha256:" + hashlib.sha256(digest_source).hexdigest()
+        if receipt_id in existing_ids:
+            continue
+        event_sequence += 1
+        runtime = legacy.get("runtime") if isinstance(legacy.get("runtime"), dict) else {}
+        proof = dict(legacy.get("proof") or {}) if isinstance(legacy.get("proof"), dict) else {}
+        if legacy.get("event") == "dispatch_submitted":
+            for key in ("pane_id", "terminal_id", "workspace_id", "tab_id"):
+                value = runtime.get(key)
+                if isinstance(value, str) and value.strip():
+                    proof.setdefault(key, value)
+            proof.setdefault("adapter", "HERDR")
+        translated_record = {
+            "schema_version": "valp-dispatch-receipt.v2",
+            "receipt_id": receipt_id,
+            "task_id": task_id,
+            "event_sequence": event_sequence,
+            "ts": str(legacy.get("ts") or now_iso()),
+            "agent": agent,
+            "role": str(item.get("role") or "other"),
+            "work_item_id": str(item.get("work_item_id") or ""),
+            "dispatch_id": str(item.get("dispatch_id") or ""),
+            "dispatch_generation": int(item.get("dispatch_generation") or 1),
+            "event": str(legacy.get("event")),
+            "exit_code": int(legacy.get("exit_code") or 0),
+            "summary": str(legacy.get("summary") or ""),
+            "dispatch_ref": str(legacy.get("dispatch_ref") or f"agents/{agent}/dispatch.md"),
+            "expected_refs": [str(ref) for ref in item.get("expected_refs") or []],
+            "runtime": runtime,
+        }
+        if proof:
+            translated_record["proof"] = proof
+        if translated_record["event"] in {"dispatch_completed", "dispatch_blocked"}:
+            translated_record["suspension_epoch"] = suspension_epoch
+        append_json_line_durable(receipts_path, translated_record)
+        existing_ids.add(receipt_id)
+        translated += 1
+    return translated
 
 
 @contextmanager
@@ -883,8 +1027,12 @@ def safe_history_task_id(task_id: str) -> bool:
 
 
 def safe_task_evidence_ref(ref: str) -> bool:
-    path = Path(ref)
-    return bool(ref) and not path.is_absolute() and "\\" not in ref and ".." not in path.parts
+    if not isinstance(ref, str) or not ref or ref.startswith(("/", "\\")):
+        return False
+    if "\\" in ref or ":" in ref:
+        return False
+    parts = ref.split("/")
+    return all(part not in {"", ".", ".."} for part in parts)
 
 
 def task_evidence_exists(directory: Path, ref: str) -> bool:
@@ -1465,6 +1613,7 @@ def publish_task(
     profile: str | None = None,
     route: bool = True,
     runtime: str | None = None,
+    include_agents: list[str] | None = None,
 ) -> Path:
     root = workspace_root(root)
     normalize_runtime(runtime)
@@ -1519,6 +1668,9 @@ Generated during routing.
         "approval_required": approval_risks,
         "updated_at": now_iso(),
     }
+    requested_agents = list(dict.fromkeys(str(agent) for agent in (include_agents or []) if str(agent).strip()))
+    if requested_agents:
+        state["requested_agents"] = requested_agents
     write_json(directory / "state.json", state)
     if route:
         scan_workspace(root, task_id, runtime=runtime)
@@ -1550,8 +1702,9 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
     agents = capabilities.get("agents") or {}
     feedback_history = load_routing_feedback_history(root)
     candidate_scores = score_candidates(profile, agents, feedback_history)
-    selected_agents = select_agents(profile, agents, candidate_scores)
-    role_assignments = role_assignments_for(profile, selected_agents, agents, candidate_scores)
+    requested_agents = validate_requested_agents(state.get("requested_agents") or [], agents)
+    selected_agents = select_agents(profile, agents, candidate_scores, requested_agents)
+    role_assignments = role_assignments_for(profile, selected_agents, agents, candidate_scores, requested_agents)
     preflight = collect_runtime_preflight(selected_agents, runtime=runtime)
     runtime_adapter = runtime_adapter_record(preflight, runtime=runtime)
     automation_policy = automation_policy_for(task_id, runtime_adapter, approval_risks)
@@ -1598,7 +1751,7 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             "note": "Local capability profiles are routing hints, not fixed assignments.",
         },
         "capabilities_needed": PROFILE_CAPABILITIES.get(profile, PROFILE_CAPABILITIES["generic-analysis"]),
-        "role_requirements": PROFILE_ROLE_REQUIREMENTS.get(profile, PROFILE_ROLE_REQUIREMENTS["generic-analysis"]),
+        "role_requirements": required_roles_for(profile, agents, requested_agents),
         "role_assignments": role_assignments,
         "submission_dependencies": {
             "status": "recorded",
@@ -1613,6 +1766,11 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             "selection_rule": "Selected from current capability evidence, local overlay hints, runtime availability, context policy, and task profile. The open protocol does not name a universal leader.",
         },
         "selected_agents": selected_agents,
+        "requested_agents": requested_agents,
+        "requested_agent_roles": {
+            agent: requested_agent_role(agent, agents)
+            for agent in requested_agents
+        },
         "agent_match_reasons": {
             agent: match_reasons_for(agent, profile, agents.get(agent, {}))
             for agent in selected_agents
@@ -1682,6 +1840,11 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             "provider_matrix": {"status": "scanned", "ref": "routing.json"},
             "squad_routing": {"used": False},
             "selected_agents": selected_agents,
+            "requested_agents": requested_agents,
+            "requested_agent_roles": {
+                agent: requested_agent_role(agent, agents)
+                for agent in requested_agents
+            },
             "role_assignments": role_assignments,
             "submission_dependencies": routing["submission_dependencies"],
             "delegation_policy": routing["delegation_policy"],
@@ -1767,8 +1930,14 @@ def score_candidates(profile: str, agents: dict[str, Any], feedback_history: lis
     return scores
 
 
-def select_agents(profile: str, agents: dict[str, Any], scores: dict[str, dict[str, Any]]) -> list[str]:
-    required_roles = PROFILE_ROLE_REQUIREMENTS.get(profile, PROFILE_ROLE_REQUIREMENTS["generic-analysis"])
+def select_agents(
+    profile: str,
+    agents: dict[str, Any],
+    scores: dict[str, dict[str, Any]],
+    requested_agents: list[str] | None = None,
+) -> list[str]:
+    requested = validate_requested_agents(requested_agents, agents)
+    required_roles = required_roles_for(profile, agents, requested)
     selected: list[str] = []
     for role in required_roles:
         ranked = sorted(
@@ -1785,10 +1954,45 @@ def select_agents(profile: str, agents: dict[str, Any], scores: dict[str, dict[s
             if agent not in selected:
                 selected.append(agent)
             break
+    for agent in requested:
+        if agent not in selected:
+            selected.append(agent)
     if selected:
         return selected
     ranked = sorted(scores, key=lambda name: scores[name].get("overall", 0), reverse=True)
     return ranked[:1]
+
+
+def requested_agent_role(agent: str, agents: dict[str, Any]) -> str:
+    """Map an explicitly requested agent to its declared primary role."""
+    return inferred_primary_role(agents.get(agent) or {})
+
+
+def required_roles_for(
+    profile: str,
+    agents: dict[str, Any],
+    requested_agents: list[str] | None = None,
+) -> list[str]:
+    roles = list(PROFILE_ROLE_REQUIREMENTS.get(profile, PROFILE_ROLE_REQUIREMENTS["generic-analysis"]))
+    for agent in requested_agents or []:
+        role = requested_agent_role(str(agent), agents)
+        if role in {"coordinator", "implementer", "reviewer", "prototype", "researcher"} and role not in roles:
+            roles.append(role)
+    return roles
+
+
+def validate_requested_agents(
+    requested_agents: list[str] | None,
+    agents: dict[str, Any],
+) -> list[str]:
+    requested = list(dict.fromkeys(str(agent) for agent in (requested_agents or []) if str(agent).strip()))
+    missing = [agent for agent in requested if agent not in agents]
+    inactive = [agent for agent in requested if agent in agents and not bool(agents[agent].get("active", True))]
+    if missing:
+        raise SystemExit("Requested agent is not present in the capability registry: " + ", ".join(missing))
+    if inactive:
+        raise SystemExit("Requested agent is inactive in the capability registry: " + ", ".join(inactive))
+    return requested
 
 
 def role_assignments_for(
@@ -1796,9 +2000,10 @@ def role_assignments_for(
     selected_agents: list[str],
     agents: dict[str, Any],
     scores: dict[str, dict[str, Any]],
+    requested_agents: list[str] | None = None,
 ) -> dict[str, str]:
     assignments: dict[str, str] = {}
-    required_roles = PROFILE_ROLE_REQUIREMENTS.get(profile, PROFILE_ROLE_REQUIREMENTS["generic-analysis"])
+    required_roles = required_roles_for(profile, agents, requested_agents)
     for role in required_roles:
         ranked = sorted(
             selected_agents,
@@ -1807,6 +2012,10 @@ def role_assignments_for(
         )
         if ranked:
             assignments[role] = ranked[0]
+    for agent in requested_agents or []:
+        role = requested_agent_role(str(agent), agents)
+        if role in required_roles:
+            assignments[role] = str(agent)
     return assignments
 
 
@@ -3812,6 +4021,8 @@ def dispatch_task(
     submit: bool = False,
     runtime: str | None = None,
     role: str | None = None,
+    wait_seconds: float | None = None,
+    proof_seconds: float | None = None,
 ) -> list[str]:
     root = workspace_root(root)
     directory = task_dir(root, task_id)
@@ -3973,7 +4184,21 @@ def dispatch_task(
         command = ["herdr-loop", "--project-root", str(root), "submit-dispatch", task_id, target]
         for ref in expected:
             command.extend(["--expect", ref])
+        if wait_seconds is not None:
+            command.extend(["--wait-seconds", str(wait_seconds)])
+        if proof_seconds is not None:
+            command.extend(["--proof-seconds", str(proof_seconds)])
         commands.append(" ".join(command))
         if submit:
-            subprocess.run(command, check=True)
+            result = subprocess.run(command, check=False)
+            translated = translate_legacy_herdr_receipts(directory, task_id)
+            if translated:
+                append_timeline_event(
+                    directory,
+                    "runtime_receipts_translated",
+                    f"Translated {translated} legacy HERDR receipt(s) into v2 identity-bound records",
+                    agent=target,
+                )
+            if result.returncode != 0:
+                raise subprocess.CalledProcessError(result.returncode, command)
     return commands

@@ -743,6 +743,7 @@ Adapter classes:
 |---|---|---|
 | pane controller | visible terminal panes and submit proof | yes |
 | daemon queue | local daemon claims queued tasks and reports status | yes, if receipts and evidence are exported |
+| local process worker | approved local subprocess with submission, lifecycle, output, and evidence proof | yes, for the declared host/profile |
 | hosted/local platform | Web board plus local runtime workers | yes, if agent output and proof are auditable |
 | remote SSH | runtime runs on a remote host | yes, with remote proof caveats |
 | manual | human copies dispatches and results | no; Manual Mode only |

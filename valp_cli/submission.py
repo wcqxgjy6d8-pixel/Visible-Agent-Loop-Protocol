@@ -346,6 +346,11 @@ def dependency_order_errors(
             str(dependency.get("dependent_work_item_id") or ""),
         )
         for index, receipt in enumerate(receipts):
+            # Legacy HERDR records remain in the append-only ledger for
+            # history. Full Mode v2 ordering is evaluated against the
+            # identity-bound records produced by the translation layer.
+            if strict_identity and receipt.get("schema_version") != "valp-dispatch-receipt.v2":
+                continue
             if receipt.get("agent") != dependency.get("dependent_agent"):
                 continue
             if not _receipt_matches(receipt, dependent_event, dependent_refs):

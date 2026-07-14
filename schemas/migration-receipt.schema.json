@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-migration-receipt.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "migration_id", "installation_id", "status", "plan_digest", "source_protocol_version", "target_protocol_version", "created_at", "receipt_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-migration-receipt.v1"},
+    "migration_id": {"type": "string", "minLength": 1},
+    "installation_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["applied", "rolled_back", "blocked"]},
+    "plan_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "source_protocol_version": {"type": "string", "minLength": 1},
+    "target_protocol_version": {"type": "string", "minLength": 1},
+    "source_root": {"type": "string"},
+    "target_root": {"type": "string"},
+    "preserved_file_count": {"type": "integer", "minimum": 0},
+    "error": {"type": "string"},
+    "created_at": {"type": "string", "minLength": 1},
+    "receipt_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

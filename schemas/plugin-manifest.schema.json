@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-plugin-manifest.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "plugin_id", "implementation_id", "plugin_kind", "protocol_read_versions", "protocol_write_versions", "entrypoint", "permissions", "provided_capabilities", "required_capabilities", "resource_limits", "isolation", "manifest_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-plugin-manifest.v1"},
+    "plugin_id": {"type": "string", "pattern": "^[a-z][a-z0-9._-]+$"},
+    "implementation_id": {"type": "string", "minLength": 1},
+    "plugin_kind": {"enum": ["discovery", "runtime_adapter", "provider_adapter", "tool", "transport"]},
+    "protocol_read_versions": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "uniqueItems": true},
+    "protocol_write_versions": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "uniqueItems": true},
+    "entrypoint": {"type": "string", "minLength": 1},
+    "permissions": {"type": "array", "items": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]+$"}, "uniqueItems": true},
+    "provided_capabilities": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "required_capabilities": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "resource_limits": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}},
+    "isolation": {"enum": ["process", "container", "hosted", "manual"]},
+    "manifest_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

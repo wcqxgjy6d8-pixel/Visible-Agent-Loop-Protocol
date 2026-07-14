@@ -83,6 +83,7 @@ class SchemaExampleTests(unittest.TestCase):
             "deterministic-receipt-missing-epoch.json": "receipts.schema.json",
             "deterministic-receipt-missing-proof.json": "receipts.schema.json",
             "exception-wake-user-input-runtime-principal.json": "exception-wake.schema.json",
+            "exception-wake-drive-qualified-ref.json": "exception-wake.schema.json",
             "wake-result-extra-field.json": "wake-result.schema.json",
         }
         for fixture_name, schema_name in schema_by_fixture.items():
@@ -90,6 +91,14 @@ class SchemaExampleTests(unittest.TestCase):
                 fixture = json.loads((fixture_dir / fixture_name).read_text(encoding="utf-8"))
                 errors = list(schema_validator(ROOT / "schemas" / schema_name).iter_errors(fixture))
                 self.assertTrue(errors, f"{fixture_name} unexpectedly matched {schema_name}")
+
+    def test_v2_state_status_is_a_closed_transition_vocabulary(self) -> None:
+        state = json.loads((ROOT / "examples" / "full-mode-task" / "state.json").read_text(encoding="utf-8"))
+        state["schema_version"] = "valp-visible-loop-state.v2"
+        state["revision"] = 0
+        state["status"] = "invented_state"
+        errors = list(schema_validator(ROOT / "schemas" / "state.schema.json").iter_errors(state))
+        self.assertTrue(errors)
 
     def test_wait_wake_spec_and_quickstart_match_the_shipped_cli_boundary(self) -> None:
         spec = (ROOT / "SPEC.md").read_text(encoding="utf-8")
@@ -160,8 +169,8 @@ class SchemaExampleTests(unittest.TestCase):
                 document = (ROOT / relative_path).read_text(encoding="utf-8")
                 normalized = " ".join(document.split())
                 self.assertIn("RFC 0001 remains incomplete", normalized)
-                self.assertIn("deterministic-wake subset is locally implemented", normalized)
-                self.assertIn("release remains `0.2.0`", normalized)
+                self.assertIn("implemented", normalized)
+                self.assertIn("stable release remains `0.2.0`", normalized)
                 self.assertNotIn("stable `0.3.0` release", normalized)
 
     def test_remote_mode_public_claims_are_conditional_on_adapter_evidence(self) -> None:

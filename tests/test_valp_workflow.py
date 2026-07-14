@@ -35,15 +35,124 @@ from valp_cli.workflow import (
     publish_task,
     read_json,
     route_task,
+    role_assignments_for,
     scan_workspace,
+    score_candidates,
+    select_agents,
     resume_suspended_task,
     suspend_task,
+    translate_legacy_herdr_receipts,
     wait_for_task,
     write_queue_submission,
 )
 
 
 class ValpWorkflowTests(unittest.TestCase):
+    def test_explicit_requested_agent_is_added_as_a_supplemental_role(self) -> None:
+        agents = {
+            "hermes": {"active": True, "role": ["coordination"], "strengths": ["state", "gates"], "mcp_servers": []},
+            "codex": {"active": True, "role": ["implementation"], "strengths": ["verification", "tests"], "mcp_servers": []},
+            "claude": {"active": True, "role": ["reviewer"], "strengths": ["read-only review"], "mcp_servers": []},
+            "agy": {"active": True, "role": ["prototype"], "strengths": ["isolated prototype"], "mcp_servers": []},
+        }
+        scores = score_candidates("agent-runtime", agents)
+        selected = select_agents("agent-runtime", agents, scores, requested_agents=["agy"])
+        assignments = role_assignments_for(
+            "agent-runtime",
+            selected,
+            agents,
+            scores,
+            requested_agents=["agy"],
+        )
+
+        self.assertEqual(set(selected), {"hermes", "codex", "claude", "agy"})
+        self.assertEqual(assignments["prototype"], "agy")
+        dependencies = build_submission_dependencies("TASK-REQUESTED-AGENT", assignments)
+        self.assertIn("coordinator-before-prototype", [item["id"] for item in dependencies["dependencies"]])
+        self.assertIn("prototype-before-reviewer", [item["id"] for item in dependencies["dependencies"]])
+
+    def test_legacy_herdr_receipts_translate_to_v2_work_item_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = Path(tmp) / ".herdr-loop" / "tasks" / "TASK-HERDR-TRANSLATION"
+            task_dir.mkdir(parents=True)
+            task_id = "TASK-HERDR-TRANSLATION"
+            dependencies = build_submission_dependencies(
+                task_id,
+                {"coordinator": "hermes", "implementer": "codex", "reviewer": "claude"},
+            )
+            (task_dir / "submission-dependencies.json").write_text(
+                json.dumps(dependencies),
+                encoding="utf-8",
+            )
+            (task_dir / "state.json").write_text(
+                json.dumps({"schema_version": "valp-visible-loop-state.v2", "status": "dispatching"}),
+                encoding="utf-8",
+            )
+            expected = ["agents/hermes/self-review.md"]
+            (task_dir / expected[0]).parent.mkdir(parents=True, exist_ok=True)
+            (task_dir / expected[0]).write_text("done\n", encoding="utf-8")
+            legacy = [
+                {
+                    "ts": "2026-07-14T00:00:00Z",
+                    "agent": "hermes",
+                    "event": "dispatch_submitted",
+                    "exit_code": 0,
+                    "dispatch_ref": "agents/hermes/dispatch.md",
+                    "expected_refs": expected,
+                    "proof": {"submit_proof": {"status": "working"}},
+                    "runtime": {"pane_id": "w5:p5", "terminal_id": "term-1"},
+                },
+                {
+                    "ts": "2026-07-14T00:00:01Z",
+                    "agent": "hermes",
+                    "event": "dispatch_completed",
+                    "exit_code": 0,
+                    "dispatch_ref": "agents/hermes/dispatch.md",
+                    "expected_refs": expected,
+                    "runtime": {"pane_id": "w5:p5", "terminal_id": "term-1"},
+                },
+            ]
+            (task_dir / "dispatch-receipts.jsonl").write_text(
+                "".join(json.dumps(record) + "\n" for record in legacy),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(translate_legacy_herdr_receipts(task_dir, task_id), 2)
+            translated = [
+                json.loads(line)
+                for line in (task_dir / "dispatch-receipts.jsonl").read_text(encoding="utf-8").splitlines()
+                if json.loads(line).get("schema_version") == "valp-dispatch-receipt.v2"
+            ]
+            self.assertEqual([record["event"] for record in translated], ["dispatch_submitted", "dispatch_completed"])
+            self.assertEqual(translated[0]["work_item_id"], "coordinator:hermes")
+            self.assertEqual(translated[0]["dispatch_generation"], 1)
+            self.assertEqual(translated[0]["proof"]["pane_id"], "w5:p5")
+            self.assertEqual(translated[1]["suspension_epoch"], 1)
+
+    def test_task_local_evidence_refs_are_platform_neutral(self) -> None:
+        valid_refs = [
+            "evidence/verification.md",
+            "agents/claude/review.md",
+            ".well-known/checkpoint.json",
+        ]
+        invalid_refs = [
+            "/tmp/checkpoint.json",
+            "../checkpoint.json",
+            "evidence/../checkpoint.json",
+            "./checkpoint.json",
+            "evidence//checkpoint.json",
+            "C:/checkpoint.json",
+            "C:\\checkpoint.json",
+            "evidence:checkpoint.json",
+        ]
+
+        for ref in valid_refs:
+            with self.subTest(ref=ref):
+                self.assertTrue(workflow_module.safe_task_evidence_ref(ref))
+        for ref in invalid_refs:
+            with self.subTest(ref=ref):
+                self.assertFalse(workflow_module.safe_task_evidence_ref(ref))
+
     def test_atomic_write_text_preserves_utf8_lf_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "snapshot.json"
@@ -2927,8 +3036,56 @@ class ValpWorkflowTests(unittest.TestCase):
                 evidence_status,
                 manual_mode=False,
             )
-            self.assertEqual(len(errors), 1)
-            self.assertIn("before receipt line 1", errors[0])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("before receipt line 1", errors[0])
+
+    def test_v2_dependency_order_ignores_preserved_legacy_receipts(self) -> None:
+        task_id = "TASK-LEGACY-ORDERED-RECEIPTS"
+        dependencies = build_submission_dependencies(
+            task_id,
+            {"coordinator": "hermes", "implementer": "codex"},
+        )
+        coordinator = next(
+            item for item in dependencies["work_items"] if item["role"] == "coordinator"
+        )
+        implementer = next(
+            item for item in dependencies["work_items"] if item["role"] == "implementer"
+        )
+        prerequisite = self.deterministic_receipt(
+            task_id,
+            coordinator,
+            "dispatch_completed",
+            1,
+            suspension_epoch=1,
+        )
+        legacy_dependent = {
+            "agent": "codex",
+            "event": "dispatch_submitted",
+            "exit_code": 0,
+            "dispatch_ref": "agents/codex/dispatch.md",
+            "expected_refs": implementer["expected_refs"],
+            "runtime": {"pane_id": "w5:pS"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = Path(tmp)
+            self_review = task_dir / "agents" / "hermes" / "self-review.md"
+            self_review.parent.mkdir(parents=True)
+            self_review.write_text("gate passed\n", encoding="utf-8")
+            evidence_status = {
+                "evidence": {"agents/hermes/self-review.md": {"status": "valid"}}
+            }
+
+            self.assertEqual(
+                dependency_order_errors(
+                    dependencies,
+                    [prerequisite, legacy_dependent],
+                    task_dir,
+                    evidence_status,
+                    manual_mode=False,
+                ),
+                [],
+            )
 
     def test_v2_dependency_order_rejects_cross_role_prerequisite_receipt(self) -> None:
         task_id = "TASK-ORDERED-IDENTITY"

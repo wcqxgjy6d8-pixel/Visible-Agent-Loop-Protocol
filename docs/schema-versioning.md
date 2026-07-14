@@ -22,6 +22,12 @@ the artifact shape stays backward-compatible.
 - Adapters should not silently coerce an unknown schema into a known one when it
   affects receipts, approval gates, evidence validity, or Done Criteria.
 
+Task-local evidence refs use one platform-neutral grammar across the schemas and
+reference CLI: non-empty POSIX-style relative segments only. Absolute paths,
+backslashes, drive-qualified paths, empty or `.` segments, `..` traversal, and
+colon-qualified names are rejected so the same artifact remains safe on POSIX
+and Windows.
+
 ## Practical Guidance
 
 For external runtime implementers:

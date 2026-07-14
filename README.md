@@ -58,7 +58,7 @@ What it does not prove yet:
 
 - a standalone public live Full Mode completion case study using a runtime end
   to end;
-- first-class non-HERDR runtime adapters beyond the synthetic queue fixture;
+- a first-class hosted or agent-provider adapter beyond the local-process draft adapter;
 - native Full Mode guarantees on every local operating system;
 - production deployment reliability for a third-party runtime.
 
@@ -68,15 +68,12 @@ source repository, currently documented at
 depend on HERDR specifically. See [docs/project-status.md](docs/project-status.md)
 for the current evidence and gap matrix.
 
-## Proposed v0.3 Direction
+## v0.3 Draft Implementation
 
-The current release remains `0.2.0`. RFC 0001 remains incomplete as a proposal
-for `0.3.0-draft`; read the [full draft](docs/rfcs/0001-v0.3-installation-control-plane.md).
-It is not fully incorporated or stable. Its deterministic-wake subset is
-locally implemented and tested in the reference core, schemas, and audit. The
-remaining installation-control-plane proposal does not change current
-runtime-support or release claims, and this subset does not establish v0.3
-stability.
+The current stable release remains `0.2.0`. RFC 0001 remains incomplete for
+`0.3.0`, but its first executable installation-control-plane
+slice is now implemented in the reference CLI. Read the [implementation guide](docs/v0.3-implementation.md)
+and the [full draft](docs/rfcs/0001-v0.3-installation-control-plane.md).
 
 In Software 3.0 terms, VALP is control-plane code around work driven by prompts,
 tools, and agents. It does not make a model smarter. It makes control decisions
@@ -84,7 +81,7 @@ and completion claims inspectable. `0.2.0` does that at the task level; the v0.3
 RFC asks how the installation-wide control plane itself can become restart-safe,
 provider-neutral, and testable.
 
-If implemented, the proposal would add:
+The implemented draft core adds:
 
 - a user-selected **Installation Leader**, constrained by a deterministic core
   and fenced leader epochs rather than a hard-coded universal coordinator;
@@ -93,15 +90,15 @@ If implemented, the proposal would add:
   separate evidence layers;
 - strict contracts for messages, executable state, claim-to-evidence binding,
   deterministic failure, and independent exact-artifact review;
-- provider-neutral plugin isolation, explicit protocol migration, and
-  conformance profiles with negative and recovery tests.
+- provider-neutral plugin manifest validation, explicit legacy migration plans,
+  and a core conformance runner with negative and recovery tests.
 
 The proposal deliberately keeps the proof bar ahead of the release label.
 Before stable `0.3.0`, the RFC must be accepted and incorporated into
-`SPEC.md`; schemas and reference behavior must be implemented; conformance,
-restart, migration, and failure tests must pass; and a real non-HERDR Full Mode
-adapter must complete a public sanitized end-to-end run. None of those future
-requirements should be read as a shipped capability today.
+`SPEC.md`; the remaining task reducer, live adapter restart proof, plugin
+execution isolation, and a real non-HERDR Full Mode adapter must complete a
+public sanitized end-to-end run. The draft core is shipped for evaluation, not
+as a stable platform claim.
 
 Read the [full RFC](docs/rfcs/0001-v0.3-installation-control-plane.md) and the
 [current evidence matrix](docs/project-status.md) side by side: one describes
@@ -135,7 +132,8 @@ Choose the path that matches why you are here:
 | Goal | Start here | Runtime required? |
 |---|---|---|
 | Understand the protocol | Read [SPEC.md](SPEC.md) and audit `examples/minimal-task/` | No |
-| Review the proposed v0.3 installation control plane | Read [RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md) | No |
+| Try the v0.3 draft installation control plane | Read [the implementation guide](docs/v0.3-implementation.md) | No |
+| Review the v0.3 installation control plane | Read [RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md) | No |
 | Understand the automation and learning principles | Read [Compound Learning Loop](docs/compound-learning-loop.md) | No |
 | See the shortest public demo | Read [When Agent "Done" Is Not Done](docs/when-agent-done-is-not-done.md) | No |
 | Watch live dispatch process proof | Watch the [visible dispatch process proof](docs/case-studies/visible-dispatch-process-proof.md) | No |

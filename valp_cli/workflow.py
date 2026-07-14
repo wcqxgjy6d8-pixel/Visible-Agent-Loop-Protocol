@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import errno
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -148,6 +149,17 @@ DISPATCH_ROLE_BUDGETS = {
     "researcher": {"max_chars": 2400, "max_reference_tokens": 600},
     "other": {"max_chars": 2200, "max_reference_tokens": 550},
 }
+ITERATION_BUDGET_STOP_CONDITIONS = [
+    "dispatch reference-token budget exhausted",
+    "dispatch-count budget exhausted",
+    "reroute budget exhausted",
+    "fix-review-round budget exhausted",
+    "approval gate unresolved",
+    "runtime preflight failure",
+    "missing expected evidence",
+    "critical or high review blocker",
+    "context compression required",
+]
 SUSPENSION_RESUME_EVENTS = {"receipt", "timeout", "runtime_failure", "cancellation", "user_input"}
 EXTERNAL_RESUME_EVENTS = {"runtime_failure", "cancellation", "user_input"}
 DELIVERY_RECEIPT_EVENTS = {"dispatch_submitted", "manual_delivery_attested"}
@@ -346,7 +358,37 @@ def _herdr_suspension_epoch(directory: Path) -> int:
     return max(epochs, default=0) + 1
 
 
-def translate_legacy_herdr_receipts(directory: Path, task_id: str) -> int:
+def _legacy_receipt_source_digest(
+    task_id: str,
+    line_number: int,
+    receipt: dict[str, Any],
+) -> str:
+    source = {
+        "task_id": task_id,
+        "line_number": line_number,
+        "receipt": receipt,
+    }
+    return "sha256:" + hashlib.sha256(
+        json.dumps(source, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def _legacy_translation_receipt_id(
+    task_id: str,
+    item: dict[str, Any],
+    legacy: dict[str, Any],
+) -> str:
+    source = {"task_id": task_id, "item": item, "legacy": legacy}
+    return "sha256:" + hashlib.sha256(
+        json.dumps(source, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def translate_legacy_herdr_receipts(
+    directory: Path,
+    task_id: str,
+    phase: tuple[str, str] | None = None,
+) -> int:
     """Translate legacy HERDR receipts into identity-bound v2 records.
 
     The adapter owns pane delivery proof, while VALP owns task/work-item
@@ -367,6 +409,13 @@ def translate_legacy_herdr_receipts(directory: Path, task_id: str) -> int:
         for record in receipts
         if record.get("schema_version") == "valp-dispatch-receipt.v2" and record.get("receipt_id")
     }
+    consumed_legacy_sources = {
+        str((record.get("proof") or {}).get("legacy_source_digest"))
+        for record in receipts
+        if record.get("schema_version") == "valp-dispatch-receipt.v2"
+        and isinstance(record.get("proof"), dict)
+        and (record.get("proof") or {}).get("legacy_source_digest")
+    }
     event_sequence = max(
         [
             int(record.get("event_sequence"))
@@ -378,10 +427,18 @@ def translate_legacy_herdr_receipts(directory: Path, task_id: str) -> int:
     )
     translated = 0
     suspension_epoch = _herdr_suspension_epoch(directory)
-    for legacy in receipts:
+    for line_number, legacy in enumerate(receipts, 1):
         if legacy.get("schema_version") == "valp-dispatch-receipt.v2":
             continue
         if legacy.get("event") not in {"dispatch_submitted", "dispatch_completed", "dispatch_blocked"}:
+            continue
+        source_digest = _legacy_receipt_source_digest(task_id, line_number, legacy)
+        if source_digest in consumed_legacy_sources:
+            continue
+        if any(
+            _legacy_translation_receipt_id(task_id, item, legacy) in existing_ids
+            for item in work_items
+        ):
             continue
         agent = str(legacy.get("agent") or "")
         expected_refs = {str(ref) for ref in legacy.get("expected_refs") or []}
@@ -389,6 +446,13 @@ def translate_legacy_herdr_receipts(directory: Path, task_id: str) -> int:
             item
             for item in work_items
             if str(item.get("agent") or "") == agent
+            and (
+                phase is None
+                or (
+                    str(item.get("agent") or "") == phase[0]
+                    and str(item.get("role") or "") == phase[1]
+                )
+            )
             and expected_refs.issubset({str(ref) for ref in item.get("expected_refs") or []})
         ]
         if len(matches) != 1:
@@ -398,7 +462,7 @@ def translate_legacy_herdr_receipts(directory: Path, task_id: str) -> int:
             {
                 "task_id": task_id,
                 "item": item,
-                "legacy": legacy,
+                "legacy_source_digest": source_digest,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -409,6 +473,7 @@ def translate_legacy_herdr_receipts(directory: Path, task_id: str) -> int:
         event_sequence += 1
         runtime = legacy.get("runtime") if isinstance(legacy.get("runtime"), dict) else {}
         proof = dict(legacy.get("proof") or {}) if isinstance(legacy.get("proof"), dict) else {}
+        proof["legacy_source_digest"] = source_digest
         if legacy.get("event") == "dispatch_submitted":
             for key in ("pane_id", "terminal_id", "workspace_id", "tab_id"):
                 value = runtime.get(key)
@@ -439,6 +504,7 @@ def translate_legacy_herdr_receipts(directory: Path, task_id: str) -> int:
             translated_record["suspension_epoch"] = suspension_epoch
         append_json_line_durable(receipts_path, translated_record)
         existing_ids.add(receipt_id)
+        consumed_legacy_sources.add(source_digest)
         translated += 1
     return translated
 
@@ -725,6 +791,312 @@ def dispatch_budget_for_agent(agent: str, role_assignments: dict[str, str]) -> d
         **DISPATCH_ROLE_BUDGETS[role],
         "token_estimator": "ceil(chars/4)",
     }
+
+
+def iteration_budget_for(task_id: str, role_assignments: dict[str, str]) -> dict[str, Any]:
+    roles = list(dict.fromkeys(str(role) for role in role_assignments if str(role)))
+    initial_tokens = sum(
+        int(DISPATCH_ROLE_BUDGETS.get(role, DISPATCH_ROLE_BUDGETS["other"])["max_reference_tokens"])
+        for role in roles
+    )
+    reviewer_tokens = int(DISPATCH_ROLE_BUDGETS["reviewer"]["max_reference_tokens"])
+    max_fix_review_rounds = 2
+    return {
+        "schema_version": "valp-iteration-budget.v1",
+        "task_id": task_id,
+        "strategy": "minimum_capable_team",
+        "max_dispatch_reference_tokens": max(initial_tokens * 2 + reviewer_tokens * max_fix_review_rounds, 1),
+        "max_dispatches": max(len(roles) + 2, 3),
+        "max_reroutes": 1,
+        "max_fix_review_rounds": max_fix_review_rounds,
+        "usage": {
+            "dispatch_reference_tokens": 0,
+            "dispatches": 0,
+            "reroutes": 0,
+            "fix_review_rounds": 0,
+        },
+        "status": "active",
+        "stop_reason": None,
+        "stop_conditions": ITERATION_BUDGET_STOP_CONDITIONS,
+        "updated_at": now_iso(),
+    }
+
+
+def _dispatch_usage_from_receipts(
+    directory: Path,
+    routing: dict[str, Any],
+    task_id: str,
+) -> dict[str, int]:
+    budgets = routing.get("dispatch_payload_budgets") or {}
+    records = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
+    submitted = [
+        (line_number, record)
+        for line_number, record in enumerate(records, 1)
+        if record.get("event") in {"dispatch_submitted", "manual_delivery_attested"}
+    ]
+    v2_records = [
+        record
+        for _, record in submitted
+        if record.get("schema_version") == "valp-dispatch-receipt.v2"
+    ]
+    translated_source_digests = {
+        str((record.get("proof") or {}).get("legacy_source_digest"))
+        for record in v2_records
+        if isinstance(record.get("proof"), dict)
+        and (record.get("proof") or {}).get("legacy_source_digest")
+    }
+    legacy_v2_records = [
+        record
+        for record in v2_records
+        if not (
+            isinstance(record.get("proof"), dict)
+            and (record.get("proof") or {}).get("legacy_source_digest")
+        )
+    ]
+    seen: set[tuple[Any, ...]] = set()
+    dispatches = 0
+    reference_tokens = 0
+    for line_number, record in submitted:
+        expected_refs = tuple(sorted(str(ref) for ref in record.get("expected_refs") or []))
+        if record.get("schema_version") == "valp-dispatch-receipt.v2":
+            identity = (
+                "v2",
+                record.get("task_id"),
+                record.get("agent"),
+                record.get("role"),
+                record.get("work_item_id"),
+                record.get("dispatch_id"),
+                record.get("dispatch_generation"),
+                record.get("event"),
+            )
+        else:
+            source_digest = _legacy_receipt_source_digest(
+                task_id,
+                line_number,
+                record,
+            )
+            if source_digest in translated_source_digests:
+                continue
+            if any(
+                twin.get("agent") == record.get("agent")
+                and twin.get("event") == record.get("event")
+                and (
+                    tuple(sorted(str(ref) for ref in twin.get("expected_refs") or [])) == expected_refs
+                    or (
+                        not expected_refs
+                        and twin.get("ts") == record.get("ts")
+                        and twin.get("dispatch_ref") == record.get("dispatch_ref")
+                    )
+                )
+                for twin in legacy_v2_records
+            ):
+                continue
+            identity = ("legacy", source_digest)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        dispatches += 1
+        agent = str(record.get("agent") or "")
+        payload = budgets.get(agent) or {}
+        reference_tokens += int(payload.get("actual_reference_tokens") or 0)
+    return {
+        "dispatch_reference_tokens": reference_tokens,
+        "dispatches": dispatches,
+    }
+
+
+def refresh_iteration_budget(
+    directory: Path,
+    routing: dict[str, Any],
+    budget: dict[str, Any],
+    reroutes: int | None = None,
+) -> dict[str, Any]:
+    usage = dict(budget.get("usage") or {})
+    observed = _dispatch_usage_from_receipts(
+        directory,
+        routing,
+        str(budget.get("task_id") or directory.name),
+    )
+    usage.update(observed)
+    if reroutes is not None:
+        usage["reroutes"] = max(int(usage.get("reroutes") or 0), reroutes)
+    correction = read_json(directory / "correction-cycle.json")
+    rounds = correction.get("rounds") if isinstance(correction, dict) else []
+    usage["fix_review_rounds"] = max(int(usage.get("fix_review_rounds") or 0), len(rounds) if isinstance(rounds, list) else 0)
+    budget["usage"] = {
+        "dispatch_reference_tokens": int(usage.get("dispatch_reference_tokens") or 0),
+        "dispatches": int(usage.get("dispatches") or 0),
+        "reroutes": int(usage.get("reroutes") or 0),
+        "fix_review_rounds": int(usage.get("fix_review_rounds") or 0),
+    }
+    if budget.get("status") not in {"blocked", "completed"}:
+        budget["status"] = "active"
+        budget["stop_reason"] = None
+        limits = {
+            "dispatch_reference_tokens": int(budget.get("max_dispatch_reference_tokens") or 0),
+            "dispatches": int(budget.get("max_dispatches") or 0),
+            "reroutes": int(budget.get("max_reroutes") or 0),
+            "fix_review_rounds": int(budget.get("max_fix_review_rounds") or 0),
+        }
+        for key, limit in limits.items():
+            if budget["usage"][key] > limit:
+                budget["status"] = "exhausted"
+                budget["stop_reason"] = f"{key} budget exhausted"
+                break
+    budget["updated_at"] = now_iso()
+    write_json(directory / "iteration-budget.json", budget)
+    return budget
+
+
+def record_reroute_evidence(
+    directory: Path,
+    task_id: str,
+    previous_routing: dict[str, Any],
+    reroute_number: int,
+) -> None:
+    payload = json.dumps(previous_routing, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    append_json_line_durable(
+        directory / "routing-history.jsonl",
+        {
+            "schema_version": "valp-routing-history.v1",
+            "task_id": task_id,
+            "event": "reroute_started",
+            "reroute_number": reroute_number,
+            "previous_routing_digest": "sha256:" + hashlib.sha256(payload).hexdigest(),
+            "previous_selected_agents": previous_routing.get("selected_agents") or [],
+            "previous_role_assignments": previous_routing.get("role_assignments") or {},
+            "recorded_at": now_iso(),
+        },
+    )
+
+
+def _iteration_safety_errors(state: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if state.get("status") in {"blocked", "cancelled", "done", "failed"}:
+        errors.append(f"task status is {state.get('status')}")
+    gates = state.get("gates") or {}
+    if gates.get("approval") in {"needs_approval", "blocked", "failed"}:
+        errors.append("approval gate unresolved")
+    if gates.get("review") in {"blocked", "failed"}:
+        errors.append("critical or high review blocker")
+    if gates.get("verification") in {"blocked", "failed"}:
+        errors.append("verification gate failed")
+    if gates.get("expected_evidence") == "blocked":
+        errors.append("missing expected evidence")
+    if state.get("context_compression_required") or state.get("compression_required"):
+        errors.append("context compression required")
+    return errors
+
+
+def enforce_iteration_budget(
+    directory: Path,
+    routing: dict[str, Any],
+    state: dict[str, Any],
+    phases: list[tuple[str, str]],
+) -> dict[str, Any]:
+    budget = read_json(directory / "iteration-budget.json")
+    if not budget:
+        return {}
+    budget = refresh_iteration_budget(directory, routing, budget)
+    safety_errors = _iteration_safety_errors(state)
+    if safety_errors:
+        budget["status"] = "blocked"
+        budget["stop_reason"] = "; ".join(safety_errors)
+        write_json(directory / "iteration-budget.json", budget)
+        raise SystemExit("Dispatch blocked by iteration safety gate: " + "; ".join(safety_errors))
+    if budget.get("status") != "active":
+        raise SystemExit(f"Dispatch blocked by iteration budget: {budget.get('stop_reason') or budget.get('status')}")
+    payload_budgets = routing.get("dispatch_payload_budgets") or {}
+    projected_dispatches = int((budget.get("usage") or {}).get("dispatches") or 0) + len(phases)
+    projected_tokens = int((budget.get("usage") or {}).get("dispatch_reference_tokens") or 0) + sum(
+        int((payload_budgets.get(agent) or {}).get("actual_reference_tokens") or 0)
+        for agent, _role in phases
+    )
+    if projected_dispatches > int(budget.get("max_dispatches") or 0):
+        budget["status"] = "blocked"
+        budget["stop_reason"] = "dispatch-count budget exhausted"
+        write_json(directory / "iteration-budget.json", budget)
+        raise SystemExit("Dispatch blocked by iteration budget: dispatch count would exceed the configured maximum")
+    if projected_tokens > int(budget.get("max_dispatch_reference_tokens") or 0):
+        budget["status"] = "blocked"
+        budget["stop_reason"] = "dispatch reference-token budget exhausted"
+        write_json(directory / "iteration-budget.json", budget)
+        raise SystemExit("Dispatch blocked by iteration budget: reference-token usage would exceed the configured maximum")
+    return budget
+
+
+def provider_reachable_match(agent: str, match: dict[str, Any]) -> bool:
+    if not match.get("installed"):
+        return False
+    path = str(match.get("path") or "")
+    if not skill_visible_to_agent(agent, path):
+        return False
+    reachability = match.get("provider_reachability")
+    if isinstance(reachability, dict):
+        reachable_agent = str(reachability.get("agent") or "any")
+        if reachable_agent not in {"any", agent} or reachability.get("reachable") is False:
+            return False
+    return True
+
+
+def compact_skill_slice(
+    task_id: str,
+    agent: str,
+    skill_recommendations: dict[str, Any],
+) -> dict[str, Any]:
+    per_agent = skill_recommendations.get("per_agent") or {}
+    source = per_agent.get(agent) if isinstance(per_agent, dict) else None
+    if not isinstance(source, dict):
+        source = skill_recommendations
+    recommendations: list[dict[str, Any]] = []
+    omitted = 0
+    for result in source.get("results") or []:
+        task = bounded_text(str(result.get("task") or ""), 120)
+        decision = str((result.get("routing") or {}).get("decision") or "unknown")
+        for match in result.get("matches") or []:
+            if not provider_reachable_match(agent, match):
+                omitted += 1
+                continue
+            recommendations.append({
+                "skill": str(match.get("skill") or "unknown"),
+                "task": task,
+                "confidence": float(match.get("confidence") or 0),
+                "provider": str(match.get("provider") or "unknown"),
+                "path": str(match.get("path") or "unknown"),
+                "decision": decision,
+            })
+    recommendations = recommendations[:8]
+    missing = [
+        str(item.get("skill") or "unknown")
+        for item in source.get("missing_skills") or []
+        if isinstance(item, dict)
+    ][:4]
+    return {
+        "schema_version": "valp-skill-recommendation-slice.v1",
+        "task_id": task_id,
+        "agent": agent,
+        "status": str(source.get("status") or skill_recommendations.get("status") or "not_run"),
+        "source_ref": "skill-recommendations.json",
+        "provider_reachable": bool(recommendations) or str(source.get("status")) == "no_matches",
+        "recommendations": recommendations,
+        "missing_skills": missing,
+        "omitted_match_count": omitted,
+        "generated_at": now_iso(),
+    }
+
+
+def write_skill_slices(
+    directory: Path,
+    task_id: str,
+    selected_agents: list[str],
+    skill_recommendations: dict[str, Any],
+) -> dict[str, str]:
+    refs: dict[str, str] = {}
+    for agent in selected_agents:
+        relative = f"skill-slices/{agent}.json"
+        write_json(directory / relative, compact_skill_slice(task_id, agent, skill_recommendations))
+        refs[agent] = relative
+    return refs
 
 
 def skill_task_label(task: str, index: int) -> str:
@@ -1281,6 +1653,7 @@ def automation_policy_for(
         "selected_action": selected_action,
         "approval_required": approval_required,
         "approval_refs": ["approvals/requested.jsonl"] if approval_required else [],
+        "iteration_budget_ref": "iteration-budget.json",
         "allowed_automatic_phases": allowed,
         "blocked_automatic_phases": blocked,
         "audit_grade": audit_grade,
@@ -1292,6 +1665,10 @@ def automation_policy_for(
             "unresolved critical/high review finding",
             "unresolved agent recommendation",
             "context compression required",
+            "dispatch reference-token budget exhausted",
+            "dispatch-count budget exhausted",
+            "reroute budget exhausted",
+            "fix-review-round budget exhausted",
         ],
         "notes": [
             "Automation may continue only while each phase writes auditable evidence.",
@@ -1688,11 +2065,12 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         raise SystemExit(f"Missing state.json for task {task_id}")
     prompt = (directory / "task.md").read_text(encoding="utf-8", errors="replace")
     profile = state.get("profile") or classify_profile(prompt)
-    approval_risks = (state.get("risk") or {}).get("matches") or classify_approval_risks(extract_goal_text(prompt))
+    approval_risks = classify_approval_risks(extract_goal_text(prompt))
     if approval_risks and (state.get("gates") or {}).get("approval") in {None, "not_required"}:
         state.setdefault("gates", {})["approval"] = "needs_approval"
-    if approval_risks and not state.get("approval_required"):
-        state["approval_required"] = approval_risks
+    elif not approval_risks:
+        state.setdefault("gates", {})["approval"] = "not_required"
+    state["approval_required"] = approval_risks
     state["risk"] = {
         "approval_required": bool(approval_risks),
         "matches": approval_risks,
@@ -1701,7 +2079,10 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
     overlay = load_local_overlay(root)
     agents = capabilities.get("agents") or {}
     feedback_history = load_routing_feedback_history(root)
-    candidate_scores = score_candidates(profile, agents, feedback_history)
+    # Skill/MCP evidence is collected before candidate scoring. Per-agent
+    # slices are written after the minimum capable team is selected.
+    skill_recommendations = run_skill_recommendations(root, task_id, profile, prompt)
+    candidate_scores = score_candidates(profile, agents, feedback_history, skill_recommendations)
     requested_agents = validate_requested_agents(state.get("requested_agents") or [], agents)
     selected_agents = select_agents(profile, agents, candidate_scores, requested_agents)
     role_assignments = role_assignments_for(profile, selected_agents, agents, candidate_scores, requested_agents)
@@ -1709,9 +2090,25 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
     runtime_adapter = runtime_adapter_record(preflight, runtime=runtime)
     automation_policy = automation_policy_for(task_id, runtime_adapter, approval_risks)
     write_json(directory / "automation-policy.json", automation_policy)
-    skill_recommendations = run_skill_recommendations(root, task_id, profile, prompt)
     skill_recommendations = add_per_agent_skill_recommendations(skill_recommendations, selected_agents)
     write_json(directory / "skill-recommendations.json", skill_recommendations)
+    existing_routing = read_json(directory / "routing.json")
+    iteration_budget = read_json(directory / "iteration-budget.json") or iteration_budget_for(task_id, role_assignments)
+    reroute_count = int((iteration_budget.get("usage") or {}).get("reroutes") or 0)
+    if existing_routing.get("selected_agents"):
+        reroute_count += 1
+        if reroute_count > int(iteration_budget.get("max_reroutes") or 0):
+            iteration_budget["status"] = "blocked"
+            iteration_budget["stop_reason"] = "reroute budget exhausted"
+            write_json(directory / "iteration-budget.json", iteration_budget)
+            raise SystemExit("Routing blocked by iteration budget: reroute budget exhausted")
+        record_reroute_evidence(directory, task_id, existing_routing, reroute_count)
+        refresh_iteration_budget(directory, existing_routing, iteration_budget, reroute_count)
+        if iteration_budget.get("status") != "active":
+            raise SystemExit(f"Routing blocked by iteration budget: {iteration_budget.get('stop_reason') or iteration_budget.get('status')}")
+    iteration_budget.setdefault("usage", {})["reroutes"] = reroute_count
+    iteration_budget["task_id"] = task_id
+    iteration_budget["strategy"] = "minimum_capable_team"
     visible_attention = write_visible_attention(
         root,
         directory,
@@ -1753,6 +2150,12 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         "capabilities_needed": PROFILE_CAPABILITIES.get(profile, PROFILE_CAPABILITIES["generic-analysis"]),
         "role_requirements": required_roles_for(profile, agents, requested_agents),
         "role_assignments": role_assignments,
+        "team_selection": {
+            "strategy": "minimum_capable_team",
+            "required_roles": required_roles_for(profile, agents, requested_agents),
+            "selected_agents": selected_agents,
+            "supplemental_requested_agents": [agent for agent in requested_agents if agent not in role_assignments.values()],
+        },
         "submission_dependencies": {
             "status": "recorded",
             "ref": "submission-dependencies.json",
@@ -1760,6 +2163,10 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         "delegation_policy": {
             "status": "recorded",
             "ref": "delegation-policy.json",
+        },
+        "iteration_budget": {
+            "status": "recorded",
+            "ref": "iteration-budget.json",
         },
         "coordinator_selection": {
             "selected_agent": role_assignments.get("coordinator"),
@@ -1798,6 +2205,7 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             "ref": "skill-recommendations.json",
             "routing": skill_recommendations.get("routing") or {},
             "missing_skills": skill_recommendations.get("missing_skills") or [],
+            "coordinator_only": True,
         },
         "visible_attention": {
             "schema_version": "valp-visible-attention.v1",
@@ -1813,6 +2221,8 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         "learning_feedback_ref": "learning-feedback.json",
         "capabilities_missing": [],
     }
+    skill_slice_refs = write_skill_slices(directory, task_id, selected_agents, skill_recommendations)
+    routing["skill_recommendation_slices"] = skill_slice_refs
     write_json(directory / "routing.json", routing)
     dispatch_payload_budgets = write_dispatches(
         root,
@@ -1828,6 +2238,7 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
     )
     routing["dispatch_payload_budgets"] = dispatch_payload_budgets
     write_json(directory / "routing.json", routing)
+    refresh_iteration_budget(directory, routing, iteration_budget, reroute_count)
     append_dispatch_written_receipts(directory, selected_agents, expected_by_agent)
     state.update(
         {
@@ -1859,11 +2270,17 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             },
             "context_pack": {"status": "recorded", "ref": "context-pack.json"},
             "dispatch_payload_budgets": dispatch_payload_budgets,
+            "iteration_budget": {
+                "status": "recorded",
+                "ref": "iteration-budget.json",
+            },
             "skill_recommendations": {
                 "status": skill_recommendations.get("status"),
                 "backend": skill_recommendations.get("backend"),
                 "ref": "skill-recommendations.json",
+                "coordinator_only": True,
             },
+            "skill_recommendation_slices": skill_slice_refs,
             "visible_attention": {
                 "status": "recorded",
                 "loop_layer": visible_attention["loop_layer"],
@@ -1887,7 +2304,12 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
     return routing
 
 
-def score_candidates(profile: str, agents: dict[str, Any], feedback_history: list[dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
+def score_candidates(
+    profile: str,
+    agents: dict[str, Any],
+    feedback_history: list[dict[str, Any]] | None = None,
+    skill_recommendations: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
     required_roles = PROFILE_ROLE_REQUIREMENTS.get(profile, PROFILE_ROLE_REQUIREMENTS["generic-analysis"])
     history = feedback_history or []
     scores: dict[str, dict[str, Any]] = {}
@@ -1899,7 +2321,15 @@ def score_candidates(profile: str, agents: dict[str, Any], feedback_history: lis
         profile_fit = max(role_fit.values()) if role_fit else 0.45
         tool_fit = 0.85 if info.get("mcp_servers") or runtime else 0.55
         skill_count = len(info.get("skills") or [])
-        skill_fit = min(0.95, 0.45 + skill_count / 80)
+        recommended_count = 0
+        if skill_recommendations:
+            for result in skill_recommendations.get("results") or []:
+                recommended_count += sum(
+                    1
+                    for match in result.get("matches") or []
+                    if provider_reachable_match(agent, match)
+                )
+        skill_fit = min(0.95, 0.45 + skill_count / 80 + min(0.25, recommended_count * 0.04))
         permission_fit = 0 if not active else 1
         context_fit = 0.85
         feedback_prior = feedback_prior_for_agent(agent, profile, history)
@@ -1915,6 +2345,10 @@ def score_candidates(profile: str, agents: dict[str, Any], feedback_history: lis
             "profile_fit": round(profile_fit, 2),
             "tool_fit": round(tool_fit, 2),
             "skill_fit": round(skill_fit, 2),
+            "skill_evidence": {
+                "source_ref": "skill-recommendations.json" if skill_recommendations else None,
+                "provider_reachable_match_count": recommended_count,
+            },
             "permission_fit": round(permission_fit, 2),
             "context_fit": round(context_fit, 2),
             "evidence_history": round(evidence_history, 2),
@@ -1938,29 +2372,46 @@ def select_agents(
 ) -> list[str]:
     requested = validate_requested_agents(requested_agents, agents)
     required_roles = required_roles_for(profile, agents, requested)
-    selected: list[str] = []
-    for role in required_roles:
-        ranked = sorted(
-            scores,
-            key=lambda name: (scores[name].get("role_fit", {}).get(role, 0), scores[name].get("overall", 0)),
-            reverse=True,
-        )
-        for agent in ranked:
-            role_score = scores[agent].get("role_fit", {}).get(role, 0)
-            if scores[agent].get("overall", 0) < 0.5 and selected:
+    viable = sorted(
+        agent
+        for agent in scores
+        if agent in agents
+        and bool(agents[agent].get("active", True))
+        and (float(scores[agent].get("overall", 0)) >= 0.5 or agent in requested)
+    )
+    requested_set = set(requested)
+    for team_size in range(max(1, len(requested_set)), len(viable) + 1):
+        covering: list[tuple[float, float, tuple[str, ...]]] = []
+        for team in itertools.combinations(viable, team_size):
+            if not requested_set.issubset(team):
                 continue
-            if role_score < 0.35 and len(agents) > 1:
+            role_scores = [
+                max(
+                    float(
+                        scores[agent].get("role_fit", {}).get(
+                            role,
+                            role_fit_score(agents[agent], role),
+                        )
+                    )
+                    for agent in team
+                )
+                for role in required_roles
+            ]
+            if len(agents) > 1 and any(value < 0.35 for value in role_scores):
                 continue
-            if agent not in selected:
-                selected.append(agent)
-            break
-    for agent in requested:
-        if agent not in selected:
-            selected.append(agent)
-    if selected:
-        return selected
+            covering.append(
+                (
+                    sum(role_scores),
+                    sum(float(scores[agent].get("overall", 0)) for agent in team) / len(team),
+                    team,
+                )
+            )
+        if covering:
+            return list(max(covering, key=lambda item: (item[0], item[1], item[2]))[2])
+
     ranked = sorted(scores, key=lambda name: scores[name].get("overall", 0), reverse=True)
-    return ranked[:1]
+    fallback = requested or ranked[:1]
+    return list(dict.fromkeys(fallback))
 
 
 def requested_agent_role(agent: str, agents: dict[str, Any]) -> str:
@@ -2033,6 +2484,9 @@ def agent_capability_text(info: dict[str, Any]) -> str:
 def role_fit_score(info: dict[str, Any], role: str) -> float:
     text = agent_capability_text(info)
     negative_text = " ".join(str(item) for item in (info.get("must_not_do") or [])).lower()
+    normalized_boundary = re.sub(r"[-_]+", " ", f"{text} {negative_text}")
+    if role == "implementer" and re.search(r"\bread only\b", normalized_boundary):
+        return 0.0
     terms = ROLE_MATCH_TERMS.get(role, [])
     matches = sum(1 for term in terms if term_matches_capability(term, text) and not term_matches_capability(term, negative_text))
     if matches:
@@ -2373,18 +2827,27 @@ def write_dispatches(
     visible_attention: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
     task_brief = task_brief_for_dispatch(prompt)
-    core_task_refs = "\n".join(
-        f"- `{relative_ref(directory / ref, root)}`"
-        for ref in ["task.md", "context-pack.json", "skill-recommendations.json"]
-    )
     payload_records: dict[str, dict[str, Any]] = {}
     for agent in selected_agents:
         agent_dir = directory / "agents" / agent
         agent_dir.mkdir(parents=True, exist_ok=True)
+        assigned_roles = roles_for_agent(routing.get("role_assignments") or {}, agent)
+        is_coordinator = "coordinator" in assigned_roles
+        slice_ref = (routing.get("skill_recommendation_slices") or {}).get(agent)
+        task_refs = ["task.md", "context-pack.json", "iteration-budget.json"]
+        if slice_ref:
+            task_refs.append(slice_ref)
+        if is_coordinator:
+            task_refs.append("skill-recommendations.json")
+        core_task_refs = "\n".join(
+            f"- `{relative_ref(directory / ref, root)}`"
+            for ref in task_refs
+        )
         expected = "\n".join(f"- `{ref}`" for ref in expected_by_agent.get(agent, []))
         exact_evidence = "\n".join(f"- `{relative_ref(directory / ref, root)}`" for ref in expected_by_agent.get(agent, []))
         reasons = bounded_text("; ".join(routing["agent_match_reasons"].get(agent, [])), 160)
-        skills = format_skill_recommendations_for_dispatch(agent, skill_recommendations)
+        skill_source = skill_recommendations if is_coordinator else compact_skill_slice(task_id, agent, skill_recommendations)
+        skills = format_skill_recommendations_for_dispatch(agent, skill_source, coordinator=is_coordinator)
         compact_skill_lines = [
             line
             for line in skills.splitlines()
@@ -2392,8 +2855,16 @@ def write_dispatches(
             or "Recommendations filtered for" in line
             or line.startswith("- Work item ")
         ]
-        compact_skills = "\n".join(compact_skill_lines) or "- Full recommendation records: `skill-recommendations.json`."
-        minimal_skills = "- Load provider-reachable matches from `skill-recommendations.json` only when relevant."
+        compact_skills = "\n".join(compact_skill_lines) or (
+            "- Full recommendation records: `skill-recommendations.json`."
+            if is_coordinator
+            else "- Use only the provider-reachable skill slice for this dispatch."
+        )
+        minimal_skills = (
+            "- Load provider-reachable matches from `skill-recommendations.json` only when relevant."
+            if is_coordinator
+            else "- Load only the provider-reachable skill slice; do not load the coordinator report."
+        )
         attention_slice = attention_slice_for_agent(agent, visible_attention)
         budget = dispatch_budget_for_agent(agent, routing.get("role_assignments") or {})
 
@@ -2495,12 +2966,37 @@ Write expected evidence with blockers, confidence, and `## Recommendations`.
             "actual_chars": actual_chars,
             "actual_reference_tokens": (actual_chars + 3) // 4,
             "dispatch_ref": f"agents/{agent}/dispatch.md",
+            "skill_slice_ref": slice_ref,
         }
         (agent_dir / "dispatch.md").write_text(dispatch, encoding="utf-8")
     return payload_records
 
 
-def format_skill_recommendations_for_dispatch(agent: str, skill_recommendations: dict[str, Any]) -> str:
+def format_skill_recommendations_for_dispatch(
+    agent: str,
+    skill_recommendations: dict[str, Any],
+    coordinator: bool = False,
+) -> str:
+    if skill_recommendations.get("schema_version") == "valp-skill-recommendation-slice.v1":
+        if skill_recommendations.get("status") not in {"complete", "no_matches"}:
+            return f"- Provider-reachable skill slice status: `{skill_recommendations.get('status', 'unknown')}`."
+        lines = [
+            "- Provider-reachable skill recommendations are routing aids, not permission grants.",
+            "- This dispatch receives only the compact provider-reachable slice; the full report is coordinator-only.",
+        ]
+        for item in (skill_recommendations.get("recommendations") or [])[:3]:
+            lines.append(
+                "- Skill `{}` for `{}` (provider {}, confidence {}, {}).".format(
+                    item.get("skill", "unknown"),
+                    item.get("task", "work item"),
+                    item.get("provider", "unknown"),
+                    item.get("confidence", "unknown"),
+                    item.get("decision", "unknown"),
+                )
+            )
+        if not skill_recommendations.get("recommendations"):
+            lines.append("- No provider-reachable installed skill matched strongly enough for this dispatch.")
+        return "\n".join(lines)
     source = skill_recommendations
     per_agent = skill_recommendations.get("per_agent") or {}
     if isinstance(per_agent, dict) and agent in per_agent:
@@ -2511,8 +3007,9 @@ def format_skill_recommendations_for_dispatch(agent: str, skill_recommendations:
         return f"- Skill router status: `{source.get('status', 'unknown')}`. Proceed without assuming hidden skill recommendations."
     lines = [
         "- Skill recommendations are routing aids, not permission grants.",
-        "- Full recommendation records remain in `skill-recommendations.json`; dispatch carries short labels only.",
     ]
+    if coordinator:
+        lines.append("- Full recommendation records remain in `skill-recommendations.json`; coordinator-only context.")
     if source is not skill_recommendations:
         lines.append(f"- Recommendations filtered for `{agent}` by provider.")
     count = 0
@@ -2669,6 +3166,7 @@ def write_queue_submission(
             and receipt.get("dispatch_id") == identity["dispatch_id"]
             and receipt.get("dispatch_generation") == identity["dispatch_generation"]
             and receipt.get("event") == "dispatch_submitted"
+            and has_concrete_runtime_submission_proof(receipt)
         ]
         if logical_receipts:
             conflicting = [
@@ -2789,6 +3287,7 @@ DETERMINISTIC_SUSPENSION_REQUIRED_FIELDS = {
 }
 DETERMINISTIC_SUSPENSION_OPTIONAL_FIELDS = {
     "checkpoint_ref",
+    "evidence_refs_present_at_entry",
     "receipt_cursor",
     "resume_event",
     "resumed_at",
@@ -3426,6 +3925,59 @@ def load_wait_policy(
     return policy
 
 
+def write_wait_policy_for_phases(
+    directory: Path,
+    task_id: str,
+    phases: list[tuple[str, str]],
+    submission_dependencies: dict[str, Any],
+) -> dict[str, Any]:
+    work_items = [
+        item
+        for item in submission_dependencies.get("work_items") or []
+        if isinstance(item, dict)
+    ]
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[str] = set()
+    for agent, role in phases:
+        matches = [
+            item
+            for item in work_items
+            if item.get("agent") == agent and item.get("role") == role
+        ]
+        if len(matches) != 1:
+            raise SystemExit(f"Cannot build wait policy for ambiguous work item {role}:{agent}")
+        item = dict(matches[0])
+        work_item_id = str(item.get("work_item_id") or "")
+        if work_item_id not in selected_ids:
+            selected.append(item)
+            selected_ids.add(work_item_id)
+    if not selected:
+        raise SystemExit("Cannot build wait policy without submitted work items")
+    identity_digest = hashlib.sha256(
+        json.dumps(selected, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    policy = {
+        "schema_version": "valp-wait-policy.v1",
+        "task_id": task_id,
+        "wait_policy_id": f"submitted-phase-{identity_digest}",
+        "mode": "dependency_ready",
+        "exception_policy": "exception_short_circuit",
+        "dependency_ref": "submission-dependencies.json",
+        "required_work_items": selected,
+        "exception_events": [
+            "dispatch_blocked",
+            "manual_blocked",
+            "runtime_failure",
+            "cancellation",
+            "timeout",
+            "user_input",
+        ],
+    }
+    write_json(directory / "wait-policy.json", policy)
+    load_wait_policy(directory, task_id, validate_dependency_ref=True)
+    return policy
+
+
 def snapshot_wait_policy(directory: Path, policy: dict[str, Any]) -> str:
     serialized = json.dumps(policy, indent=2, ensure_ascii=False) + "\n"
     digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -3593,6 +4145,111 @@ def work_item_evidence_is_valid(directory: Path, item: dict[str, Any]) -> bool:
     return True
 
 
+def observe_expected_evidence_completions(
+    directory: Path,
+    task_id: str,
+    suspension: dict[str, Any],
+) -> int:
+    if not suspension.get("strict_identity"):
+        return 0
+    pending_ids = {str(value) for value in suspension.get("pending_work_item_ids") or []}
+    present_at_entry = {
+        str(ref) for ref in suspension.get("evidence_refs_present_at_entry") or []
+    }
+    receipts = load_dispatch_receipts(directory, task_id)
+    existing_ids = {
+        str(receipt.get("receipt_id"))
+        for receipt in receipts
+        if receipt.get("schema_version") == "valp-dispatch-receipt.v2"
+        and receipt.get("receipt_id")
+    }
+    event_sequence = max(
+        [
+            int(receipt["event_sequence"])
+            for receipt in receipts
+            if receipt.get("schema_version") == "valp-dispatch-receipt.v2"
+            and type(receipt.get("event_sequence")) is int
+        ],
+        default=0,
+    )
+    appended = 0
+    for item in suspension.get("required_work_items") or []:
+        if not isinstance(item, dict) or str(item.get("work_item_id")) not in pending_ids:
+            continue
+        expected_refs = [str(ref) for ref in item.get("expected_refs") or []]
+        if not expected_refs or present_at_entry.intersection(expected_refs):
+            continue
+        if not work_item_evidence_is_valid(directory, item):
+            continue
+        submissions = [
+            receipt
+            for receipt in receipts
+            if receipt.get("event") == "dispatch_submitted"
+            and receipt_matches_work_item(
+                receipt,
+                item,
+                task_id,
+                strict_identity=True,
+            )
+            and has_concrete_runtime_submission_proof(receipt)
+        ]
+        if not submissions:
+            continue
+        submission = max(submissions, key=lambda receipt: int(receipt["event_sequence"]))
+        identity = {
+            "task_id": task_id,
+            "suspension_epoch": suspension.get("suspension_epoch"),
+            "work_item": item,
+            "submission_receipt_id": submission.get("receipt_id"),
+            "expected_refs": expected_refs,
+        }
+        receipt_id = "sha256:" + hashlib.sha256(
+            json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        if receipt_id in existing_ids:
+            continue
+        event_sequence += 1
+        completion = {
+            "schema_version": "valp-dispatch-receipt.v2",
+            "receipt_id": receipt_id,
+            "task_id": task_id,
+            "event_sequence": event_sequence,
+            "ts": now_iso(),
+            "agent": str(item.get("agent") or ""),
+            "role": str(item.get("role") or "other"),
+            "work_item_id": str(item.get("work_item_id") or ""),
+            "dispatch_id": str(item.get("dispatch_id") or ""),
+            "dispatch_generation": int(item.get("dispatch_generation") or 1),
+            "suspension_epoch": int(suspension.get("suspension_epoch") or 0),
+            "event": "dispatch_completed",
+            "exit_code": 0,
+            "summary": "Expected evidence appeared while the coordinator model was suspended",
+            "dispatch_ref": str(
+                submission.get("dispatch_ref")
+                or f"agents/{item.get('agent')}/dispatch.md"
+            ),
+            "expected_refs": expected_refs,
+            "proof": {
+                "observer": "valp.wait.expected-evidence",
+                "submission_receipt_id": str(submission.get("receipt_id") or ""),
+                "existing_refs": expected_refs,
+            },
+            "runtime": dict(submission.get("runtime") or {}),
+        }
+        append_json_line_durable(directory / "dispatch-receipts.jsonl", completion)
+        receipts.append(completion)
+        existing_ids.add(receipt_id)
+        appended += 1
+    if appended:
+        append_timeline_event(
+            directory,
+            "expected_evidence_observed",
+            f"Observed expected evidence for {appended} suspended work item(s)",
+            observer="valp.wait.expected-evidence",
+        )
+    return appended
+
+
 def suspend_task(root: Path, task_id: str, timeout_seconds: float = 300.0) -> dict[str, Any]:
     root = workspace_root(root)
     directory = task_dir(root, task_id)
@@ -3693,6 +4350,14 @@ def suspend_task(root: Path, task_id: str, timeout_seconds: float = 300.0) -> di
             "execution_deadline": deadline_at.isoformat().replace("+00:00", "Z"),
             "waiting_for_agents": waiting_for_agents,
             "receipt_count_at_entry": len(receipts),
+            "evidence_refs_present_at_entry": sorted(
+                {
+                    str(ref)
+                    for item in required_work_items
+                    for ref in item.get("expected_refs") or []
+                    if task_evidence_exists(directory, str(ref))
+                }
+            ),
             "allowed_resume_events": sorted(SUSPENSION_RESUME_EVENTS),
         }
         state["status"] = "suspended"
@@ -3967,6 +4632,7 @@ def wait_for_task(
                 if current.get("accepted_wake"):
                     return current
                 raise SystemExit(f"Task {task_id} left suspended state without an accepted wake")
+            observe_expected_evidence_completions(directory, task_id, current)
 
         receipts = load_dispatch_receipts(directory, task_id)
         receipt_count = max(
@@ -4014,6 +4680,83 @@ def wait_for_task(
         time.sleep(max(0.01, poll_interval_seconds))
 
 
+def latest_phase_delivery_event(
+    submission_dependencies: dict[str, Any],
+    phase: tuple[str, str],
+    receipts: list[dict[str, Any]],
+    task_id: str,
+) -> str | None:
+    target, role = phase
+    work_item = next(
+        (
+            item
+            for item in submission_dependencies.get("work_items") or []
+            if isinstance(item, dict)
+            and item.get("agent") == target
+            and item.get("role") == role
+        ),
+        None,
+    )
+    if not work_item:
+        return None
+    latest: str | None = None
+    for receipt in receipts:
+        if (
+            receipt.get("schema_version") == "valp-dispatch-receipt.v2"
+            and receipt.get("task_id") == task_id
+            and receipt.get("agent") == work_item.get("agent")
+            and receipt.get("role") == work_item.get("role")
+            and receipt.get("work_item_id") == work_item.get("work_item_id")
+            and receipt.get("dispatch_id") == work_item.get("dispatch_id")
+            and receipt.get("dispatch_generation") == work_item.get("dispatch_generation")
+            and receipt.get("event") in DELIVERY_RECEIPT_EVENTS | TERMINAL_WORKER_RECEIPT_EVENTS
+        ):
+            if (
+                receipt.get("event") == "dispatch_submitted"
+                and not has_concrete_runtime_submission_proof(receipt)
+            ):
+                continue
+            latest = str(receipt.get("event"))
+    return latest
+
+
+def dependency_ready_frontier(
+    submission_dependencies: dict[str, Any],
+    phases: list[tuple[str, str]],
+    receipts: list[dict[str, Any]],
+    directory: Path,
+    task_id: str,
+) -> tuple[list[tuple[str, str]], list[str]]:
+    ready: list[tuple[str, str]] = []
+    blocked: list[str] = []
+    evidence_status = read_json(directory / "evidence-status.json")
+    for phase in phases:
+        latest_event = latest_phase_delivery_event(
+            submission_dependencies,
+            phase,
+            receipts,
+            task_id,
+        )
+        if latest_event in DELIVERY_RECEIPT_EVENTS | {"dispatch_completed", "manual_result_attested"}:
+            continue
+        if latest_event in {"dispatch_blocked", "manual_blocked"}:
+            blocked.append(f"{phase[1]}:{phase[0]} is blocked")
+            continue
+        dependency_errors = unmet_dependencies_for_phases(
+            submission_dependencies,
+            [phase],
+            receipts,
+            directory,
+            evidence_status,
+            manual_mode=False,
+        )
+        if dependency_errors:
+            blocked.extend(dependency_errors)
+        else:
+            ready.append(phase)
+    return ready, list(dict.fromkeys(blocked))
+
+
 def dispatch_task(
     root: Path,
     task_id: str,
@@ -4024,6 +4767,12 @@ def dispatch_task(
     wait_seconds: float | None = None,
     proof_seconds: float | None = None,
 ) -> list[str]:
+    for label, value in (
+        ("Evidence wait", wait_seconds),
+        ("Submission proof timeout", proof_seconds),
+    ):
+        if value is not None and (not math.isfinite(value) or value < 0):
+            raise SystemExit(f"{label} must be a finite non-negative number")
     root = workspace_root(root)
     directory = task_dir(root, task_id)
     routing = read_json(directory / "routing.json")
@@ -4115,18 +4864,40 @@ def dispatch_task(
             raise SystemExit("Delegated dispatch is blocked by a recorded live self-modification violation")
 
     if submit and submission_dependencies:
-        dependency_errors = unmet_dependencies_for_phases(
-            submission_dependencies,
-            phases,
-            load_dispatch_receipts(directory, task_id),
-            directory,
-            read_json(directory / "evidence-status.json"),
-            manual_mode=manual_mode,
+        receipts = load_dispatch_receipts(directory, task_id)
+        automatic_frontier = (
+            agent == "all"
+            and role is None
+            and submission_dependencies.get("schema_version") == "valp-submission-dependencies.v2"
+            and not manual_mode
         )
-        if dependency_errors:
-            raise SystemExit("Dispatch blocked by unmet prerequisites: " + ", ".join(dependency_errors))
+        if automatic_frontier:
+            phases, dependency_errors = dependency_ready_frontier(
+                submission_dependencies,
+                phases,
+                receipts,
+                directory,
+                task_id,
+            )
+            if not phases:
+                detail = ", ".join(dependency_errors) or "no pending dependency-ready work items"
+                raise SystemExit("Dispatch has no ready phase: " + detail)
+            targets = list(dict.fromkeys(target for target, _ in phases))
+        else:
+            dependency_errors = unmet_dependencies_for_phases(
+                submission_dependencies,
+                phases,
+                receipts,
+                directory,
+                read_json(directory / "evidence-status.json"),
+                manual_mode=manual_mode,
+            )
+            if dependency_errors:
+                raise SystemExit("Dispatch blocked by unmet prerequisites: " + ", ".join(dependency_errors))
     if submit and read_json(directory / "automation-policy.json").get("selected_action") == "block_for_approval":
         raise SystemExit("Dispatch is blocked until approval evidence and automation policy are reconciled")
+    if submit:
+        enforce_iteration_budget(directory, routing, state, phases)
 
     recorded_budgets = routing.get("dispatch_payload_budgets") or {}
     for target in targets:
@@ -4157,9 +4928,21 @@ def dispatch_task(
     ]
     if preflight.get("status") == "fail" or failed:
         write_json(directory / "runtime-preflight.json", preflight)
+        budget = read_json(directory / "iteration-budget.json")
+        if budget:
+            budget["status"] = "blocked"
+            budget["stop_reason"] = "runtime preflight failure"
+            write_json(directory / "iteration-budget.json", budget)
         target_summary = ", ".join(failed) if failed else "runtime checks"
         raise SystemExit("Runtime preflight failed for: " + target_summary)
     write_json(directory / "runtime-preflight.json", preflight)
+    if submit and runtime_kind in {"herdr", "queue"}:
+        write_wait_policy_for_phases(
+            directory,
+            task_id,
+            phases,
+            submission_dependencies,
+        )
     commands = []
     for target, target_role in phases:
         expected = role_expected_refs(target, target_role)
@@ -4182,8 +4965,10 @@ def dispatch_task(
         if runtime_kind != "herdr":
             raise SystemExit(f"Runtime {runtime_kind} is not supported by this reference dispatch helper.")
         command = ["herdr-loop", "--project-root", str(root), "submit-dispatch", task_id, target]
-        for ref in expected:
-            command.extend(["--expect", ref])
+        submission_only = wait_seconds == 0
+        if not submission_only:
+            for ref in expected:
+                command.extend(["--expect", ref])
         if wait_seconds is not None:
             command.extend(["--wait-seconds", str(wait_seconds)])
         if proof_seconds is not None:
@@ -4191,7 +4976,11 @@ def dispatch_task(
         commands.append(" ".join(command))
         if submit:
             result = subprocess.run(command, check=False)
-            translated = translate_legacy_herdr_receipts(directory, task_id)
+            translated = translate_legacy_herdr_receipts(
+                directory,
+                task_id,
+                phase=(target, target_role) if submission_only else None,
+            )
             if translated:
                 append_timeline_event(
                     directory,
@@ -4200,5 +4989,13 @@ def dispatch_task(
                     agent=target,
                 )
             if result.returncode != 0:
+                budget = read_json(directory / "iteration-budget.json")
+                if budget:
+                    budget["status"] = "blocked"
+                    budget["stop_reason"] = "runtime dispatch failure"
+                    write_json(directory / "iteration-budget.json", budget)
                 raise subprocess.CalledProcessError(result.returncode, command)
+    budget = read_json(directory / "iteration-budget.json")
+    if budget:
+        refresh_iteration_budget(directory, routing, budget)
     return commands

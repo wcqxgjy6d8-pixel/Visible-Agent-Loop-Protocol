@@ -79,8 +79,8 @@ notes:
         help="Submit only the named role phase; required to disambiguate co-located roles",
     )
     dispatch.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Override the runtime adapter recorded in routing.json")
-    dispatch.add_argument("--wait-seconds", type=float, help="HERDR evidence wait timeout for submitted dispatches")
-    dispatch.add_argument("--proof-seconds", type=float, help="HERDR submission proof timeout for submitted dispatches")
+    dispatch.add_argument("--wait-seconds", type=float, help="Non-negative HERDR evidence wait timeout for submitted dispatches")
+    dispatch.add_argument("--proof-seconds", type=float, help="Non-negative HERDR submission proof timeout for submitted dispatches")
     dispatch.add_argument("--submit", action="store_true", help="Actually submit through the selected reference adapter when supported")
 
     preflight = sub.add_parser("preflight", help="Check selected runtime adapter readiness")

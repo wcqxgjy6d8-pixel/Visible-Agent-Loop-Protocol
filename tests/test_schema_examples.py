@@ -28,6 +28,7 @@ EXAMPLE_SCHEMA_BY_NAME = {
     "historical-audit-boundary.json": "historical-audit-boundary.schema.json",
     "routing.json": "routing.schema.json",
     "skill-recommendations.json": "skill-recommendations.schema.json",
+    "iteration-budget.json": "iteration-budget.schema.json",
     "state.json": "state.schema.json",
     "submission-dependencies.json": "submission-dependencies.schema.json",
     "trigger-policy.json": "trigger-policy.schema.json",
@@ -50,6 +51,17 @@ class SchemaExampleTests(unittest.TestCase):
             data = json.loads(path.read_text(encoding="utf-8"))
             for error in validators[schema_name].iter_errors(data):
                 errors.append(f"{path.relative_to(ROOT)} {error.json_path}: {error.message}")
+        self.assertEqual(errors, [])
+
+    def test_bundled_skill_slices_match_schema(self) -> None:
+        validator = schema_validator(ROOT / "schemas" / "skill-recommendation-slice.schema.json")
+        errors: list[str] = []
+        for path in sorted((ROOT / "examples").glob("*/skill-slices/*.json")):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            errors.extend(
+                f"{path.relative_to(ROOT)} {error.json_path}: {error.message}"
+                for error in validator.iter_errors(data)
+            )
         self.assertEqual(errors, [])
 
     def test_bundled_receipt_jsonl_examples_match_schema(self) -> None:

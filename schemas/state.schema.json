@@ -60,6 +60,15 @@
       "type": "object",
       "additionalProperties": {"$ref": "#/$defs/dispatchPayloadBudget"}
     },
+    "iteration_budget": {
+      "type": "object",
+      "required": ["status", "ref"],
+      "properties": {
+        "status": {"const": "recorded"},
+        "ref": {"const": "iteration-budget.json"}
+      },
+      "additionalProperties": false
+    },
     "suspension": {"type": "object"},
     "skill_recommendations": {"type": "object"},
     "visible_attention": {"type": "object"},
@@ -167,7 +176,8 @@
         "token_estimator": {"const": "ceil(chars/4)"},
         "actual_chars": {"type": "integer", "minimum": 1},
         "actual_reference_tokens": {"type": "integer", "minimum": 1},
-        "dispatch_ref": {"type": "string"}
+        "dispatch_ref": {"type": "string"},
+        "skill_slice_ref": {"type": ["string", "null"]}
       },
       "additionalProperties": false
     }

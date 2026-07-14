@@ -7,6 +7,25 @@ change the route.
 The goal is not to create a hidden optimizer. The goal is to make routing
 adaptive, auditable, and easy to correct.
 
+## Token-Efficient Routing
+
+The reference CLI runs the current MCP/tool scan and task-skill-router evidence
+before scoring candidates. It then selects the minimum capable team that covers
+the required roles and writes `iteration-budget.json` with limits for aggregate
+dispatch reference tokens, dispatch count, reroutes, and fix-review rounds.
+Observed usage comes from accepted dispatch receipts and recorded dispatch
+measurements. Legacy and v2 representations of the same accepted delivery count
+once, using the v2 work-item identity as the authoritative logical dispatch. A
+new submission is stopped before it would exceed a limit or a safety gate such
+as approval, runtime preflight, missing evidence, critical review, or context
+compression.
+
+The complete `skill-recommendations.json` report is coordinator-only context.
+Each selected provider gets `skill-slices/<agent>.json`, a compact artifact with
+only installed, provider-reachable matches and short task labels. This prevents
+another provider's skill records from entering a worker dispatch, while keeping
+the full recommendation evidence available to the coordinator and audit.
+
 ## Routing Flow
 
 ```text

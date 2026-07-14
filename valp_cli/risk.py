@@ -141,6 +141,14 @@ def _is_actionable_match(text: str, start: int, end: int, kind: str) -> bool:
             return False
         if not _follows_completed_print_only_predicate(text, start):
             return False
+    if (
+        re.search(r"^\s*(?:verify|check|test|audit|review|inspect)\b", action_context)
+        and re.search(
+            r"\b(?:wording|classification|classifier|risk|approval|term|phrase|parser|detection|behavior)\b",
+            action_context,
+        )
+    ):
+        return False
     if re.search(r"^\s*(?:document|describe|explain)\b", action_context):
         return False
     if (
@@ -235,6 +243,14 @@ def _is_effectively_negated(prefix: str) -> bool:
         return False
     if re.search(r"\b(?:do not|don't|dont) hesitate to$", normalized):
         return False
+    if re.search(
+        r"\b(?:do not|don't|dont|never|refuse to|must not|should not|will not)\s+"
+        r"(?:publish|create|prepare|make|perform|run|execute|deploy|submit|upload|"
+        r"change|modify|update|rotate|revoke|delete|remove)\s+"
+        r"(?:a|an|the|this|that|any|our|your)?$",
+        normalized,
+    ):
+        return True
     direct = re.search(
         r"\b(?:do not|don't|dont|never|without|no|not|avoid|skip|refuse to|must not|should not|will not)"
         r"(?:\s+(?:please|ever|directly|immediately))?$",
@@ -261,7 +277,20 @@ def _is_coordinately_negated(prefix: str, suffix: str) -> bool:
     if re.search(r"\b(?:and|or)$", normalized):
         return True
     if not re.search(r",\s*$", prefix):
-        return False
+        shared_phrase = prefix.rsplit(",", 1)[-1].strip().lower()
+        independent_clause = re.search(
+            r"\b(?:i|we|you|they|he|she|it|this|that|there)\s+"
+            r"(?:will|shall|must|should|can|could|may|might|would|am|is|are|was|were|have|has|had)\b",
+            shared_phrase,
+        )
+        if not (
+            "," in prefix
+            and shared_phrase
+            and len(shared_phrase.split()) <= 5
+            and not independent_clause
+        ):
+            return False
+        return True
     normalized_suffix = re.sub(r"\s+", " ", suffix.lower()).strip()
     return bool(
         re.match(r"^(?:and|or)\b", normalized_suffix)

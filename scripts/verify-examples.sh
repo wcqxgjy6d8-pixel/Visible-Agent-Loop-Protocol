@@ -81,6 +81,7 @@ schema_by_name = {
     "historical-audit-boundary.json": "historical-audit-boundary.schema.json",
     "routing.json": "routing.schema.json",
     "skill-recommendations.json": "skill-recommendations.schema.json",
+    "iteration-budget.json": "iteration-budget.schema.json",
     "state.json": "state.schema.json",
     "submission-dependencies.json": "submission-dependencies.schema.json",
     "trigger-policy.json": "trigger-policy.schema.json",
@@ -98,6 +99,12 @@ for path in sorted((root / "examples").rglob("*.json")):
         continue
     data = json.loads(path.read_text(encoding="utf-8"))
     for error in validators[schema_name].iter_errors(data):
+        errors.append(f"{path} {error.json_path}: {error.message}")
+
+slice_validator = validator_for("skill-recommendation-slice.schema.json")
+for path in sorted((root / "examples").glob("*/skill-slices/*.json")):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for error in slice_validator.iter_errors(data):
         errors.append(f"{path} {error.json_path}: {error.message}")
 
 receipt_validator = validator_for("receipts.schema.json")

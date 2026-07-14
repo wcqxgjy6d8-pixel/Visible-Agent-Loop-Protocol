@@ -103,6 +103,18 @@ wait`. Runtime failure, cancellation, and user input each require a closed
 `valp-exception-wake.v1` source artifact bound to the current task, suspension
 id, and epoch. External events use:
 
+The reference dispatch helper writes a phase-specific root wait policy before
+submission. During suspension, the reference wait bridge may observe expected
+evidence that was absent at entry and emit an identity-bound completion receipt
+citing the original submission proof. It never promotes pre-existing evidence.
+When dispatch uses a zero evidence-wait window, the adapter returns after
+submission proof without marking missing immediate evidence as blocked; the
+wait bridge owns that later completion transition.
+
+The coordinator model is not a watcher. A runtime keeps one blocking
+`valp wait` process or event subscription alive; periodic Lead-Agent status
+turns are non-conforming because they consume model tokens.
+
 ```bash
 valp resume TASK-ID --workspace /path/to/workspace \
   --event user_input --ref evidence/wake-requests/user-input.json

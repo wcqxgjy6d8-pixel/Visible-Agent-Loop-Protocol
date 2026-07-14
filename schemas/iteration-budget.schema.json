@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Iteration Budget",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "task_id",
+    "strategy",
+    "max_dispatch_reference_tokens",
+    "max_dispatches",
+    "max_reroutes",
+    "max_fix_review_rounds",
+    "usage",
+    "status",
+    "stop_conditions"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-iteration-budget.v1"},
+    "task_id": {"type": "string"},
+    "strategy": {"const": "minimum_capable_team"},
+    "max_dispatch_reference_tokens": {"type": "integer", "minimum": 1},
+    "max_dispatches": {"type": "integer", "minimum": 1},
+    "max_reroutes": {"type": "integer", "minimum": 0},
+    "max_fix_review_rounds": {"type": "integer", "minimum": 0},
+    "usage": {
+      "type": "object",
+      "required": [
+        "dispatch_reference_tokens",
+        "dispatches",
+        "reroutes",
+        "fix_review_rounds"
+      ],
+      "properties": {
+        "dispatch_reference_tokens": {"type": "integer", "minimum": 0},
+        "dispatches": {"type": "integer", "minimum": 0},
+        "reroutes": {"type": "integer", "minimum": 0},
+        "fix_review_rounds": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "status": {"enum": ["active", "exhausted", "blocked", "completed"]},
+    "stop_reason": {"type": ["string", "null"]},
+    "stop_conditions": {"type": "array", "items": {"type": "string"}},
+    "updated_at": {"type": "string"}
+  },
+  "additionalProperties": false
+}

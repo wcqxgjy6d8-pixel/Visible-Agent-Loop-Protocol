@@ -73,6 +73,14 @@
     "implementer": "codex",
     "reviewer": "claude"
   },
+  "iteration_budget": {
+    "status": "recorded",
+    "ref": "iteration-budget.json"
+  },
+  "skill_recommendation_slices": {
+    "codex": "skill-slices/codex.json",
+    "claude": "skill-slices/claude.json"
+  },
   "coordinator_selection": {
     "selected_agent": "codex",
     "selection_rule": "Selected from current capability evidence; the open protocol does not name a universal leader."

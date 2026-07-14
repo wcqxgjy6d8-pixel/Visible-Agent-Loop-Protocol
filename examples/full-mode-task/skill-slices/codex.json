@@ -1,0 +1,21 @@
+{
+  "schema_version": "valp-skill-recommendation-slice.v1",
+  "task_id": "TASK-EXAMPLE-001",
+  "agent": "codex",
+  "status": "complete",
+  "source_ref": "skill-recommendations.json",
+  "provider_reachable": true,
+  "recommendations": [
+    {
+      "skill": "verification-before-completion",
+      "task": "run build and tests",
+      "confidence": 0.9,
+      "provider": "codex",
+      "path": "/Users/example/.codex/skills/verification-before-completion/SKILL.md",
+      "decision": "auto-load"
+    }
+  ],
+  "missing_skills": [],
+  "omitted_match_count": 1,
+  "generated_at": "2026-07-14T00:00:00Z"
+}

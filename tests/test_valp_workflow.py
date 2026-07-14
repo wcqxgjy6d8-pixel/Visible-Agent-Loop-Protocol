@@ -29,6 +29,7 @@ from valp_cli.workflow import (
     classify_approval_risks,
     decompose_execution_tasks,
     dispatch_task,
+    enforce_iteration_budget,
     feedback_prior_for_agent,
     load_local_capabilities,
     load_routing_feedback_history,
@@ -48,6 +49,57 @@ from valp_cli.workflow import (
 
 
 class ValpWorkflowTests(unittest.TestCase):
+    def test_read_only_agent_is_never_scored_as_implementer(self) -> None:
+        self.assertEqual(
+            workflow_module.role_fit_score(
+                {
+                    "role": ["review", "code_review"],
+                    "strengths": ["read-only review"],
+                    "must_not_do": ["must not edit source"],
+                },
+                "implementer",
+            ),
+            0.0,
+        )
+        self.assertGreater(
+            workflow_module.role_fit_score(
+                {
+                    "role": ["implementation", "verification"],
+                    "strengths": ["edits files", "runs tests"],
+                },
+                "implementer",
+            ),
+            0.0,
+        )
+
+    def test_agent_selection_uses_the_smallest_role_covering_team(self) -> None:
+        agents = {
+            "coordinator-reviewer": {"active": True, "role": ["coordination", "review"]},
+            "implementer-reviewer": {"active": True, "role": ["implementation", "review"]},
+            "specialist-reviewer": {"active": True, "role": ["review"]},
+        }
+        scores = {
+            "coordinator-reviewer": {
+                "overall": 0.82,
+                "role_fit": {"coordinator": 0.9, "implementer": 0.25, "reviewer": 0.75},
+            },
+            "implementer-reviewer": {
+                "overall": 0.84,
+                "role_fit": {"coordinator": 0.25, "implementer": 0.9, "reviewer": 0.7},
+            },
+            "specialist-reviewer": {
+                "overall": 0.95,
+                "role_fit": {"coordinator": 0.25, "implementer": 0.25, "reviewer": 0.95},
+            },
+        }
+
+        selected = select_agents("agent-runtime", agents, scores)
+
+        self.assertEqual(
+            set(selected),
+            {"coordinator-reviewer", "implementer-reviewer"},
+        )
+
     def test_explicit_requested_agent_is_added_as_a_supplemental_role(self) -> None:
         agents = {
             "hermes": {"active": True, "role": ["coordination"], "strengths": ["state", "gates"], "mcp_servers": []},
@@ -128,6 +180,120 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertEqual(translated[0]["dispatch_generation"], 1)
             self.assertEqual(translated[0]["proof"]["pane_id"], "w5:p5")
             self.assertEqual(translated[1]["suspension_epoch"], 1)
+
+    def test_submission_only_receipt_uses_phase_to_restore_expected_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task_id = "TASK-HERDR-SUBMISSION-ONLY"
+            task_dir = Path(tmp) / ".herdr-loop" / "tasks" / task_id
+            task_dir.mkdir(parents=True)
+            dependencies = build_submission_dependencies(
+                task_id,
+                {"coordinator": "codex", "implementer": "codex", "reviewer": "codex"},
+            )
+            (task_dir / "submission-dependencies.json").write_text(
+                json.dumps(dependencies),
+                encoding="utf-8",
+            )
+            (task_dir / "state.json").write_text(
+                json.dumps({"schema_version": "valp-visible-loop-state.v2", "status": "dispatching"}),
+                encoding="utf-8",
+            )
+            (task_dir / "dispatch-receipts.jsonl").write_text(
+                json.dumps(
+                    {
+                        "ts": "2026-07-14T00:00:00Z",
+                        "agent": "codex",
+                        "event": "dispatch_submitted",
+                        "exit_code": 0,
+                        "dispatch_ref": "agents/codex/dispatch.md",
+                        "expected_refs": [],
+                        "proof": {"submit_proof": {"status": "working"}},
+                        "runtime": {"pane_id": "w5:pS"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            translated_count = translate_legacy_herdr_receipts(
+                task_dir,
+                task_id,
+                phase=("codex", "implementer"),
+            )
+
+            self.assertEqual(translated_count, 1)
+            translated = [
+                json.loads(line)
+                for line in (task_dir / "dispatch-receipts.jsonl").read_text(encoding="utf-8").splitlines()
+            ][-1]
+            self.assertEqual(translated["work_item_id"], "implementer:codex")
+            self.assertEqual(
+                translated["expected_refs"],
+                ["agents/codex/evidence.md", "evidence/verification.md"],
+            )
+
+    def test_colocated_submission_only_translation_consumes_each_legacy_receipt_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task_id = "TASK-HERDR-COLOCATED-TRANSLATION"
+            task_dir = Path(tmp) / ".herdr-loop" / "tasks" / task_id
+            task_dir.mkdir(parents=True)
+            dependencies = build_submission_dependencies(
+                task_id,
+                {"coordinator": "codex", "implementer": "codex", "reviewer": "codex"},
+            )
+            (task_dir / "submission-dependencies.json").write_text(
+                json.dumps(dependencies),
+                encoding="utf-8",
+            )
+            (task_dir / "state.json").write_text(
+                json.dumps({"schema_version": "valp-visible-loop-state.v2", "status": "dispatching"}),
+                encoding="utf-8",
+            )
+            receipt_path = task_dir / "dispatch-receipts.jsonl"
+            legacy_receipt = {
+                "ts": "2026-07-14T00:00:00Z",
+                "agent": "codex",
+                "event": "dispatch_submitted",
+                "exit_code": 0,
+                "dispatch_ref": "agents/codex/dispatch.md",
+                "expected_refs": [],
+                "proof": {"submit_proof": {"status": "working"}},
+                "runtime": {"pane_id": "w5:pS"},
+            }
+            receipt_path.write_text(json.dumps(legacy_receipt) + "\n", encoding="utf-8")
+
+            self.assertEqual(
+                translate_legacy_herdr_receipts(
+                    task_dir,
+                    task_id,
+                    phase=("codex", "coordinator"),
+                ),
+                1,
+            )
+            second_legacy_receipt = {
+                **legacy_receipt,
+                "proof": {"submit_proof": {"status": "working", "attempts": 2}},
+            }
+            with receipt_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(second_legacy_receipt) + "\n")
+
+            self.assertEqual(
+                translate_legacy_herdr_receipts(
+                    task_dir,
+                    task_id,
+                    phase=("codex", "implementer"),
+                ),
+                1,
+            )
+            translated = [
+                json.loads(line)
+                for line in receipt_path.read_text(encoding="utf-8").splitlines()
+                if json.loads(line).get("schema_version") == "valp-dispatch-receipt.v2"
+            ]
+            self.assertEqual(
+                [record["work_item_id"] for record in translated],
+                ["coordinator:codex", "implementer:codex"],
+            )
 
     def test_task_local_evidence_refs_are_platform_neutral(self) -> None:
         valid_refs = [
@@ -730,6 +896,31 @@ class ValpWorkflowTests(unittest.TestCase):
             {"deploy"},
         )
 
+    def test_risk_classifier_negates_shared_verb_phrase_list(self) -> None:
+        self.assertEqual(
+            classify_approval_risks(
+                "Do not commit, push, update or open a PR, publish a release, "
+                "deploy, merge, or delete files."
+            ),
+            [],
+        )
+
+    def test_risk_classifier_negates_risk_noun_inside_prohibited_action(self) -> None:
+        self.assertEqual(
+            classify_approval_risks(
+                "Do not publish a release, deploy, or delete files."
+            ),
+            [],
+        )
+
+    def test_risk_classifier_ignores_metalinguistic_release_verification(self) -> None:
+        self.assertEqual(
+            classify_approval_risks(
+                "Verify that negated release wording does not request approval."
+            ),
+            [],
+        )
+
     def test_plain_goal_decomposition_keeps_paragraph_together(self) -> None:
         tasks = decompose_execution_tasks("Fix the protocol docs and verify the examples.", "software-code")
         self.assertEqual(tasks[0], "Fix the protocol docs and verify the examples.")
@@ -976,6 +1167,77 @@ class ValpWorkflowTests(unittest.TestCase):
                 ["implementer:codex", "reviewer:claude"],
             )
             self.assertEqual(state["suspension"]["pending_work_item_ids"], [])
+
+    def test_wait_observes_new_expected_evidence_without_model_polling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_id = "TASK-ZERO-TOKEN-WAIT"
+            task_dir, items = self.write_deterministic_wait_fixture(root, task_id)
+            for item in items:
+                for ref in item["expected_refs"]:
+                    (task_dir / str(ref)).unlink()
+
+            sleep_count = 0
+
+            def worker_finishes(_seconds: float) -> None:
+                nonlocal sleep_count
+                sleep_count += 1
+                if sleep_count > 1:
+                    raise AssertionError("wait did not observe completed expected evidence")
+                for item in items:
+                    for ref in item["expected_refs"]:
+                        evidence_path = task_dir / str(ref)
+                        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+                        evidence_path.write_text("verified after suspension\n", encoding="utf-8")
+
+            with patch("valp_cli.workflow.time.sleep", side_effect=worker_finishes):
+                result = wait_for_task(
+                    root,
+                    task_id,
+                    timeout_seconds=60,
+                    poll_interval_seconds=0,
+                )
+
+            receipts = [
+                json.loads(line)
+                for line in (task_dir / "dispatch-receipts.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            observed = [
+                receipt
+                for receipt in receipts
+                if receipt.get("event") == "dispatch_completed"
+                and (receipt.get("proof") or {}).get("observer") == "valp.wait.expected-evidence"
+            ]
+            self.assertEqual(sleep_count, 1)
+            self.assertEqual(result["accepted_wake"]["wake_reason"], "dependency_ready")
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(observed[0]["work_item_id"], "implementer:codex")
+
+    def test_wait_does_not_convert_preexisting_evidence_into_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_id = "TASK-STALE-EVIDENCE-WAIT"
+            task_dir, _items = self.write_deterministic_wait_fixture(root, task_id)
+
+            result = wait_for_task(
+                root,
+                task_id,
+                timeout_seconds=0,
+                poll_interval_seconds=0,
+            )
+
+            receipts = [
+                json.loads(line)
+                for line in (task_dir / "dispatch-receipts.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(result["accepted_wake"]["wake_reason"], "timeout")
+            self.assertFalse(
+                any(
+                    receipt.get("event") == "dispatch_completed"
+                    and (receipt.get("proof") or {}).get("observer") == "valp.wait.expected-evidence"
+                    for receipt in receipts
+                )
+            )
 
     def test_wait_ignores_unrelated_terminal_receipt_from_a_required_agent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2739,7 +3001,8 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertLessEqual(len(reviewer_dispatch), 2400)
             self.assertIn("## Permission Boundary", reviewer_dispatch)
             self.assertIn("## Expected Evidence", reviewer_dispatch)
-            self.assertIn("skill-recommendations.json", reviewer_dispatch)
+            self.assertIn("skill-slices/reviewer-provider.json", reviewer_dispatch)
+            self.assertNotIn("- `.herdr-loop/tasks/TASK-REVIEWER-BUDGET/skill-recommendations.json`", reviewer_dispatch)
 
     def test_dispatch_submit_enforces_role_evidence_dependencies(self) -> None:
         capabilities = {
@@ -2844,8 +3107,15 @@ class ValpWorkflowTests(unittest.TestCase):
             delegation_policy["violations"] = []
             delegation_path.write_text(json.dumps(delegation_policy), encoding="utf-8")
 
-            with self.assertRaisesRegex(SystemExit, "unmet prerequisites"):
-                dispatch_task(root, "TASK-STAGED-DISPATCH", submit=True, runtime="queue")
+            commands = dispatch_task(
+                root,
+                "TASK-STAGED-DISPATCH",
+                submit=True,
+                runtime="queue",
+            )
+            self.assertEqual(len(commands), 1)
+            self.assertIn("phase=coordinator", commands[0])
+            self.assertTrue((task_dir / "queue" / "hermes-coordinator.json").is_file())
             receipts_before = receipts.read_bytes()
             preflight_before = preflight_path.read_bytes() if preflight_path.exists() else None
             with patch("valp_cli.workflow.collect_runtime_preflight") as collect_preflight:
@@ -2884,7 +3154,7 @@ class ValpWorkflowTests(unittest.TestCase):
                 "TASK-STAGED-DISPATCH",
                 coordinator_item,
                 "dispatch_completed",
-                1,
+                2,
                 suspension_epoch=1,
             )
             rogue_completion.update({
@@ -2913,7 +3183,7 @@ class ValpWorkflowTests(unittest.TestCase):
                             "TASK-STAGED-DISPATCH",
                             coordinator_item,
                             "dispatch_completed",
-                            2,
+                            3,
                             suspension_epoch=1,
                         )
                     )
@@ -2954,7 +3224,7 @@ class ValpWorkflowTests(unittest.TestCase):
                                 if item["role"] == "implementer"
                             ),
                             "dispatch_completed",
-                            4,
+                            5,
                             suspension_epoch=1,
                         )
                     )
@@ -3409,6 +3679,284 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertEqual(preflight["adapter_class"], "daemon_queue")
             self.assertNotIn("terminal_size_status", json.dumps(preflight))
 
+    def test_submitted_phase_writes_wait_policy_for_exact_work_items(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-15T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "code_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["edits files", "runs tests", "writes verification evidence"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    task_dir = publish_task(
+                        root,
+                        "TASK-PHASE-WAIT-POLICY",
+                        "Fix a bug and run tests",
+                        runtime="queue",
+                    )
+
+            dispatch_task(
+                root,
+                "TASK-PHASE-WAIT-POLICY",
+                role="coordinator",
+                submit=True,
+            )
+
+            policy = read_json(task_dir / "wait-policy.json")
+            self.assertEqual(policy["schema_version"], "valp-wait-policy.v1")
+            self.assertEqual(policy["task_id"], "TASK-PHASE-WAIT-POLICY")
+            self.assertEqual(
+                [item["work_item_id"] for item in policy["required_work_items"]],
+                ["coordinator:codex"],
+            )
+            self.assertEqual(policy["dependency_ref"], "submission-dependencies.json")
+
+    def test_zero_evidence_wait_generates_submission_only_herdr_command(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-15T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "code_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["coordinates", "edits files", "runs tests", "reviews"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
+        preflight = {
+            "runtime": "HERDR",
+            "adapter_class": "pane_controller",
+            "status": "pass",
+            "checks": {},
+            "agents": {"codex": {"status": "pass"}},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
+                        task_dir = publish_task(
+                            root,
+                            "TASK-HERDR-SUBMISSION-ONLY",
+                            "Fix a bug and run tests",
+                            runtime="herdr",
+                        )
+                        with patch(
+                            "valp_cli.workflow.subprocess.run",
+                            return_value=subprocess.CompletedProcess([], 0),
+                        ):
+                            commands = dispatch_task(
+                                root,
+                                "TASK-HERDR-SUBMISSION-ONLY",
+                                role="coordinator",
+                                wait_seconds=0,
+                                submit=True,
+                            )
+
+            self.assertEqual(len(commands), 1)
+            self.assertIn("--wait-seconds 0", commands[0])
+            self.assertNotIn("--expect", commands[0])
+            policy = read_json(task_dir / "wait-policy.json")
+            self.assertEqual(
+                policy["required_work_items"][0]["expected_refs"],
+                ["agents/codex/self-review.md"],
+            )
+
+    def test_dispatch_rejects_negative_evidence_wait(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-15T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "code_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["coordinates", "edits files", "runs tests", "reviews"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
+        preflight = {
+            "runtime": "HERDR",
+            "adapter_class": "pane_controller",
+            "status": "pass",
+            "checks": {},
+            "agents": {"codex": {"status": "pass"}},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
+                        publish_task(
+                            root,
+                            "TASK-HERDR-NEGATIVE-WAIT",
+                            "Fix a bug and run tests",
+                            runtime="herdr",
+                        )
+                        with patch(
+                            "valp_cli.workflow.subprocess.run",
+                            return_value=subprocess.CompletedProcess([], 0),
+                        ):
+                            with self.assertRaisesRegex(SystemExit, "finite non-negative"):
+                                dispatch_task(
+                                    root,
+                                    "TASK-HERDR-NEGATIVE-WAIT",
+                                    role="coordinator",
+                                    wait_seconds=-1,
+                                    submit=True,
+                                )
+
+    def test_default_frontier_retries_submission_without_concrete_runtime_proof(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-15T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "code_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["coordinates", "edits files", "runs tests", "reviews"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_id = "TASK-UNPROVEN-FRONTIER"
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    task_dir = publish_task(
+                        root,
+                        task_id,
+                        "Fix a bug and review it",
+                        runtime="queue",
+                    )
+            dependencies = read_json(task_dir / "submission-dependencies.json")
+            coordinator = next(
+                item for item in dependencies["work_items"] if item["role"] == "coordinator"
+            )
+            unproven = self.deterministic_receipt(
+                task_id,
+                coordinator,
+                "dispatch_submitted",
+                1,
+            )
+            unproven["proof"] = {"note": "accepted"}
+            with (task_dir / "dispatch-receipts.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(unproven) + "\n")
+
+            commands = dispatch_task(root, task_id, submit=True, runtime="queue")
+
+            self.assertEqual(len(commands), 1)
+            self.assertIn("phase=coordinator", commands[0])
+            self.assertTrue((task_dir / "queue" / "codex-coordinator.json").is_file())
+
+    def test_default_frontier_dispatches_all_ready_work_once(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-15T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "hermes": {
+                    "active": True,
+                    "role": ["coordination"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["state", "gates", "coordination"],
+                },
+                "codex": {
+                    "active": True,
+                    "role": ["implementation", "verification"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["edits files", "runs tests"],
+                },
+                "claude": {
+                    "active": True,
+                    "role": ["reviewer"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["read-only review", "risk review"],
+                },
+                "agy": {
+                    "active": True,
+                    "role": ["prototype"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["isolated prototype"],
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_id = "TASK-MULTI-READY-FRONTIER"
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    task_dir = publish_task(
+                        root,
+                        task_id,
+                        "Fix agent runtime code, prototype an alternative, and review both.",
+                        runtime="queue",
+                        include_agents=["agy"],
+                    )
+
+            first = dispatch_task(root, task_id, submit=True, runtime="queue")
+            self.assertEqual(len(first), 1)
+            self.assertIn("phase=coordinator", first[0])
+            with self.assertRaisesRegex(SystemExit, "no ready phase"):
+                dispatch_task(root, task_id, submit=True, runtime="queue")
+
+            dependencies = read_json(task_dir / "submission-dependencies.json")
+            coordinator = next(
+                item for item in dependencies["work_items"] if item["role"] == "coordinator"
+            )
+            coordinator_evidence = task_dir / str(coordinator["expected_refs"][0])
+            coordinator_evidence.parent.mkdir(parents=True, exist_ok=True)
+            coordinator_evidence.write_text("ready\n", encoding="utf-8")
+            with (task_dir / "dispatch-receipts.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        self.deterministic_receipt(
+                            task_id,
+                            coordinator,
+                            "dispatch_completed",
+                            2,
+                            suspension_epoch=1,
+                        )
+                    )
+                    + "\n"
+                )
+
+            second = dispatch_task(root, task_id, submit=True, runtime="queue")
+
+            self.assertEqual(len(second), 2)
+            self.assertEqual(
+                {command.split("phase=", 1)[1].split(";", 1)[0] for command in second},
+                {"implementer", "prototype"},
+            )
+            with self.assertRaisesRegex(SystemExit, "no ready phase"):
+                dispatch_task(root, task_id, submit=True, runtime="queue")
+
     def test_concurrent_queue_submissions_allocate_one_contiguous_receipt_sequence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             task_dir = Path(tmp) / "task"
@@ -3676,6 +4224,30 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertEqual(routing["profile"], "research")
             self.assertTrue((task_dir / "routing.json").exists())
 
+    def test_reroute_reclassifies_and_clears_stale_approval_risk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_dir = publish_task(
+                root,
+                "TASK-RISK-REROUTE",
+                "Do not publish a release, deploy, or delete files.",
+                route=False,
+            )
+            state = read_json(task_dir / "state.json")
+            stale_risk = [{"kind": "release", "matched": "release"}]
+            state["risk"] = {"approval_required": True, "matches": stale_risk}
+            state["approval_required"] = stale_risk
+            state["gates"]["approval"] = "needs_approval"
+            (task_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+            with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                route_task(root, "TASK-RISK-REROUTE", runtime="manual")
+
+            rerouted = read_json(task_dir / "state.json")
+            self.assertEqual(rerouted["risk"], {"approval_required": False, "matches": []})
+            self.assertEqual(rerouted["approval_required"], [])
+            self.assertEqual(rerouted["gates"]["approval"], "not_required")
+
     def test_skill_recommendations_are_written_into_dispatch(self) -> None:
         capabilities = {
             "schema_version": "valp-agent-capabilities.v1",
@@ -3812,12 +4384,227 @@ class ValpWorkflowTests(unittest.TestCase):
                 dispatch = (task_dir / "agents" / agent / "dispatch.md").read_text(encoding="utf-8")
                 self.assertIn("## Recommended Skills", dispatch)
             codex_dispatch = (task_dir / "agents" / "codex" / "dispatch.md").read_text(encoding="utf-8")
-            self.assertIn("filtered for `codex`", codex_dispatch)
             self.assertIn("tdd", codex_dispatch)
-            self.assertNotIn("verification-before-completion", codex_dispatch)
-            self.assertIn("Full recommendation records remain in `skill-recommendations.json`", codex_dispatch)
-            self.assertIn("Work item 1", codex_dispatch)
+            self.assertIn("skill-slices/codex.json", codex_dispatch)
             self.assertNotIn("UNIQUE_SKILL_RECOMMENDATION_TAIL", codex_dispatch)
+            self.assertTrue((task_dir / "skill-slices" / "codex.json").exists())
+            if routing["role_assignments"].get("coordinator") == "codex":
+                self.assertIn("Full recommendation records remain in `skill-recommendations.json`", codex_dispatch)
+            else:
+                self.assertNotIn("- `.herdr-loop/tasks/TASK-SKILL/skill-recommendations.json`", codex_dispatch)
+
+    def test_adaptive_budget_and_provider_reachable_slices_are_recorded(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-15T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "hermes": {
+                    "active": True,
+                    "role": ["coordination"],
+                    "skills": [],
+                    "mcp_servers": ["hermes-mcp"],
+                    "strengths": ["state", "gates", "coordination"],
+                },
+                "codex": {
+                    "active": True,
+                    "role": ["implementation"],
+                    "skills": ["tdd"],
+                    "mcp_servers": ["repo-mcp"],
+                    "strengths": ["edits files", "runs tests", "verification"],
+                },
+                "claude": {
+                    "active": True,
+                    "role": ["reviewer"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["read-only review", "risk review"],
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    task_dir = publish_task(root, "TASK-ADAPTIVE-BUDGET", "Fix a bug and run tests", runtime="manual")
+
+            routing = read_json(task_dir / "routing.json")
+            budget = read_json(task_dir / "iteration-budget.json")
+            state_validator = schema_validator(
+                Path(__file__).resolve().parents[1] / "schemas" / "state.schema.json"
+            )
+            self.assertEqual(
+                list(state_validator.iter_errors(read_json(task_dir / "state.json"))),
+                [],
+            )
+            self.assertEqual(budget["schema_version"], "valp-iteration-budget.v1")
+            self.assertEqual(budget["strategy"], "minimum_capable_team")
+            self.assertEqual(budget["usage"]["dispatches"], 0)
+            self.assertEqual(routing["iteration_budget"], {"status": "recorded", "ref": "iteration-budget.json"})
+            self.assertEqual(set(routing["skill_recommendation_slices"]), set(routing["selected_agents"]))
+            for agent in routing["selected_agents"]:
+                self.assertTrue((task_dir / routing["skill_recommendation_slices"][agent]).exists())
+
+            codex_dispatch = (task_dir / "agents" / "codex" / "dispatch.md").read_text(encoding="utf-8")
+            self.assertIn("skill-slices/codex.json", codex_dispatch)
+            self.assertNotIn("- `.herdr-loop/tasks/TASK-ADAPTIVE-BUDGET/skill-recommendations.json`", codex_dispatch)
+            self.assertIn("iteration-budget.json", codex_dispatch)
+
+            route_task(root, "TASK-ADAPTIVE-BUDGET", runtime="manual")
+            history = (task_dir / "routing-history.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(history), 1)
+            self.assertEqual(read_json(task_dir / "iteration-budget.json")["usage"]["reroutes"], 1)
+
+            budget["max_dispatches"] = 1
+            (task_dir / "iteration-budget.json").write_text(json.dumps(budget), encoding="utf-8")
+            state = read_json(task_dir / "state.json")
+            with self.assertRaises(SystemExit):
+                enforce_iteration_budget(
+                    task_dir,
+                    routing,
+                    state,
+                    [("codex", "implementer"), ("claude", "reviewer")],
+                )
+            stopped = read_json(task_dir / "iteration-budget.json")
+            self.assertEqual(stopped["status"], "blocked")
+            self.assertIn("dispatch-count", stopped["stop_reason"])
+
+    def test_iteration_budget_counts_legacy_and_v2_submission_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            expected_refs = ["agents/codex/evidence.md", "evidence/verification.md"]
+            records = [
+                {
+                    "ts": "2026-07-14T00:00:00Z",
+                    "agent": "codex",
+                    "event": "dispatch_submitted",
+                    "dispatch_ref": "agents/codex/dispatch.md",
+                    "expected_refs": [],
+                },
+                {
+                    "schema_version": "valp-dispatch-receipt.v2",
+                    "receipt_id": "receipt-codex-1",
+                    "task_id": "TASK-BUDGET-DEDUP",
+                    "event_sequence": 1,
+                    "ts": "2026-07-14T00:00:00Z",
+                    "agent": "codex",
+                    "role": "implementer",
+                    "work_item_id": "implementer:codex",
+                    "dispatch_id": "TASK-BUDGET-DEDUP:implementer:1",
+                    "dispatch_generation": 1,
+                    "event": "dispatch_submitted",
+                    "dispatch_ref": "agents/codex/dispatch.md",
+                    "expected_refs": expected_refs,
+                },
+            ]
+            (directory / "dispatch-receipts.jsonl").write_text(
+                "".join(json.dumps(record) + "\n" for record in records),
+                encoding="utf-8",
+            )
+            routing = {
+                "dispatch_payload_budgets": {
+                    "codex": {"actual_reference_tokens": 605}
+                }
+            }
+            budget = {
+                "schema_version": "valp-iteration-budget.v1",
+                "task_id": "TASK-BUDGET-DEDUP",
+                "max_dispatch_reference_tokens": 2000,
+                "max_dispatches": 3,
+                "max_reroutes": 1,
+                "max_fix_review_rounds": 2,
+                "usage": {
+                    "dispatch_reference_tokens": 0,
+                    "dispatches": 0,
+                    "reroutes": 0,
+                    "fix_review_rounds": 0,
+                },
+                "status": "exhausted",
+                "stop_reason": "dispatches budget exhausted",
+            }
+
+            refreshed = workflow_module.refresh_iteration_budget(
+                directory,
+                routing,
+                budget,
+            )
+
+            self.assertEqual(refreshed["usage"]["dispatches"], 1)
+            self.assertEqual(refreshed["usage"]["dispatch_reference_tokens"], 605)
+            self.assertEqual(refreshed["status"], "active")
+
+    def test_iteration_budget_preserves_untranslated_same_second_submission(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            task_id = "TASK-BUDGET-SAME-SECOND"
+            dependencies = build_submission_dependencies(
+                task_id,
+                {"coordinator": "codex", "implementer": "codex"},
+            )
+            (directory / "submission-dependencies.json").write_text(
+                json.dumps(dependencies),
+                encoding="utf-8",
+            )
+            (directory / "state.json").write_text(
+                json.dumps({"schema_version": "valp-visible-loop-state.v2", "status": "dispatching"}),
+                encoding="utf-8",
+            )
+            receipt_path = directory / "dispatch-receipts.jsonl"
+            first = {
+                "ts": "2026-07-14T00:00:00Z",
+                "agent": "codex",
+                "event": "dispatch_submitted",
+                "dispatch_ref": "agents/codex/dispatch.md",
+                "expected_refs": [],
+                "proof": {"submit_proof": {"status": "working", "attempts": 1}},
+                "runtime": {"pane_id": "w5:pS"},
+            }
+            receipt_path.write_text(json.dumps(first) + "\n", encoding="utf-8")
+            self.assertEqual(
+                translate_legacy_herdr_receipts(
+                    directory,
+                    task_id,
+                    phase=("codex", "coordinator"),
+                ),
+                1,
+            )
+            second = {
+                **first,
+                "proof": {"submit_proof": {"status": "working", "attempts": 2}},
+            }
+            with receipt_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(second) + "\n")
+
+            routing = {
+                "dispatch_payload_budgets": {
+                    "codex": {"actual_reference_tokens": 605}
+                }
+            }
+            budget = {
+                "schema_version": "valp-iteration-budget.v1",
+                "task_id": task_id,
+                "max_dispatch_reference_tokens": 2000,
+                "max_dispatches": 3,
+                "max_reroutes": 1,
+                "max_fix_review_rounds": 2,
+                "usage": {
+                    "dispatch_reference_tokens": 0,
+                    "dispatches": 0,
+                    "reroutes": 0,
+                    "fix_review_rounds": 0,
+                },
+                "status": "active",
+                "stop_reason": None,
+            }
+
+            refreshed = workflow_module.refresh_iteration_budget(
+                directory,
+                routing,
+                budget,
+            )
+
+            self.assertEqual(refreshed["usage"]["dispatches"], 2)
+            self.assertEqual(refreshed["usage"]["dispatch_reference_tokens"], 1210)
 
 
 if __name__ == "__main__":

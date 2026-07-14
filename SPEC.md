@@ -135,6 +135,19 @@ records maximum characters, a deterministic reference-token estimate, and the
 task-local references used for progressive disclosure. It is not permission to
 omit role boundaries, expected evidence, or gate requirements.
 
+`task iteration budget`
+: A task-local machine-readable ceiling for aggregate dispatch reference
+  tokens, dispatch submissions, reroutes, and fix-review rounds. The runtime
+  records observed usage and stops before a new dispatch would exceed a limit
+  or a safety gate. It is a control-plane budget, not a provider tokenizer
+  claim.
+
+`provider-reachable skill slice`
+: A compact per-agent recommendation artifact containing only installed skills
+  reachable by that provider and short task labels. The complete skill router
+  report remains coordinator-only; a worker must not receive another
+  provider's private or unreachable skill paths.
+
 `submission dependency`
 : A machine-readable role-to-role gate that requires recorded prerequisite
   evidence and a qualifying completion receipt before a dependent dispatch may
@@ -395,6 +408,7 @@ strict_identity
 event_sequence_at_entry
 receipt_event_sequence_at_entry
 receipt_cursor_at_entry
+evidence_refs_present_at_entry
 required_work_items
 required_work_item_ids
 pending_work_item_ids
@@ -433,6 +447,20 @@ commits the suspension. `wait_policy_ref` MUST name that snapshot. A later
 epoch MAY use an updated root `wait-policy.json`, but replay and audit of prior
 epochs MUST load their recorded snapshots rather than reinterpret history
 against the mutable root policy.
+
+A reference dispatch helper MAY generate the root `wait-policy.json` for the
+exact work items it is about to submit, provided every item is copied from the
+validated `submission-dependencies.json` and the policy is written before
+delivery. This is policy authoring, not delivery or completion proof.
+
+After concrete identity-bound delivery proof exists, a runtime adapter bridge
+MAY observe task-local expected evidence while the coordinator is suspended.
+It may emit `dispatch_completed` only when every expected ref for that work
+item is safe, present, non-empty, and valid, and only when none of those refs
+was already present at suspension entry. The completion receipt MUST bind the
+current suspension epoch and work-item identity and MUST cite the originating
+`dispatch_submitted` receipt. Pre-existing evidence MUST NOT be converted into
+a new completion receipt.
 
 `resume_event` records the accepted input. `dependency_ready` is a derived
 `wake_reason` for a qualifying receipt after the final required work item
@@ -525,6 +553,16 @@ A conflicting duplicate, stale epoch, stale dispatch generation, or cross-task,
 cross-role, or cross-work-item event MUST fail closed. `valp wait` MUST return
 only after the matching `accepted_wake` is committed; it MUST NOT treat an
 unrelated rewrite of `state.status` as successful resume.
+
+Coordinator-model-free waiting requires one blocking runtime wait or event
+subscription. While `state.status` is `suspended`, the runtime MUST NOT invoke
+the coordinator model for status polling, progress messages, or periodic checks.
+Local file, socket, queue, or receipt polling is allowed because it does not
+invoke a model. User-facing status should report that a local wait was used,
+that coordinator-model polling was not observed, and the accepted wake reason
+and receipt evidence. It MUST NOT estimate provider billing or require the user
+to derive a cost. The coordinator model is invoked again only after an accepted
+wake event or an explicit user turn.
 
 The reference core's exactly-once scope ends at the accepted wake transition.
 An asynchronous adapter MAY claim exactly-once coordinator continuation only
@@ -1212,12 +1250,24 @@ receipt. For Manual Mode, the equivalent ordering is
 order is authoritative. Timestamps are descriptive and must not be used to
 repair reversed ledger order.
 
-Reference dispatch tools must validate all requested dependency gates before
-preflight, queue writes, subprocess submission, or any other delivery side
-effect. A request that includes one uncleared target fails as a whole, so a
-bulk submission cannot partially dispatch earlier targets and then stop. Manual
-Mode can print dependency-aware instructions, but only the later ordered
-attestations prove that a human followed them.
+Reference dispatch tools must validate dependency gates before preflight, queue
+writes, subprocess submission, or any other delivery side effect. An explicit
+agent or role request that includes an uncleared target fails as a whole.
+Default all-agent automatic progression instead derives the current dependency
+frontier: it submits only work items whose prerequisites are complete, excludes
+already completed or currently submitted work items, and leaves later work for
+the next post-wake call. One frontier is submitted atomically; a call must not
+partially advance through multiple ordered frontiers. Manual Mode can print
+dependency-aware instructions, but only the later ordered attestations prove
+that a human followed them.
+
+When a Full or Remote Mode adapter is invoked with a zero evidence-wait window,
+the operation is submission-only. The adapter must return after concrete
+delivery proof without treating absent immediate evidence as
+`dispatch_blocked`. VALP binds that delivery proof to the routed work item and
+`valp wait` owns later expected-evidence observation, completion receipt
+creation, and deterministic wake. A zero evidence-wait window is not a zero
+submission-proof window.
 
 ## 11. Context Compression
 
@@ -1282,6 +1332,41 @@ ceiling, the coordinator shortens prose and skill labels first, then replaces
 detail with task-local refs. It must not truncate a permission boundary,
 expected evidence path, receipt requirement, or approval rule. A dispatch that
 still exceeds either ceiling is not submitted and must be recorded as blocked.
+
+### 11.2 Adaptive Routing And Iteration Budget
+
+After the current MCP/tool scan and task-relevant skill recommendation, routing
+selects the minimum capable team that covers the required roles. A task records
+`iteration-budget.json` with these ceilings and observed counters:
+
+```text
+max_dispatch_reference_tokens
+max_dispatches
+max_reroutes
+max_fix_review_rounds
+usage.dispatch_reference_tokens
+usage.dispatches
+usage.reroutes
+usage.fix_review_rounds
+```
+
+The reference implementation counts accepted submission receipts, not merely
+dispatch files, and derives reference-token usage from the recorded dispatch
+payload measurement. Before a new submitted phase it projects the additional
+usage and stops when a ceiling would be exceeded. Approval, runtime preflight,
+missing-evidence, critical review, and context-compression gates stop the loop
+even when budget remains. A reroute preserves the previous route evidence and
+consumes one reroute budget unit.
+
+When a runtime preserves a legacy receipt and appends an identity-bound v2
+translation for the same accepted delivery, the pair counts as one logical
+dispatch. The v2 work-item identity is authoritative; compatibility records
+must not consume the task budget twice.
+
+The full `skill-recommendations.json` report is coordinator-only context for
+this purpose. Each selected provider receives a task-local
+`skill-slices/<agent>.json` containing only provider-reachable installed matches.
+The slice is routing evidence, not permission to load or modify a skill.
 
 A current or newly generated dispatch must never use a historical audit
 boundary to bypass this rule. A terminal historical task may use

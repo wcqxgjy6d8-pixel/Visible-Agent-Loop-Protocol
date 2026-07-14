@@ -316,19 +316,35 @@ To actually submit through the local HERDR adapter:
 bin/valp dispatch TASK-001 --workspace /path/to/workspace --submit
 ```
 
-Before Full or Remote Mode can wait, author the task's closed
-`.herdr-loop/tasks/TASK-001/wait-policy.json`. Start from
-`examples/wait-policy.json`, keep `dependency_ref` set to
-`submission-dependencies.json`, and copy the exact work-item objects needed for
-this barrier from that task's dependency artifact. `valp wait` rejects a
-missing policy or work items without concrete delivery proof. Manual Mode may
-wait without this file, but its audit result is explicitly degraded.
+With no `--agent` or `--role`, this submits only the current dependency-ready
+frontier. A later call after the committed wake advances the next frontier;
+already submitted or completed work items are not sent again. Explicitly
+requesting an unready agent or role remains a hard error.
+
+When the reference dispatch helper submits a specific role or agent, it writes
+the closed `.herdr-loop/tasks/TASK-001/wait-policy.json` for those exact work
+items before delivery. Other adapters may author the file directly from
+`submission-dependencies.json`; `examples/wait-policy.json` shows the shape.
+`valp wait` rejects a missing policy or work items without concrete delivery
+proof. Manual Mode may wait without this file, but its audit result is
+explicitly degraded.
 
 After delivery proof exists, suspend coordinator model turns while workers run:
 
 ```bash
+bin/valp dispatch TASK-001 --workspace /path/to/workspace --wait-seconds 0 --submit
 bin/valp wait TASK-001 --workspace /path/to/workspace --timeout 300
 ```
+
+The zero evidence-wait window makes the HERDR call submission-only: it returns
+after pane delivery proof and does not wait for expected evidence. The generated
+wait policy still carries the exact expected refs, and `valp wait` owns later
+evidence observation and the completion receipt.
+
+Keep this single command or runtime subscription pending. Do not ask a Lead
+Agent to poll status every few seconds: every model turn spends tokens. The
+`valp wait` process performs local receipt/evidence observation without model
+calls and returns only after a committed wake or exception.
 
 The runtime process returns only for the final qualifying dependency-ready barrier receipt
 or an exception short circuit: a matching blocked work item, timeout, runtime

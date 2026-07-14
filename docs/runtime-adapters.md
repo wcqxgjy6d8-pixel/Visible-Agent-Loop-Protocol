@@ -131,6 +131,20 @@ an immutable wake result. Success requires the `dependency_ready` barrier;
 blocked work, runtime failure, cancellation, timeout, and user input are
 exception short circuits into visible handling, not completion proof.
 
+An adapter bridge may watch expected evidence after proven delivery and emit a
+completion receipt only for evidence that was absent at suspension entry. The
+receipt must bind the current work item and epoch and cite the originating
+submission receipt. This watcher is a local runtime process, not a coordinator
+model turn. Runtime status should say that a local wait was used, that
+coordinator-model polling was not observed, and which wake reason and receipt
+were accepted. Repeated Agent prompts or model-based status polling do not
+satisfy this contract. Provider billing is outside this status contract.
+
+For a submission-only call, a zero evidence-wait window means the adapter
+returns after concrete delivery proof. It must not emit `dispatch_blocked`
+merely because expected evidence is not instantaneous. The phase wait policy
+retains the expected refs so the separate local wait bridge can observe them.
+
 The reference core proves one accepted wake transition per suspension epoch,
 idempotent wake-result replay, and event-to-projection recovery from a committed
 wait event. It does not prove exactly-once coordinator process continuation. An

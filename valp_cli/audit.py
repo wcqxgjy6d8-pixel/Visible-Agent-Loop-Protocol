@@ -102,6 +102,7 @@ class TaskAudit:
         self.learning_feedback = self._load_json("learning-feedback.json")
         self.evidence_status = self._load_json("evidence-status.json")
         self.skill_recommendations = self._load_json("skill-recommendations.json")
+        self.iteration_budget = self._load_json("iteration-budget.json")
         self.agent_recommendations = self._load_json("agent-recommendations.json")
         self.submission_dependencies = self._load_json("submission-dependencies.json")
         self.delegation_policy = self._load_json("delegation-policy.json")
@@ -113,6 +114,7 @@ class TaskAudit:
         self.evidence_board = self._load_json("evidence-board.json")
         self.correction_cycle = self._load_json("correction-cycle.json")
         self.receipts = self._load_jsonl("dispatch-receipts.jsonl")
+        self.routing_history = self._load_jsonl("routing-history.jsonl")
         self.wait_events = self._load_jsonl("wait-events.jsonl")
         self.approval_requests = self._load_jsonl("approvals/requested.jsonl")
         self.approval_decisions = self._load_jsonl("approvals/user-decisions.jsonl")
@@ -133,6 +135,7 @@ class TaskAudit:
             self.check_runtime_preflight(),
             self.check_routing_confidence(),
             self.check_automation_policy(),
+            self.check_iteration_budget(),
             self.check_delegation_policy(),
             self.check_visible_attention(),
             self.check_context_pack(),
@@ -913,6 +916,101 @@ class TaskAudit:
             evidence,
         )
 
+    def check_iteration_budget(self) -> AuditItem:
+        evidence = self._existing(["iteration-budget.json", "routing.json", "state.json", "dispatch-receipts.jsonl"])
+        marker = self.routing.get("iteration_budget") or self.state.get("iteration_budget") or {}
+        if not marker and not self.iteration_budget:
+            return self._skip(
+                "iteration_budget",
+                "Task dispatch and iteration budgets are observed and enforced",
+                "Legacy task without an iteration budget",
+                evidence,
+            )
+        if marker != {"status": "recorded", "ref": "iteration-budget.json"}:
+            return self._fail(
+                "iteration_budget",
+                "Task dispatch and iteration budgets are observed and enforced",
+                "Iteration budget marker is missing or inconsistent",
+                evidence,
+            )
+        required = {
+            "schema_version",
+            "task_id",
+            "strategy",
+            "max_dispatch_reference_tokens",
+            "max_dispatches",
+            "max_reroutes",
+            "max_fix_review_rounds",
+            "usage",
+            "status",
+            "stop_conditions",
+        }
+        if set(self.iteration_budget) - (required | {"stop_reason", "updated_at"}) or not required.issubset(self.iteration_budget):
+            return self._fail(
+                "iteration_budget",
+                "Task dispatch and iteration budgets are observed and enforced",
+                "Iteration budget fields are incomplete or unexpected",
+                evidence,
+            )
+        if self.iteration_budget.get("schema_version") != "valp-iteration-budget.v1" or self.iteration_budget.get("task_id") != self.state.get("task_id"):
+            return self._fail(
+                "iteration_budget",
+                "Task dispatch and iteration budgets are observed and enforced",
+                "Iteration budget identity or schema version is invalid",
+                evidence,
+            )
+        usage = self.iteration_budget.get("usage") or {}
+        limits = {
+            "dispatch_reference_tokens": self.iteration_budget.get("max_dispatch_reference_tokens"),
+            "dispatches": self.iteration_budget.get("max_dispatches"),
+            "reroutes": self.iteration_budget.get("max_reroutes"),
+            "fix_review_rounds": self.iteration_budget.get("max_fix_review_rounds"),
+        }
+        if any(type(usage.get(key)) is not int or usage.get(key) < 0 for key in limits):
+            return self._fail(
+                "iteration_budget",
+                "Task dispatch and iteration budgets are observed and enforced",
+                "Observed iteration usage must contain non-negative integers",
+                evidence,
+            )
+        exceeded = [key for key, limit in limits.items() if type(limit) is not int or limit < 0 or usage[key] > limit]
+        if exceeded:
+            return self._fail(
+                "iteration_budget",
+                "Task dispatch and iteration budgets are observed and enforced",
+                "Observed usage exceeds budget: " + ", ".join(exceeded),
+                evidence,
+            )
+        reroutes = int(usage.get("reroutes") or 0)
+        if reroutes:
+            matching_history = [
+                item
+                for item in self.routing_history
+                if item.get("schema_version") == "valp-routing-history.v1"
+                and item.get("task_id") == self.state.get("task_id")
+                and item.get("event") == "reroute_started"
+            ]
+            if len(matching_history) < reroutes:
+                return self._fail(
+                    "iteration_budget",
+                    "Task dispatch and iteration budgets are observed and enforced",
+                    "Reroute usage is missing preserved routing-history evidence",
+                    evidence,
+                )
+        if self.iteration_budget.get("status") in {"blocked", "exhausted"} and not self.iteration_budget.get("stop_reason"):
+            return self._fail(
+                "iteration_budget",
+                "Task dispatch and iteration budgets are observed and enforced",
+                "Stopped iteration budget has no stop_reason",
+                evidence,
+            )
+        return self._pass(
+            "iteration_budget",
+            "Task dispatch and iteration budgets are observed and enforced",
+            "Budget limits and observed usage are recorded",
+            evidence,
+        )
+
     def check_delegation_policy(self) -> AuditItem:
         evidence = self._existing(["delegation-policy.json", "routing.json", "state.json"])
         expected_marker = {"status": "recorded", "ref": "delegation-policy.json"}
@@ -1122,7 +1220,8 @@ class TaskAudit:
         return self._pass("context_pack", "Context pack records compact visible worker context", f"Context pack sections: {len(items)}", evidence)
 
     def check_skill_recommendations(self) -> AuditItem:
-        evidence = self._existing(["routing.json", "skill-recommendations.json", "state.json"])
+        slice_refs = self.routing.get("skill_recommendation_slices") or {}
+        evidence = self._existing(["routing.json", "skill-recommendations.json", "state.json", *[str(ref) for ref in slice_refs.values()]])
         record = self.routing.get("skill_recommendations") or self.state.get("skill_recommendations") or {}
         if not record:
             return self._warn("skill_recommendations", "Skill recommendation backend result is recorded", "No skill recommendation record found", evidence)
@@ -1140,6 +1239,38 @@ class TaskAudit:
                 return self._fail("skill_recommendations", "Skill recommendation backend result is recorded", f"Missing skill recommendation evidence: {ref}", evidence)
             if data.get("status") != status:
                 return self._fail("skill_recommendations", "Skill recommendation backend result is recorded", "Routing status does not match skill recommendation evidence", evidence)
+            if slice_refs:
+                selected = self._selected_agents()
+                missing_slices = [agent for agent in selected if agent not in slice_refs or not self._ref_exists(str(slice_refs.get(agent) or ""))]
+                if missing_slices:
+                    return self._fail(
+                        "skill_recommendations",
+                        "Skill recommendation backend result is recorded",
+                        "Missing compact provider-reachable skill slices: " + ", ".join(missing_slices),
+                        evidence,
+                    )
+                for agent, ref in slice_refs.items():
+                    slice_data = self._load_json(str(ref))
+                    if slice_data.get("schema_version") != "valp-skill-recommendation-slice.v1" or slice_data.get("task_id") != self.state.get("task_id") or slice_data.get("agent") != agent:
+                        return self._fail(
+                            "skill_recommendations",
+                            "Skill recommendation backend result is recorded",
+                            f"Invalid compact skill slice for {agent}",
+                            evidence,
+                        )
+                    if agent != "hermes":
+                        hermes_only = [
+                            str(item.get("path"))
+                            for item in slice_data.get("recommendations") or []
+                            if "/.hermes/skills/" in str(item.get("path") or "")
+                        ]
+                        if hermes_only:
+                            return self._fail(
+                                "skill_recommendations",
+                                "Skill recommendation backend result is recorded",
+                                f"Non-Hermes skill slice exposes Hermes-only paths for {agent}",
+                                evidence,
+                            )
             return self._pass("skill_recommendations", "Skill recommendation backend result is recorded", f"Skill recommendation status: {status}", evidence)
         return self._warn("skill_recommendations", "Skill recommendation backend result is recorded", f"Unknown skill recommendation status: {status}", evidence)
 

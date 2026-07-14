@@ -64,6 +64,14 @@
       "items": {"type": "string", "minLength": 1}
     },
     "receipt_count_at_entry": {"type": "integer", "minimum": 0},
+    "evidence_refs_present_at_entry": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"
+      }
+    },
     "allowed_resume_events": {
       "type": "array",
       "uniqueItems": true,

@@ -745,6 +745,13 @@ class ValpAuditTests(unittest.TestCase):
             routing["dispatch_payload_budgets"] = {"codex": recorded_budget}
             state["task_id"] = task_id
             state["status"] = "done"
+            iteration_budget = json.loads((task / "iteration-budget.json").read_text(encoding="utf-8"))
+            iteration_budget["task_id"] = task_id
+            (task / "iteration-budget.json").write_text(json.dumps(iteration_budget), encoding="utf-8")
+            for slice_path in (task / "skill-slices").glob("*.json"):
+                skill_slice = json.loads(slice_path.read_text(encoding="utf-8"))
+                skill_slice["task_id"] = task_id
+                slice_path.write_text(json.dumps(skill_slice), encoding="utf-8")
             boundary = {
                 "schema_version": "valp-historical-audit-boundary.v1",
                 "task_id": task_id,

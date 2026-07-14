@@ -1,0 +1,29 @@
+{
+  "schema_version": "valp-iteration-budget.v1",
+  "task_id": "TASK-EXAMPLE-001",
+  "strategy": "minimum_capable_team",
+  "max_dispatch_reference_tokens": 5400,
+  "max_dispatches": 5,
+  "max_reroutes": 1,
+  "max_fix_review_rounds": 2,
+  "usage": {
+    "dispatch_reference_tokens": 0,
+    "dispatches": 0,
+    "reroutes": 0,
+    "fix_review_rounds": 0
+  },
+  "status": "active",
+  "stop_reason": null,
+  "stop_conditions": [
+    "dispatch reference-token budget exhausted",
+    "dispatch-count budget exhausted",
+    "reroute budget exhausted",
+    "fix-review-round budget exhausted",
+    "approval gate unresolved",
+    "runtime preflight failure",
+    "missing expected evidence",
+    "critical or high review blocker",
+    "context compression required"
+  ],
+  "updated_at": "2026-07-14T00:00:00Z"
+}

@@ -2,6 +2,8 @@ name: Verify VALP Examples
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 permissions:
@@ -43,3 +45,17 @@ jobs:
         env:
           PYTHON: python
         run: bash scripts/verify-examples.sh
+
+  smoke:
+    name: Required smoke tests
+    needs: verify
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fail unless the verify matrix succeeds
+        if: ${{ needs.verify.result != 'success' }}
+        run: exit 1
+
+      - name: Confirm verify matrix success
+        run: echo "All verify matrix jobs passed."

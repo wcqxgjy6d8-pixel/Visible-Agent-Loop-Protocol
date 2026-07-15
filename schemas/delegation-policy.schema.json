@@ -61,13 +61,13 @@
           },
           "evidence_ref": {
             "type": "string",
-            "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+            "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"
           },
           "detected_at": {"type": "string", "minLength": 1},
           "earliest_affected_receipt": {"type": "integer", "minimum": 1},
           "operator_resolution_ref": {
             "type": "string",
-            "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+            "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"
           }
         },
         "additionalProperties": false

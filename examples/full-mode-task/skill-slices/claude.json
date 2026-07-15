@@ -1,0 +1,21 @@
+{
+  "schema_version": "valp-skill-recommendation-slice.v1",
+  "task_id": "TASK-EXAMPLE-001",
+  "agent": "claude",
+  "status": "complete",
+  "source_ref": "skill-recommendations.json",
+  "provider_reachable": true,
+  "recommendations": [
+    {
+      "skill": "product-operating-layer",
+      "task": "review the changed refs and risks",
+      "confidence": 0.8,
+      "provider": "claude",
+      "path": "/Users/example/.claude/skills/product-operating-layer/SKILL.md",
+      "decision": "auto-load"
+    }
+  ],
+  "missing_skills": [],
+  "omitted_match_count": 1,
+  "generated_at": "2026-07-14T00:00:00Z"
+}

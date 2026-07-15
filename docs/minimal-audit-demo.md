@@ -20,7 +20,7 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=10
+Summary: pass=13 warn=0 fail=0
 ```
 
 ## 2. Break The Expected Evidence
@@ -41,7 +41,7 @@ Expected result:
 
 ```text
 VALP audit: FAIL
-Summary: pass=12 warn=0 fail=1 skip=6
+Summary: pass=12 warn=0 fail=1
 
 [FAIL] expected_evidence: Expected evidence exists
   Missing expected evidence: agents/manual-reviewer/review.md
@@ -60,7 +60,7 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=10
+Summary: pass=13 warn=0 fail=0
 ```
 
 ## What This Proves

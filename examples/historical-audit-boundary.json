@@ -6,8 +6,8 @@
   "decision_ref": ".herdr-loop/tasks/TASK-RECONCILE-001/evidence/decision.md",
   "auditor_boundary": {
     "historical_cli_version": "0.2.0",
-    "historical_source_revision": "1111111111111111111111111111111111111111",
-    "rule_introduced_revision": "2222222222222222222222222222222222222222"
+    "historical_source_revision": "eb47e14601e375ff68e7c8848bb05d6d834254c8",
+    "rule_introduced_revision": "5c96adfdb5c9178f801ed92444f3f043a2178ca9"
   },
   "accepted_legacy_artifacts": [
     {

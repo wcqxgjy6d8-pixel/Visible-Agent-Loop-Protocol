@@ -1,14 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "VALP Dispatch Receipt",
-  "type": "object",
-  "required": ["ts", "agent", "event", "dispatch_ref"],
-  "properties": {
-    "ts": {"type": "string"},
-    "agent": {"type": "string"},
-    "role": {
-      "enum": ["coordinator", "implementer", "reviewer", "prototype", "researcher", "other"]
-    },
+  "oneOf": [
+    {"$ref": "#/$defs/legacyReceipt"},
+    {"$ref": "#/$defs/deterministicReceipt"}
+  ],
+  "$defs": {
     "event": {
       "enum": [
         "dispatch_written",
@@ -22,17 +19,96 @@
         "manual_blocked"
       ]
     },
-    "exit_code": {"type": "integer"},
-    "summary": {"type": "string"},
-    "dispatch_ref": {"type": "string"},
-    "expected_refs": {
+    "role": {
+      "enum": ["coordinator", "implementer", "reviewer", "prototype", "researcher", "other"]
+    },
+    "evidenceRefs": {
       "type": "array",
+      "uniqueItems": true,
       "items": {
         "type": "string",
-        "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+        "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"
       }
     },
-    "proof": {"type": "object"},
-    "runtime": {"type": "object"}
+    "legacyReceipt": {
+      "type": "object",
+      "required": ["ts", "agent", "event", "dispatch_ref"],
+      "properties": {
+        "ts": {"type": "string"},
+        "agent": {"type": "string"},
+        "role": {"$ref": "#/$defs/role"},
+        "event": {"$ref": "#/$defs/event"},
+        "exit_code": {"type": "integer"},
+        "summary": {"type": "string"},
+        "dispatch_ref": {"type": "string"},
+        "expected_refs": {"$ref": "#/$defs/evidenceRefs"},
+        "proof": {"type": "object"},
+        "runtime": {"type": "object"}
+      },
+      "not": {"required": ["schema_version"]}
+    },
+    "deterministicReceipt": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "receipt_id",
+        "task_id",
+        "event_sequence",
+        "ts",
+        "agent",
+        "role",
+        "work_item_id",
+        "dispatch_id",
+        "dispatch_generation",
+        "event",
+        "dispatch_ref",
+        "expected_refs"
+      ],
+      "properties": {
+        "schema_version": {"const": "valp-dispatch-receipt.v2"},
+        "receipt_id": {"type": "string", "minLength": 1},
+        "task_id": {"type": "string", "minLength": 1},
+        "event_sequence": {"type": "integer", "minimum": 1},
+        "ts": {"type": "string", "minLength": 1},
+        "agent": {"type": "string", "minLength": 1},
+        "role": {"$ref": "#/$defs/role"},
+        "work_item_id": {"type": "string", "minLength": 1},
+        "dispatch_id": {"type": "string", "minLength": 1},
+        "dispatch_generation": {"type": "integer", "minimum": 1},
+        "suspension_epoch": {"type": "integer", "minimum": 1},
+        "event": {"$ref": "#/$defs/event"},
+        "exit_code": {"type": "integer"},
+        "summary": {"type": "string"},
+        "dispatch_ref": {"type": "string", "minLength": 1},
+        "expected_refs": {"$ref": "#/$defs/evidenceRefs"},
+        "proof": {"type": "object", "minProperties": 1},
+        "runtime": {"type": "object"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"event": {"const": "dispatch_submitted"}},
+            "required": ["event"]
+          },
+          "then": {"required": ["proof"]}
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "enum": [
+                  "dispatch_completed",
+                  "dispatch_blocked",
+                  "manual_result_attested",
+                  "manual_blocked"
+                ]
+              }
+            }
+          },
+          "then": {"required": ["suspension_epoch"]}
+        }
+      ],
+      "additionalProperties": false
+    }
   }
 }

@@ -1,0 +1,19 @@
+{
+  "schema_version": "valp-submission-dependencies.v2",
+  "task_id": "TASK-WAIT-EXAMPLE",
+  "ordering_source": "dispatch-receipts.jsonl#line-order",
+  "work_items": [
+    {
+      "work_item_id": "implementation:codex",
+      "agent": "codex",
+      "role": "implementer",
+      "dispatch_id": "dispatch-implementation-1",
+      "dispatch_generation": 1,
+      "expected_refs": [
+        "agents/codex/evidence.md",
+        "evidence/verification.md"
+      ]
+    }
+  ],
+  "dependencies": []
+}

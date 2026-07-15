@@ -122,9 +122,7 @@ Measure the checked-in legacy baseline against the current generator with:
 python3 scripts/benchmark-dispatch-size.py
 ```
 
-The benchmark reports Unicode character counts and percentage reduction. It
-does not claim exact provider billing tokens; provider-specific adapters may add
-their exact tokenizer measurement.
+The benchmark reports only Unicode character counts and percentage reduction.
 
 ## Required Handoff
 

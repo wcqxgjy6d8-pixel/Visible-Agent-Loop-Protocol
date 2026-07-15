@@ -1,65 +1,127 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "VALP Submission Dependencies",
-  "type": "object",
-  "required": [
-    "schema_version",
-    "task_id",
-    "ordering_source",
-    "dependencies"
+  "oneOf": [
+    {"$ref": "#/$defs/legacyDocument"},
+    {"$ref": "#/$defs/deterministicDocument"}
   ],
-  "properties": {
-    "schema_version": {
-      "const": "valp-submission-dependencies.v1"
-    },
-    "task_id": {"type": "string", "minLength": 1},
-    "ordering_source": {
-      "const": "dispatch-receipts.jsonl#line-order"
-    },
-    "dependencies": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "id",
-          "prerequisite_role",
-          "prerequisite_agent",
-          "dependent_role",
-          "dependent_agent",
-          "prerequisite_refs",
-          "dependent_refs"
-        ],
-        "properties": {
-          "id": {"type": "string", "minLength": 1},
-          "prerequisite_role": {
-            "enum": ["coordinator", "implementer", "reviewer", "prototype", "researcher"]
-          },
-          "prerequisite_agent": {"type": "string", "minLength": 1},
-          "dependent_role": {
-            "enum": ["coordinator", "implementer", "reviewer", "prototype", "researcher"]
-          },
-          "dependent_agent": {"type": "string", "minLength": 1},
-          "prerequisite_refs": {
-            "$ref": "#/$defs/evidenceRefs"
-          },
-          "dependent_refs": {
-            "$ref": "#/$defs/evidenceRefs"
-          }
-        },
-        "additionalProperties": false
-      }
-    }
-  },
   "$defs": {
+    "role": {
+      "enum": ["coordinator", "implementer", "reviewer", "prototype", "researcher", "other"]
+    },
     "evidenceRefs": {
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
       "items": {
         "type": "string",
-        "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+        "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"
       }
+    },
+    "legacyDocument": {
+      "type": "object",
+      "required": ["schema_version", "task_id", "ordering_source", "dependencies"],
+      "properties": {
+        "schema_version": {"const": "valp-submission-dependencies.v1"},
+        "task_id": {"type": "string", "minLength": 1},
+        "ordering_source": {"const": "dispatch-receipts.jsonl#line-order"},
+        "dependencies": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/legacyDependency"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "deterministicDocument": {
+      "type": "object",
+      "required": ["schema_version", "task_id", "ordering_source", "work_items", "dependencies"],
+      "properties": {
+        "schema_version": {"const": "valp-submission-dependencies.v2"},
+        "task_id": {"type": "string", "minLength": 1},
+        "ordering_source": {"const": "dispatch-receipts.jsonl#line-order"},
+        "work_items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/workItem"}
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/deterministicDependency"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "workItem": {
+      "type": "object",
+      "required": [
+        "work_item_id",
+        "agent",
+        "role",
+        "dispatch_id",
+        "dispatch_generation",
+        "expected_refs"
+      ],
+      "properties": {
+        "work_item_id": {"type": "string", "minLength": 1},
+        "agent": {"type": "string", "minLength": 1},
+        "role": {"$ref": "#/$defs/role"},
+        "dispatch_id": {"type": "string", "minLength": 1},
+        "dispatch_generation": {"type": "integer", "minimum": 1},
+        "expected_refs": {"$ref": "#/$defs/evidenceRefs"}
+      },
+      "additionalProperties": false
+    },
+    "legacyDependency": {
+      "type": "object",
+      "required": [
+        "id",
+        "prerequisite_role",
+        "prerequisite_agent",
+        "dependent_role",
+        "dependent_agent",
+        "prerequisite_refs",
+        "dependent_refs"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "prerequisite_role": {"$ref": "#/$defs/role"},
+        "prerequisite_agent": {"type": "string", "minLength": 1},
+        "dependent_role": {"$ref": "#/$defs/role"},
+        "dependent_agent": {"type": "string", "minLength": 1},
+        "prerequisite_refs": {"$ref": "#/$defs/evidenceRefs"},
+        "dependent_refs": {"$ref": "#/$defs/evidenceRefs"}
+      },
+      "additionalProperties": false
+    },
+    "deterministicDependency": {
+      "type": "object",
+      "required": [
+        "id",
+        "prerequisite_role",
+        "prerequisite_agent",
+        "prerequisite_work_item_id",
+        "prerequisite_dispatch_generation",
+        "dependent_role",
+        "dependent_agent",
+        "dependent_work_item_id",
+        "dependent_dispatch_generation",
+        "prerequisite_refs",
+        "dependent_refs"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "prerequisite_role": {"$ref": "#/$defs/role"},
+        "prerequisite_agent": {"type": "string", "minLength": 1},
+        "prerequisite_work_item_id": {"type": "string", "minLength": 1},
+        "prerequisite_dispatch_generation": {"type": "integer", "minimum": 1},
+        "dependent_role": {"$ref": "#/$defs/role"},
+        "dependent_agent": {"type": "string", "minLength": 1},
+        "dependent_work_item_id": {"type": "string", "minLength": 1},
+        "dependent_dispatch_generation": {"type": "integer", "minimum": 1},
+        "prerequisite_refs": {"$ref": "#/$defs/evidenceRefs"},
+        "dependent_refs": {"$ref": "#/$defs/evidenceRefs"}
+      },
+      "additionalProperties": false
     }
-  },
-  "additionalProperties": false
+  }
 }

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-review.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "review_id", "reviewer_principal_id", "claim_ids", "reviewed_subject_digests", "criteria_schema", "criteria_version", "required_evidence_refs", "independence_requirement", "risk_class", "requested_at", "findings", "verdict", "confidence_limits", "completed_at", "review_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-review.v1"},
+    "review_id": {"type": "string", "minLength": 1},
+    "reviewer_principal_id": {"type": "string", "minLength": 1},
+    "claim_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
+    "reviewed_subject_digests": {"type": "array", "items": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "minItems": 1},
+    "criteria_schema": {"type": "string", "minLength": 1},
+    "criteria_version": {"type": "string", "minLength": 1},
+    "required_evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "independence_requirement": {"type": "string", "minLength": 1},
+    "risk_class": {"type": "string", "minLength": 1},
+    "requested_at": {"type": "string", "minLength": 1},
+    "findings": {"type": "array", "items": {"type": "object"}},
+    "verdict": {"enum": ["pass", "fail", "abstain", "blocked"]},
+    "confidence_limits": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "completed_at": {"type": "string", "minLength": 1},
+    "review_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

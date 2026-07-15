@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-leader-selection.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "selection_id", "installation_id", "principal_id", "principal_kind", "selected_by", "selection_reason", "approved_at", "previous_leader_epoch", "new_leader_epoch"],
+  "properties": {
+    "schema_version": {"const": "valp-leader-selection.v1"},
+    "selection_id": {"type": "string", "minLength": 1},
+    "installation_id": {"type": "string", "minLength": 1},
+    "principal_id": {"type": "string", "minLength": 1},
+    "principal_kind": {"type": "string", "minLength": 1},
+    "selected_by": {"const": "user"},
+    "selection_reason": {"type": "string", "minLength": 1},
+    "approved_at": {"type": "string", "minLength": 1},
+    "previous_leader_epoch": {"type": "integer", "minimum": 0},
+    "new_leader_epoch": {"type": "integer", "minimum": 1}
+  }
+}

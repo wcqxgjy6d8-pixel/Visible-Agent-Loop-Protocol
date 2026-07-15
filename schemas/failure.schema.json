@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-failure.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "failure_id", "error_code", "error_schema_version", "installation_id", "phase", "accepted_or_rejected_message_id", "state_revision", "leader_epoch", "retriable", "retry_class", "safe_summary", "diagnostic_ref", "affected_refs", "deterministic_state_effect", "created_at", "failure_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-failure.v1"},
+    "failure_id": {"type": "string", "minLength": 1},
+    "error_code": {"type": "string", "pattern": "^VALP-E-[A-Z0-9-]+$"},
+    "error_schema_version": {"const": "valp-failure.v1"},
+    "installation_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": ["string", "null"]},
+    "phase": {"type": "string", "minLength": 1},
+    "accepted_or_rejected_message_id": {"type": ["string", "null"]},
+    "state_revision": {"type": "integer", "minimum": 0},
+    "leader_epoch": {"type": "integer", "minimum": 0},
+    "retriable": {"type": "boolean"},
+    "retry_class": {"type": "string", "minLength": 1},
+    "safe_summary": {"type": "string", "minLength": 1},
+    "diagnostic_ref": {"type": ["string", "null"]},
+    "affected_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "deterministic_state_effect": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "minLength": 1},
+    "failure_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

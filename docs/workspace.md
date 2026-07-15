@@ -32,6 +32,10 @@ It must not hard-code Desktop, macOS paths, or one user's folder names.
         trigger-policy.json
         automation-policy.json
         state.json
+        submission-dependencies.json
+        delegation-policy.json
+        wait-policy.json
+        wait-policies/
         routing.json
         routing-feedback.json
         learning-feedback.json
@@ -45,9 +49,15 @@ It must not hard-code Desktop, macOS paths, or one user's folder names.
         visible-routing.md
         runtime-preflight.json
         evidence-status.json
+        evidence/
+          wake-requests/
+            <exception-event>.json
         correction-cycle.json
         timeline.jsonl
         dispatch-receipts.jsonl
+        wait-events.jsonl
+        wake-results/
+          <wake-id>.json
         final-synthesis.md
         artifacts/
           manifest.json

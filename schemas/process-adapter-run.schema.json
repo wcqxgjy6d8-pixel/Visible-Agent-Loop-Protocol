@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-process-adapter-run.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "task_id", "installation_id", "runtime", "adapter_class", "worker_id", "submission_id", "status", "started_at", "completed_at", "exit_code", "stdout_ref", "stderr_ref", "evidence_ids", "expected_evidence_refs", "failure_code", "run_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-process-adapter-run.v1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "installation_id": {"type": "string", "minLength": 1},
+    "runtime": {"const": "local-process"},
+    "adapter_class": {"const": "local_process"},
+    "worker_id": {"type": "string", "minLength": 1},
+    "submission_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["completed", "failed"]},
+    "started_at": {"type": "string", "minLength": 1},
+    "completed_at": {"type": "string", "minLength": 1},
+    "exit_code": {"type": ["integer", "null"]},
+    "stdout_ref": {"type": "string", "minLength": 1},
+    "stderr_ref": {"type": "string", "minLength": 1},
+    "evidence_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "expected_evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 2},
+    "failure_code": {"type": ["string", "null"]},
+    "run_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

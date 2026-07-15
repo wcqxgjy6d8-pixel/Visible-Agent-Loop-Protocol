@@ -1,0 +1,8 @@
+{
+  "schema_version": "valp-capability-observation-input.v1",
+  "observations": [
+    {"subject_id": "manual-user", "capability_id": "coordination", "layer": "official_claim", "status": "present", "source_principal_id": "bootstrap-controller", "source_kind": "declared-profile", "evidence_refs": ["observations.json"]},
+    {"subject_id": "manual-user", "capability_id": "coordination", "layer": "local_presence", "status": "present", "source_principal_id": "bootstrap-controller", "source_kind": "local-probe", "evidence_refs": ["observations.json"]},
+    {"subject_id": "manual-user", "capability_id": "coordination", "layer": "live_callable", "status": "pass", "source_principal_id": "manual-user", "source_kind": "bounded-probe", "evidence_refs": ["observations.json"]}
+  ]
+}

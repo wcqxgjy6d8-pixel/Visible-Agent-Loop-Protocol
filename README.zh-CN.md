@@ -20,18 +20,18 @@ VALP 要求任务过程留下可审计的证据：
 
 所以 VALP 更像一个多 Agent 工作流的验收单，而不是聊天提示词集合。
 
-## v0.3 提案方向
+## v0.3 Draft Implementation
 
-当前实现和发布版本仍是 `0.2.0`。[RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)
-提出的是 `0.3.0-draft` 目标，不是已经实现、已经生效或已经稳定的功能；
-它不会改变当前 schemas、reference CLI、Runtime 支持范围或发布状态。
+当前稳定发布版本仍是 `0.2.0`。[RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)
+作为稳定 `0.3.0` 仍未完成，但可执行的 installation control plane core 已经
+落地在 reference CLI 中。请看 [v0.3 implementation guide](docs/v0.3-implementation.md)。
 
 如果把 Prompt、Tools、Agents 看成 Software 3.0 的执行层，VALP 更像外面的
 控制与验收层：它不负责让模型突然更聪明，而是让控制决策和 done claim
 可以被检查。`0.2.0` 主要验证单个任务；v0.3 RFC 进一步追问，整个安装级
 控制平面能不能在重启、故障、Provider 变化和协议升级后仍然可追溯。
 
-若未来实现，提案会加入：
+已落地的 draft core 包括：
 
 - 由用户明确选择的 **Installation Leader**，并由确定性 core 和 leader
   epoch 约束，而不是把某个 Agent 永久写死为总协调者；
@@ -39,13 +39,13 @@ VALP 要求任务过程留下可审计的证据：
   和 `task_verified` 四层证据分开保存；
 - 严格的 message、可执行 state、claim-evidence、确定性 failure 和针对
   精确 artifact 的独立 review 契约；
-- Provider-neutral plugin 隔离、显式 migration，以及包含负面与恢复场景的
-  conformance tests。
+- Provider-neutral plugin manifest 检查、显式 migration，以及包含负面与恢复
+  场景的 conformance tests。
 
 稳定 `0.3.0` 的门槛仍在未来：RFC 需要被接受并写入 `SPEC.md`，schemas 和
 reference behavior 需要实现，重启、迁移、故障与 conformance tests 需要
 通过，还必须有一个真实的非 HERDR Full Mode adapter 完成公开、脱敏的
-端到端验证。当前仓库没有声称这些能力已经交付。
+端到端验证。当前仓库交付的是 draft core，不是稳定平台能力。
 
 请把 [完整 RFC](docs/rfcs/0001-v0.3-installation-control-plane.md) 和
 [当前证据矩阵](docs/project-status.md) 对照阅读：前者写 proposed target，
@@ -66,7 +66,7 @@ bin/valp audit examples/minimal-task
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=7
+Summary: pass=13 warn=0 fail=0
 ```
 
 再看 [Minimal audit demo](docs/minimal-audit-demo.md)，它会展示：

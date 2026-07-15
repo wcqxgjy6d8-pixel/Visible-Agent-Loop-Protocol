@@ -44,6 +44,14 @@
     "implementer": "codex",
     "reviewer": "claude"
   },
+  "iteration_budget": {
+    "status": "recorded",
+    "ref": "iteration-budget.json"
+  },
+  "skill_recommendation_slices": {
+    "codex": "skill-slices/codex.json",
+    "claude": "skill-slices/claude.json"
+  },
   "capabilities_needed": [
     "implementation",
     "verification",

@@ -1,4 +1,6 @@
 .DS_Store
+.agents/
+/agents/
 .herdr-loop/
 .playwright-cli/
 node_modules/

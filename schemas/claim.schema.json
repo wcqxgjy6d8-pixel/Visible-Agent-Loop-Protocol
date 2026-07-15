@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-claim.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "claim_id", "installation_id", "claimant_principal_id", "claim_kind", "subject_ref", "subject_digest", "predicate", "asserted_value", "scope", "created_at", "required_evidence_kinds", "evidence_refs", "status", "claim_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-claim.v1"},
+    "claim_id": {"type": "string", "minLength": 1},
+    "installation_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": ["string", "null"]},
+    "claimant_principal_id": {"type": "string", "minLength": 1},
+    "claim_kind": {"type": "string", "minLength": 1},
+    "subject_ref": {"type": "string", "minLength": 1},
+    "subject_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "predicate": {"type": "string", "minLength": 1},
+    "asserted_value": {},
+    "scope": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "minLength": 1},
+    "required_evidence_kinds": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "status": {"enum": ["declared", "supported", "verified", "rejected", "superseded", "blocked"]},
+    "verifier_principal_id": {"type": ["string", "null"]},
+    "review_ref": {"type": ["string", "null"]},
+    "supersedes_claim_id": {"type": ["string", "null"]},
+    "claim_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

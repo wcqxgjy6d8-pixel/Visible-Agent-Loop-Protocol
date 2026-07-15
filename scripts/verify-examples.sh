@@ -45,6 +45,7 @@ from pathlib import Path
 import json
 try:
     from jsonschema import Draft202012Validator
+    from referencing import Registry, Resource
 except ImportError as exc:
     raise SystemExit(
         "jsonschema is required for schema validation. Install with: "
@@ -52,6 +53,16 @@ except ImportError as exc:
     ) from exc
 
 root = Path(".")
+suspension_schema = json.loads((root / "schemas" / "suspension.schema.json").read_text(encoding="utf-8"))
+schema_registry = Registry().with_resource(
+    suspension_schema["$id"],
+    Resource.from_contents(suspension_schema),
+)
+
+def validator_for(schema_name):
+    schema = json.loads((root / "schemas" / schema_name).read_text(encoding="utf-8"))
+    return Draft202012Validator(schema, registry=schema_registry)
+
 schema_by_name = {
     "attention-map.json": "attention-map.schema.json",
     "automation-policy.json": "automation-policy.schema.json",
@@ -62,6 +73,7 @@ schema_by_name = {
     "delegation-policy.json": "delegation-policy.schema.json",
     "evidence-board.json": "evidence-board.schema.json",
     "evidence-status.json": "evidence-status.schema.json",
+    "exception-wake.json": "exception-wake.schema.json",
     "local-overlay.json": "local-overlay.schema.json",
     "mask-list.json": "mask-list.schema.json",
     "routing-feedback.json": "routing-feedback.schema.json",
@@ -69,12 +81,15 @@ schema_by_name = {
     "historical-audit-boundary.json": "historical-audit-boundary.schema.json",
     "routing.json": "routing.schema.json",
     "skill-recommendations.json": "skill-recommendations.schema.json",
+    "iteration-budget.json": "iteration-budget.schema.json",
     "state.json": "state.schema.json",
     "submission-dependencies.json": "submission-dependencies.schema.json",
     "trigger-policy.json": "trigger-policy.schema.json",
+    "wait-policy.json": "wait-policy.schema.json",
+    "wake-result.json": "wake-result.schema.json",
 }
 validators = {
-    schema_name: Draft202012Validator(json.loads((root / "schemas" / schema_name).read_text(encoding="utf-8")))
+    schema_name: validator_for(schema_name)
     for schema_name in set(schema_by_name.values())
 }
 errors = []
@@ -86,7 +101,13 @@ for path in sorted((root / "examples").rglob("*.json")):
     for error in validators[schema_name].iter_errors(data):
         errors.append(f"{path} {error.json_path}: {error.message}")
 
-receipt_validator = Draft202012Validator(json.loads((root / "schemas" / "receipts.schema.json").read_text(encoding="utf-8")))
+slice_validator = validator_for("skill-recommendation-slice.schema.json")
+for path in sorted((root / "examples").glob("*/skill-slices/*.json")):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for error in slice_validator.iter_errors(data):
+        errors.append(f"{path} {error.json_path}: {error.message}")
+
+receipt_validator = validator_for("receipts.schema.json")
 for path in sorted((root / "examples").rglob("dispatch-receipts.jsonl")):
     for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
@@ -95,12 +116,24 @@ for path in sorted((root / "examples").rglob("dispatch-receipts.jsonl")):
         for error in receipt_validator.iter_errors(data):
             errors.append(f"{path}:{lineno} {error.json_path}: {error.message}")
 
+wait_event_validator = validator_for("wait-event.schema.json")
+for path in sorted((root / "examples").rglob("wait-events.jsonl")):
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        data = json.loads(line)
+        for error in wait_event_validator.iter_errors(data):
+            errors.append(f"{path}:{lineno} {error.json_path}: {error.message}")
+
 if errors:
     raise SystemExit("\n".join(errors))
 PY
 
 echo "==> Running unit tests"
-"$PYTHON_BIN" -m unittest tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py tests/test_schema_examples.py
+"$PYTHON_BIN" -m unittest tests/test_control_plane.py tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py tests/test_schema_examples.py
+
+echo "==> Running v0.3 draft core conformance"
+"$PYTHON_BIN" -m valp_cli conformance --profile core-writer
 
 echo "==> Auditing minimal example"
 "$PYTHON_BIN" -m valp_cli audit examples/minimal-task

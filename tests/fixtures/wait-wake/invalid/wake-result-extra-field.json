@@ -1,0 +1,20 @@
+{
+  "schema_version": "valp-wake-result.v1",
+  "task_id": "TASK-INVALID-WAIT",
+  "suspension_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "suspension_epoch": 1,
+  "wake_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "wake_event_id": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "wake_reason": "dependency_ready",
+  "resume_event": "receipt",
+  "resume_ref": "dispatch-receipts.jsonl#2",
+  "accepted_sequence": 2,
+  "resulting_state_revision": 2,
+  "result_ref": "wake-results/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json",
+  "resulting_task_status": "executing",
+  "completed_work_item_ids": ["implementation:codex"],
+  "pending_work_item_ids": [],
+  "failed_work_item_ids": [],
+  "recorded_at": "2026-07-13T10:28:55Z",
+  "unreviewed_override": true
+}

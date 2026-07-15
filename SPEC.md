@@ -135,11 +135,45 @@ records maximum characters, a deterministic reference-token estimate, and the
 task-local references used for progressive disclosure. It is not permission to
 omit role boundaries, expected evidence, or gate requirements.
 
+`task iteration budget`
+: A task-local machine-readable ceiling for aggregate dispatch reference
+  tokens, dispatch submissions, reroutes, and fix-review rounds. The runtime
+  records observed usage and stops before a new dispatch would exceed a limit
+  or a safety gate. It is a control-plane budget, not a provider tokenizer
+  claim.
+
+`provider-reachable skill slice`
+: A compact per-agent recommendation artifact containing only installed skills
+  reachable by that provider and short task labels. The complete skill router
+  report remains coordinator-only; a worker must not receive another
+  provider's private or unreachable skill paths.
+
 `submission dependency`
 : A machine-readable role-to-role gate that requires recorded prerequisite
-evidence and a qualifying completion receipt before a dependent dispatch may
-be submitted. Receipt ledger line order, not timestamps, determines whether
-the dependency was satisfied.
+  evidence and a qualifying completion receipt before a dependent dispatch may
+  be submitted. Receipt ledger line order, not timestamps, determines whether
+  the dependency was satisfied.
+
+`work item identity`
+: The task-scoped tuple of `work_item_id`, agent, role, dispatch id, and
+  dispatch generation that identifies one delegated phase. Agent identity by
+  itself is not a work item identity and cannot qualify a deterministic wake.
+
+`dependency-ready barrier`
+: The default successful wait condition. It is satisfied only when every work
+  item needed by the next coordinator step has a matching completion receipt
+  and valid expected evidence. Unrelated parallel work does not join the
+  barrier.
+
+`exception short circuit`
+: A failure, cancellation, deadline, or explicit user-input event that wakes
+  the coordinator for visible handling before the success barrier is ready. It
+  never marks a pending work item complete or satisfies a completion gate.
+
+`accepted wake`
+: The single revision-CAS transition committed for one suspension epoch. It is
+  identified by a stable wake id, accepted event sequence, result ref, and the
+  exact event or receipt that caused it.
 
 `delegated self-modification`
 : A delegated principal changing live-loaded skills, plugins, memory, MCP
@@ -158,9 +192,10 @@ artifact conform to the later rule.
 
 `suspended waiting`
 : A non-terminal coordinator state entered after dispatch submission while
-workers run. The runtime waits without invoking another coordinator model turn
-and resumes only from a qualifying receipt, timeout, runtime failure,
-cancellation, or explicit user input.
+  workers run. The runtime waits without invoking another coordinator model turn
+  and returns only after one accepted wake is committed for the current
+  suspension epoch. A task status rewrite without that accepted wake is not a
+  resume event.
 
 `receipt`
 : A machine-readable record of dispatch state.
@@ -338,39 +373,212 @@ still running. A runtime process may block on file notifications, queue events,
 socket events, or bounded polling; it must not invoke the coordinator model to
 ask whether work is finished.
 
-Before entering `suspended`, the adapter must have submission proof for at least
-one selected worker. The task's `state.json` records a `suspension` object with:
+Before entering `suspended`, the deterministic core MUST validate a closed
+`wait-policy.json`, its referenced `submission-dependencies.json`, delivery
+proof for every required work item, and the current task revision. The policy
+MUST use `dependency_ready` as its normal success barrier and
+`exception_short_circuit` as its exception behavior. The dependency artifact
+remains the only dependency graph; the wait policy selects work items from it
+and MUST NOT create a second graph.
+
+Each required work item MUST bind all of:
+
+```text
+task_id
+work_item_id
+agent
+role
+dispatch_id
+dispatch_generation
+expected_refs
+```
+
+The task's versioned `state.json` records a closed `suspension` projection with
+at least:
 
 ```text
 status: waiting | resumed
+suspension_id
+suspension_epoch
+state_revision_at_entry
+checkpoint_ref (optional opaque task-local ref)
+wait_policy_ref: immutable content-addressed policy snapshot
+wait_policy_id
+strict_identity
+event_sequence_at_entry
+receipt_event_sequence_at_entry
+receipt_cursor_at_entry
+evidence_refs_present_at_entry
+required_work_items
+required_work_item_ids
+pending_work_item_ids
+completed_work_item_ids
+failed_work_item_ids
 entered_at
 deadline_at
+execution_deadline
 waiting_for_agents
 receipt_count_at_entry
 allowed_resume_events:
   receipt | timeout | runtime_failure | cancellation | user_input
-resume_event, resumed_at, and resume_ref when resumed
+accepted_wake when resumed:
+  wake_id
+  wake_event_id
+  wake_reason
+  resume_event
+  resume_ref
+  accepted_sequence
+  resulting_state_revision
+  result_ref
 ```
 
-Resume is deterministic:
+A runtime adapter MAY record `checkpoint_ref` as an opaque task-local reference
+only when the ref is safe, existing, and non-empty. Replay and audit MUST reject
+an unsafe, missing, or empty referenced artifact. Presence proves only those
+reference properties; it does not prove that the artifact is restorable
+coordinator state, that an adapter can restore coordinator execution, or that a
+continuation was invoked exactly once. An adapter MUST omit `checkpoint_ref`
+when no such artifact exists; the field is not a universal prerequisite for
+deterministic wait.
 
-- `receipt`: a newer `dispatch_completed`, `dispatch_blocked`,
-  `manual_result_attested`, or `manual_blocked` receipt for a waiting agent;
+For each strict epoch, the core MUST write the validated authored policy to an
+immutable content-addressed `wait-policies/<sha256>.json` snapshot before it
+commits the suspension. `wait_policy_ref` MUST name that snapshot. A later
+epoch MAY use an updated root `wait-policy.json`, but replay and audit of prior
+epochs MUST load their recorded snapshots rather than reinterpret history
+against the mutable root policy.
+
+A reference dispatch helper MAY generate the root `wait-policy.json` for the
+exact work items it is about to submit, provided every item is copied from the
+validated `submission-dependencies.json` and the policy is written before
+delivery. This is policy authoring, not delivery or completion proof.
+
+After concrete identity-bound delivery proof exists, a runtime adapter bridge
+MAY observe task-local expected evidence while the coordinator is suspended.
+It may emit `dispatch_completed` only when every expected ref for that work
+item is safe, present, non-empty, and valid, and only when none of those refs
+was already present at suspension entry. The completion receipt MUST bind the
+current suspension epoch and work-item identity and MUST cite the originating
+`dispatch_submitted` receipt. Pre-existing evidence MUST NOT be converted into
+a new completion receipt.
+
+`resume_event` records the accepted input. `dependency_ready` is a derived
+`wake_reason` for a qualifying receipt after the final required work item
+passes the barrier; it is not an input event.
+
+Successful resume is a barrier, not an any-terminal race:
+
+- a completion receipt qualifies only when task, work item, agent, role,
+  dispatch id, dispatch generation, and expected refs match the policy;
+- every required work item MUST have a qualifying `dispatch_completed`
+  receipt and valid expected evidence before `dependency_ready` is accepted;
+- unrelated work items may continue and MUST NOT block `dependency_ready`;
+- a heartbeat or runtime `completed` label without receipt and evidence does
+  not satisfy the barrier;
+- Full and Remote Mode MUST reject `manual_result_attested` as a completion
+  signal. Manual Mode MUST record that deterministic automatic wake is
+  degraded rather than claim Full Mode conformance.
+
+Exceptions short-circuit only into coordinator handling:
+
+- `dispatch_blocked` or `manual_blocked`: the matching work item failed;
 - `timeout`: the recorded deadline is reached;
 - `runtime_failure`: the runtime exports a failure state or evidence ref;
 - `cancellation`: a user, runtime, or policy cancellation is recorded;
 - `user_input`: new explicit user input is recorded by the runtime adapter.
 
+`runtime_failure`, `cancellation`, and `user_input` MUST reference a closed,
+task-local `valp-exception-wake.v1` JSON artifact. The artifact MUST bind the
+current `task_id`, `suspension_id`, `suspension_epoch`, and event, and MUST
+record a non-empty reason plus a principal with a type and identifier. A
+runtime failure principal MUST be `runtime`; a user-input principal MUST be
+`user`; a cancellation principal MAY be `user`, `runtime`, or `policy`.
+Runtime failure MUST also cite at least one separate, existing, non-empty
+task-local supporting evidence ref. The artifact records attribution; it does
+not by itself prove authentication and does not prescribe adapter transport.
+
+The deterministic core MUST hash the exact artifact bytes, record the source
+ref, SHA-256 digest, principal, reason, and supporting refs in the accepted
+wake, committed wait event, and immutable wake result, and reject stale,
+cross-task, cross-suspension, cross-epoch, event-mismatched, unsafe, malformed,
+or changed evidence. The core assigns the authoritative accepted sequence;
+producer-supplied sequencing is not trusted. An identical external wake uses
+the source digest in its idempotency key, while changed bytes or conflicting
+attribution fail closed.
+
+An exception wake MUST preserve the immediately preceding committed
+`pending_work_item_ids`, `completed_work_item_ids`, and
+`failed_work_item_ids`. A blocked-work-item wake MAY append only its matching
+pending work item to `failed_work_item_ids`; it MUST NOT remove that item from
+pending or add it to completed. An exception wake MUST NOT be represented as
+`dependency_ready` and MUST NOT satisfy Done Criteria.
+
+Replay and audit MUST validate these transitions against the immediately
+preceding projection, including when state, event projection, and result have
+been edited together. The three work-item arrays in the immutable wake result
+MUST exactly match the accepted suspension projection.
+
+For strict deterministic suspension, every committed projection MUST retain the
+exact ordered required-work-item table, IDs, wait-policy ID, and immutable
+policy snapshot ref recorded for its epoch. Internal consistency among edited
+projections is not sufficient.
+
+Replay and audit of every receipt-driven completion or wake MUST revalidate the
+recorded ledger ref, receipt ID, terminal event, suspension epoch, and exact
+work-item identity. Editing a referenced receipt after acceptance MUST fail
+closed even when state, event projection, and result remain internally aligned.
+
 `user_input` is an explicit human override and may resume before `deadline_at`.
 The deadline governs automatic `timeout` resume only; it must not delay a user
 who intentionally re-enters the control loop.
 
-A receipt resumes coordination but does not prove Done. Expected evidence,
-review, recommendation resolution, approval, final synthesis, and audit remain
-unchanged. A runtime failure or timeout normally resumes into `blocked` for
-visible handling; cancellation resumes into `cancelled`; receipt and user input
-resume into `executing`. The coordinator may suspend again for remaining work,
-creating a new visible suspension record.
+Every accepted runtime event MUST carry a monotonic accepted sequence. Receipt
+and deadline races are resolved by the first event accepted by the core, not by
+wall-clock timestamp. The state transition MUST use revision compare-and-swap.
+The authoritative event MUST be durably committed before its state projection,
+or the implementation MUST provide equivalent atomicity. Deterministically
+repairing a missing projection from committed events is event-to-projection
+recovery, including after a process crash; it is not coordinator restart or
+continuation proof. A projection without a committed event MUST fail closed.
+
+An adapter that cannot durably sync newly created ledger or replacement-file
+directory metadata on a platform MUST expose that limitation. Process-crash
+recovery or atomic rename alone MUST NOT be described as proven sudden-power-loss
+durability.
+
+Only one wake transition may be accepted for a suspension epoch. Repeating the
+same wake idempotency key MUST return the already-recorded byte-equivalent wake
+result without a second state revision, wake event, or duplicate wake transition.
+A conflicting duplicate, stale epoch, stale dispatch generation, or cross-task,
+cross-role, or cross-work-item event MUST fail closed. `valp wait` MUST return
+only after the matching `accepted_wake` is committed; it MUST NOT treat an
+unrelated rewrite of `state.status` as successful resume.
+
+Coordinator-model-free waiting requires one blocking runtime wait or event
+subscription. While `state.status` is `suspended`, the runtime MUST NOT invoke
+the coordinator model for status polling, progress messages, or periodic checks.
+Local file, socket, queue, or receipt polling is allowed because it does not
+invoke a model. User-facing status should report that a local wait was used,
+that coordinator-model polling was not observed, and the accepted wake reason
+and receipt evidence. It MUST NOT estimate provider billing or require the user
+to derive a cost. The coordinator model is invoked again only after an accepted
+wake event or an explicit user turn.
+
+The reference core's exactly-once scope ends at the accepted wake transition.
+An asynchronous adapter MAY claim exactly-once coordinator continuation only
+when it exports a wake-ID-bound continuation invocation receipt and
+restart/restore evidence showing that duplicate invocations are suppressed
+across failure recovery. Otherwise the adapter MUST downgrade the continuation
+capability claim. `checkpoint_ref` alone is not continuation invocation or
+restorability evidence.
+
+A successful `dependency_ready` wake normally resumes into `executing`. A
+runtime failure, blocked work item, or timeout normally resumes into `blocked`
+for visible handling; cancellation resumes into `cancelled`; explicit user
+input resumes into `executing`. None of these transitions bypass expected
+evidence, review, recommendation resolution, approval, final synthesis, or
+audit. A later suspension creates a new epoch and cannot be awakened by events
+from an older epoch.
 
 ### 4.2 Trigger Policy And Auto Visible Mode
 
@@ -573,6 +781,7 @@ Adapter classes:
 |---|---|---|
 | pane controller | visible terminal panes and submit proof | yes |
 | daemon queue | local daemon claims queued tasks and reports status | yes, if receipts and evidence are exported |
+| local process worker | approved local subprocess with submission, lifecycle, output, and evidence proof | yes, for the declared host/profile |
 | hosted/local platform | Web board plus local runtime workers | yes, if agent output and proof are auditable |
 | remote SSH | runtime runs on a remote host | yes, with remote proof caveats |
 | manual | human copies dispatches and results | no; Manual Mode only |
@@ -814,13 +1023,21 @@ task evidence writing
 dispatch receipt ledger
 ```
 
+When Full or Remote Mode claims asynchronous suspended waiting, it MUST also
+export a versioned wait policy, identity-bound deterministic receipts, an
+append-only accepted event sequence, a revisioned state projection, and the
+immutable accepted wake result. A runtime that cannot export those artifacts
+MUST degrade the capability claim instead of describing agent polling or a
+manual attestation as deterministic automatic wake.
+
 Daemon or platform runtimes may satisfy Full Mode when their adapter exports
 equivalent submission proof, state transitions, output references, and evidence
 locations. Queue completion alone is not enough.
 
 Manual Mode may write task folders and evidence files, but it cannot claim
 automatic dispatch proof, runtime-backed status waits, or Full Mode receipt
-equivalence.
+equivalence. It may use a foreground/manual wait, but MUST record that
+deterministic automatic wake is unsupported or degraded.
 
 ## 10. Dispatch Receipts
 
@@ -858,6 +1075,26 @@ state or equivalent proof.
 - `manual_result_attested` means a human coordinator attests that expected
   evidence exists in a Manual Mode task.
 
+Legacy receipts identify an agent-level event and remain readable for existing
+tasks. A deterministic receipt uses `valp-dispatch-receipt.v2` and MUST also
+record:
+
+```text
+receipt_id
+task_id
+event_sequence
+agent
+role
+work_item_id
+dispatch_id
+dispatch_generation
+expected_refs
+suspension_epoch for terminal events
+```
+
+These fields form one safety identity. A missing or mismatched field cannot be
+repaired from agent name, timestamp, file presence, or coordinator intent.
+
 If expected evidence is declared, gates require `dispatch_completed`.
 
 For Full Mode and Remote Mode, `dispatch_completed` is not valid by itself. The
@@ -868,6 +1105,11 @@ equivalent adapter proof. A dry-run command, local sub-agent result,
 simulation, manually fabricated completion receipt, or copied review file cannot
 be upgraded into Full Mode completion.
 
+A concrete proof identity or ref MUST be a non-empty adapter-issued string,
+either directly or inside a typed structured adapter record. Boolean flags,
+numeric counters, and non-empty containers without such an identity or ref do
+not prove delivery.
+
 For a controlling agent that is executing its own assigned work, the runtime
 must not paste the controlling agent's dispatch back into its own live context.
 Instead, the controlling agent writes compact task-local evidence and the
@@ -877,12 +1119,32 @@ it is controller-local evidence unless an adapter also records runtime
 submission proof. Controller-local evidence must not be described as HERDR live
 agent dispatch.
 
-Receipt ledgers are append-only, so gates must evaluate the latest receipt for
-each selected agent, not merely search for any historical success. A later
-`dispatch_blocked` supersedes an earlier `dispatch_completed` until a newer
-`dispatch_completed` receipt records the recovered evidence. This prevents old
-success receipts from hiding a failed retry, a missed pane submission, or an
-agent that timed out before producing required evidence.
+Receipt ledgers are append-only. Legacy gates evaluate the latest receipt for
+each selected agent. Deterministic gates MUST evaluate the latest accepted
+receipt for the exact task, work item, role, dispatch id, and dispatch
+generation. A later matching `dispatch_blocked` supersedes an earlier
+`dispatch_completed` until a newer matching `dispatch_completed` records the
+recovered evidence. A receipt from another role, work item, generation,
+suspension epoch, or task is unrelated evidence and cannot supersede or satisfy
+the gate.
+
+Receipt timestamps are descriptive. Deterministic wake ordering uses the
+accepted event sequence and revision CAS. Duplicate receipt or event ids MUST
+be replayed idempotently or rejected on content conflict; they MUST NOT create a
+second wake.
+
+When multiple adapter processes share a file-backed receipt ledger, sequence
+allocation and durable append MUST occur in one inter-process locked
+transaction. Reading the current maximum and appending under separate lock
+epochs is not deterministic ordering.
+
+A retry of the same task, dispatch ID, dispatch generation, work item, and
+submission event MUST use a stable logical submission identity. If an identical
+receipt already exists, the retry MUST replay it without allocating a new
+sequence. Same-generation content conflicts MUST fail closed. For adapters that
+export queue and receipt files separately, a queue file without its matching
+receipt is prepared data, not submission proof, and MUST be reconciled before a
+worker treats it as delivered.
 
 ## 10.1 Correction Cycle Evidence
 
@@ -968,6 +1230,18 @@ artifact must match the current role assignments and cannot omit or weaken a
 generated edge. Co-located roles still require role-scoped receipts whose
 `expected_refs` distinguish the phases; agent identity alone is not enough.
 
+Version 2 also records the task's work-item table. Each work item binds role,
+agent, dispatch id, dispatch generation, and expected refs; dependency edges
+refer to the prerequisite and dependent work-item ids and generations. Version
+1 remains readable for historical submission ordering but does not contain
+enough identity to qualify a new deterministic suspension.
+
+`wait-policy.json` MUST reference this artifact and select the work items needed
+by the next coordinator step. It MUST NOT restate or replace the dependency
+edges. Its work-item records add the dispatch identity needed to evaluate one
+suspension epoch. This keeps submission order and wait readiness on one
+dependency truth.
+
 For Full and Remote Mode, every prerequisite ref must exist and remain valid,
 and a matching `dispatch_completed` receipt must appear earlier in
 `dispatch-receipts.jsonl` than the dependent role's `dispatch_submitted`
@@ -976,12 +1250,24 @@ receipt. For Manual Mode, the equivalent ordering is
 order is authoritative. Timestamps are descriptive and must not be used to
 repair reversed ledger order.
 
-Reference dispatch tools must validate all requested dependency gates before
-preflight, queue writes, subprocess submission, or any other delivery side
-effect. A request that includes one uncleared target fails as a whole, so a
-bulk submission cannot partially dispatch earlier targets and then stop. Manual
-Mode can print dependency-aware instructions, but only the later ordered
-attestations prove that a human followed them.
+Reference dispatch tools must validate dependency gates before preflight, queue
+writes, subprocess submission, or any other delivery side effect. An explicit
+agent or role request that includes an uncleared target fails as a whole.
+Default all-agent automatic progression instead derives the current dependency
+frontier: it submits only work items whose prerequisites are complete, excludes
+already completed or currently submitted work items, and leaves later work for
+the next post-wake call. One frontier is submitted atomically; a call must not
+partially advance through multiple ordered frontiers. Manual Mode can print
+dependency-aware instructions, but only the later ordered attestations prove
+that a human followed them.
+
+When a Full or Remote Mode adapter is invoked with a zero evidence-wait window,
+the operation is submission-only. The adapter must return after concrete
+delivery proof without treating absent immediate evidence as
+`dispatch_blocked`. VALP binds that delivery proof to the routed work item and
+`valp wait` owns later expected-evidence observation, completion receipt
+creation, and deterministic wake. A zero evidence-wait window is not a zero
+submission-proof window.
 
 ## 11. Context Compression
 
@@ -1046,6 +1332,41 @@ ceiling, the coordinator shortens prose and skill labels first, then replaces
 detail with task-local refs. It must not truncate a permission boundary,
 expected evidence path, receipt requirement, or approval rule. A dispatch that
 still exceeds either ceiling is not submitted and must be recorded as blocked.
+
+### 11.2 Adaptive Routing And Iteration Budget
+
+After the current MCP/tool scan and task-relevant skill recommendation, routing
+selects the minimum capable team that covers the required roles. A task records
+`iteration-budget.json` with these ceilings and observed counters:
+
+```text
+max_dispatch_reference_tokens
+max_dispatches
+max_reroutes
+max_fix_review_rounds
+usage.dispatch_reference_tokens
+usage.dispatches
+usage.reroutes
+usage.fix_review_rounds
+```
+
+The reference implementation counts accepted submission receipts, not merely
+dispatch files, and derives reference-token usage from the recorded dispatch
+payload measurement. Before a new submitted phase it projects the additional
+usage and stops when a ceiling would be exceeded. Approval, runtime preflight,
+missing-evidence, critical review, and context-compression gates stop the loop
+even when budget remains. A reroute preserves the previous route evidence and
+consumes one reroute budget unit.
+
+When a runtime preserves a legacy receipt and appends an identity-bound v2
+translation for the same accepted delivery, the pair counts as one logical
+dispatch. The v2 work-item identity is authoritative; compatibility records
+must not consume the task budget twice.
+
+The full `skill-recommendations.json` report is coordinator-only context for
+this purpose. Each selected provider receives a task-local
+`skill-slices/<agent>.json` containing only provider-reachable installed matches.
+The slice is routing evidence, not permission to load or modify a skill.
 
 A current or newly generated dispatch must never use a historical audit
 boundary to bypass this rule. A terminal historical task may use

@@ -36,7 +36,7 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=10
+Summary: pass=13 warn=0 fail=0
 ```
 
 To verify all bundled examples and CLI tests in one command:
@@ -115,7 +115,7 @@ evidence and final synthesis.
 |---|---|---|---|
 | macOS | HERDR stable installer or Homebrew | Full Mode | Reference runtime path |
 | Linux | HERDR stable installer or package manager | Full Mode | Reference runtime path |
-| Windows stable workflow | SSH into a Linux/macOS HERDR host | Remote Mode | Full Mode guarantees live on the remote host |
+| Windows stable workflow | SSH into a Linux/macOS HERDR host | Remote Mode | Remote guarantees are conditional on adapter evidence exported by that host; no live continuation E2E is claimed here |
 | Windows local workflow | HERDR Windows preview beta | Conditional Full Mode | Verify beta limitations before claiming Full Mode |
 | Windows without HERDR | Manual Mode today; runner adapter planned | Manual / future adapter | Windows Terminal panes are display, not runtime proof |
 | No runtime | Manual files only | Manual Mode | No runtime proof |
@@ -218,7 +218,7 @@ output looks like:
 
 ```text
 VALP audit: FAIL
-Summary: pass=8 warn=2 fail=5 skip=4
+Summary: pass=8 warn=2 fail=5
 [FAIL] dispatch_receipts: latest receipt is not dispatch_completed
 [FAIL] expected_evidence: Missing expected evidence
 [FAIL] final_synthesis: Missing final synthesis
@@ -316,19 +316,49 @@ To actually submit through the local HERDR adapter:
 bin/valp dispatch TASK-001 --workspace /path/to/workspace --submit
 ```
 
+With no `--agent` or `--role`, this submits only the current dependency-ready
+frontier. A later call after the committed wake advances the next frontier;
+already submitted or completed work items are not sent again. Explicitly
+requesting an unready agent or role remains a hard error.
+
+When the reference dispatch helper submits a specific role or agent, it writes
+the closed `.herdr-loop/tasks/TASK-001/wait-policy.json` for those exact work
+items before delivery. Other adapters may author the file directly from
+`submission-dependencies.json`; `examples/wait-policy.json` shows the shape.
+`valp wait` rejects a missing policy or work items without concrete delivery
+proof. Manual Mode may wait without this file, but its audit result is
+explicitly degraded.
+
 After delivery proof exists, suspend coordinator model turns while workers run:
 
 ```bash
+bin/valp dispatch TASK-001 --workspace /path/to/workspace --wait-seconds 0 --submit
 bin/valp wait TASK-001 --workspace /path/to/workspace --timeout 300
 ```
 
-The runtime process returns only for a newer terminal receipt, timeout, runtime
-failure, cancellation, or explicit user input. Another runtime or user-facing
-surface can wake it explicitly with:
+The zero evidence-wait window makes the HERDR call submission-only: it returns
+after pane delivery proof and does not wait for expected evidence. The generated
+wait policy still carries the exact expected refs, and `valp wait` owns later
+evidence observation and the completion receipt.
+
+Keep this single command or runtime subscription pending. Do not ask a Lead
+Agent to poll status every few seconds: every model turn spends tokens. The
+`valp wait` process performs local receipt/evidence observation without model
+calls and returns only after a committed wake or exception.
+
+The runtime process returns only for the final qualifying dependency-ready barrier receipt
+or an exception short circuit: a matching blocked work item, timeout, runtime
+failure, cancellation, or explicit user input. Intermediate completions and
+unrelated terminal receipts do not return from `valp wait`. Another runtime or
+user-facing surface can wake it explicitly with:
 
 ```bash
-bin/valp resume TASK-001 --workspace /path/to/workspace --event user_input
+bin/valp resume TASK-001 --workspace /path/to/workspace --event user_input --ref evidence/wake-requests/user-input.json
 ```
+
+The `--ref` file must be a closed task-local `valp-exception-wake.v1` artifact
+bound to the current task, suspension id, epoch, event, principal, and reason;
+see `examples/exception-wake.json` for the shape.
 
 Suspension is non-terminal. It does not satisfy evidence, review, approval,
 recommendation-resolution, synthesis, or audit gates.

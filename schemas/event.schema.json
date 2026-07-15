@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-event.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "installation_sequence", "installation_id", "leader_epoch", "task_id", "event_kind", "accepted_message_id", "prior_revision", "new_revision", "occurred_at", "actor_principal_id", "payload_schema", "payload", "prior_event_digest", "event_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-event.v1"},
+    "event_id": {"type": "string", "minLength": 1},
+    "installation_sequence": {"type": "integer", "minimum": 1},
+    "installation_id": {"type": "string", "minLength": 1},
+    "leader_epoch": {"type": "integer", "minimum": 0},
+    "task_id": {"type": ["string", "null"]},
+    "event_kind": {"type": "string", "minLength": 1},
+    "accepted_message_id": {"type": "string", "minLength": 1},
+    "prior_revision": {"type": "integer", "minimum": 0},
+    "new_revision": {"type": "integer", "minimum": 1},
+    "occurred_at": {"type": "string", "minLength": 1},
+    "actor_principal_id": {"type": "string", "minLength": 1},
+    "payload_schema": {"type": "string", "minLength": 1},
+    "payload": {"type": "object"},
+    "prior_event_digest": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$"},
+    "event_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

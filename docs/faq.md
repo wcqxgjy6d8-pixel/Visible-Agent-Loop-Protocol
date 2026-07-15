@@ -68,7 +68,8 @@ High-risk work still requires explicit approval before execution.
 
 Remote Mode means the compatible runtime runs on a remote machine. The remote
 runtime owns the agent state, submission proof, receipts, and evidence store.
-Local terminal state is not proof of remote completion.
+Remote guarantees are conditional on adapter evidence for those records. Local
+terminal state or SSH connectivity is not proof of remote completion.
 
 ## What should Windows users do?
 

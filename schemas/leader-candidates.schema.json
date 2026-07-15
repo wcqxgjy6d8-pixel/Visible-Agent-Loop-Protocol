@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-leader-candidates.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "installation_id", "epoch", "candidates", "generated_at"],
+  "properties": {
+    "schema_version": {"const": "valp-leader-candidates.v1"},
+    "installation_id": {"type": "string", "minLength": 1},
+    "epoch": {"const": 0},
+    "candidates": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["principal_id", "principal_kind", "capabilities", "presence"], "properties": {"principal_id": {"type": "string", "minLength": 1}, "principal_kind": {"type": "string", "minLength": 1}, "capabilities": {"type": "array", "items": {"type": "string", "minLength": 1}}, "presence": {"type": "string", "minLength": 1}}}, "minItems": 1},
+    "generated_at": {"type": "string", "minLength": 1}
+  }
+}

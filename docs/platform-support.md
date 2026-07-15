@@ -21,7 +21,7 @@ Sources:
 | macOS Intel | HERDR stable installer or Homebrew | Full Mode |
 | Linux x86_64 | HERDR stable installer, manual binary, or package manager | Full Mode |
 | Linux aarch64 | HERDR stable installer, manual binary, or package manager | Full Mode |
-| Windows, stable workflow | SSH into Linux/macOS host and run HERDR there | Remote Mode with Full Mode guarantees on remote host |
+| Windows, stable workflow | SSH into Linux/macOS host and run HERDR there | Remote Mode; guarantees are conditional on adapter evidence exported by that host |
 | Windows, local workflow | Native HERDR Windows preview beta | Full Mode only where beta features satisfy adapter requirements |
 | Windows, no HERDR | Manual Mode today; runner/queue adapter is planned | Manual Mode now, future adapter when implemented |
 | Any system without compatible runtime | Manual folders, attestations, and evidence only | Manual Mode |
@@ -70,7 +70,9 @@ herdr
 ```
 
 This runs the runtime on the remote host. The remote host owns panes, agent
-state, receipts, and task evidence.
+state, receipts, and task evidence. SSH reachability alone is not Remote Mode
+proof; guarantees are conditional on adapter evidence for submission, state,
+receipts, and evidence on that specific host.
 
 Local beta workflow:
 

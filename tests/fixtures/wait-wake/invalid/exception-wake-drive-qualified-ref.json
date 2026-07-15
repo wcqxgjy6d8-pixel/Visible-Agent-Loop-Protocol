@@ -1,0 +1,14 @@
+{
+  "schema_version": "valp-exception-wake.v1",
+  "task_id": "TASK-WAIT-INVALID",
+  "suspension_id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "suspension_epoch": 1,
+  "event": "runtime_failure",
+  "principal": {
+    "type": "runtime",
+    "id": "queue-adapter"
+  },
+  "reason": "The runtime reported a failure.",
+  "recorded_at": "2026-07-13T10:29:00Z",
+  "supporting_refs": ["C:/logs/runtime.txt"]
+}

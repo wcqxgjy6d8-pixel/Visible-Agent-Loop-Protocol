@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Routing History Entry",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "task_id",
+    "event",
+    "reroute_number",
+    "previous_routing_digest",
+    "previous_selected_agents",
+    "previous_role_assignments",
+    "recorded_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-routing-history.v1"},
+    "task_id": {"type": "string"},
+    "event": {"const": "reroute_started"},
+    "reroute_number": {"type": "integer", "minimum": 1},
+    "previous_routing_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "previous_selected_agents": {"type": "array", "items": {"type": "string"}},
+    "previous_role_assignments": {"type": "object"},
+    "recorded_at": {"type": "string"}
+  },
+  "additionalProperties": false
+}

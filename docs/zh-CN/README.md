@@ -26,17 +26,18 @@ VALP 要求任务过程留下可审计的证据：
 
 所以 VALP 更像一个 acceptance system，而不是聊天提示词集合。
 
-## v0.3 提案：从任务验收到安装级控制平面
+## v0.3 Draft：从任务验收到安装级控制平面
 
-当前规范、实现和发布版本仍是 `0.2.0`。
-[RFC 0001](../rfcs/0001-v0.3-installation-control-plane.md) 的状态是
-**Proposed**，目标是 `0.3.0-draft`；它不是当前 `SPEC.md` 的规范语义，
-也不代表 schemas、CLI、Runtime adapter 或稳定版本已经实现。
+当前发布版本仍是 `0.2.0`。
+[RFC 0001](../rfcs/0001-v0.3-installation-control-plane.md) 作为稳定版本仍未完成，
+但 installation-control-plane core、schemas、claim/review、task reducer 和
+local-process adapter 已在 reference CLI 中落地。不改变当前 Runtime 支持范围
+或稳定发布状态。
 
 可以把变化理解成：`0.2.0` 主要检查“这个任务凭什么算 Done”，v0.3 提案
 进一步检查“管理所有任务的安装级控制平面凭什么可信”。
 
-| 层面 | 当前 `0.2.0` | v0.3 RFC 提案 |
+| 层面 | 当前 `0.2.0` | v0.3 Draft 实现 |
 |---|---|---|
 | 控制主体 | 每个任务根据当前能力证据选择 coordinator | 用户明确选择 Installation Leader；确定性 core 和 epoch 负责约束与 fencing |
 | 能力真值 | 当前 scan、routing、provider matrix 和 task evidence | 持久 registry 分开记录 `official_claim`、`local_presence`、`live_callable`、`task_verified` |
@@ -81,7 +82,7 @@ bin/valp audit examples/minimal-task
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0 skip=10
+Summary: pass=13 warn=0 fail=0
 ```
 
 再看这个演示：

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-protocol-manifest.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "active_protocol_version", "supported_protocol_read_versions", "supported_protocol_write_versions", "supported_schema_versions", "required_core_message_kinds", "enabled_extension_namespaces", "digest_algorithms", "migration_paths", "implementation_id", "manifest_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-protocol-manifest.v1"},
+    "active_protocol_version": {"type": "string", "minLength": 1},
+    "supported_protocol_read_versions": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "uniqueItems": true},
+    "supported_protocol_write_versions": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "uniqueItems": true},
+    "supported_schema_versions": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1}},
+    "required_core_message_kinds": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "uniqueItems": true},
+    "enabled_extension_namespaces": {"type": "array", "items": {"type": "string", "pattern": "^[a-z][a-z0-9.-]*$"}, "uniqueItems": true},
+    "digest_algorithms": {"type": "array", "items": {"const": "sha256"}, "minItems": 1, "uniqueItems": true},
+    "migration_paths": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "implementation_id": {"type": "string", "minLength": 1},
+    "manifest_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

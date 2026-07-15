@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Provider-Reachable Skill Recommendation Slice",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "task_id",
+    "agent",
+    "status",
+    "source_ref",
+    "recommendations",
+    "provider_reachable"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-skill-recommendation-slice.v1"},
+    "task_id": {"type": "string"},
+    "agent": {"type": "string"},
+    "status": {"enum": ["complete", "no_matches", "unavailable", "failed", "not_run"]},
+    "source_ref": {"const": "skill-recommendations.json"},
+    "provider_reachable": {"type": "boolean"},
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["skill", "task", "confidence"],
+        "properties": {
+          "skill": {"type": "string"},
+          "task": {"type": "string"},
+          "confidence": {"type": "number"},
+          "provider": {"type": "string"},
+          "path": {"type": "string"},
+          "decision": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "missing_skills": {"type": "array", "items": {"type": "string"}},
+    "omitted_match_count": {"type": "integer", "minimum": 0},
+    "generated_at": {"type": "string"}
+  },
+  "additionalProperties": false
+}

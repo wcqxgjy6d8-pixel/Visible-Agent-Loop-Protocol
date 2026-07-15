@@ -56,12 +56,30 @@ runtime record. A dry-run dispatch, a local sub-agent result, a simulated
 review, or a manually appended `dispatch_completed` receipt is not HERDR/live
 runtime proof.
 
-Because the ledger is append-only, validators must evaluate the latest receipt
-for each selected agent. A historical `dispatch_completed` does not satisfy the
-gate if a later receipt for the same agent is `dispatch_blocked`,
-`dispatch_inserted`, or only `dispatch_submitted`. If late evidence appears
-after a timeout, the runtime must append a newer `dispatch_completed` receipt
-that points to the recovered evidence.
+Deterministic Full/Remote suspension accepts only an identity-matching
+`dispatch_submitted` receipt with concrete adapter proof. A missing or empty
+proof object and `manual_delivery_attested` do not satisfy the suspension entry
+guard. Proof identity/ref values must be non-empty strings, directly or inside
+a typed adapter record; booleans and counters are not delivery identities.
+
+Because the ledger is append-only, legacy validators evaluate the latest
+receipt for each selected agent. Deterministic wait validators evaluate the
+latest accepted receipt for the exact task, work item, role, dispatch id, and
+dispatch generation. A different role or retry generation cannot supersede or
+satisfy that gate. If late evidence appears after a timeout, the runtime must
+append a newer identity-bound `dispatch_completed` receipt and use an explicit
+recovery transition.
+
+File-backed adapters must allocate the next receipt sequence and durably append
+the receipt while holding one inter-process task lock. The reference queue
+adapter uses the same lock as the state/wake reducer so concurrent submitters
+cannot reuse a sequence.
+
+The reference queue adapter also gives each logical task/dispatch/generation
+submission a stable receipt ID. Retrying after a file or directory flush error
+reuses an identical queue record and receipt instead of appending a second
+sequence. A queue JSON file alone is prepared data, not delivery proof; a worker
+must require its matching `dispatch_submitted` receipt or reconcile the pair.
 
 If an evidence file exists but is marked `invalid`, `superseded`, `rejected`, or
 `blocked` in `evidence-status.json`, it does not satisfy `dispatch_completed` or
@@ -83,7 +101,8 @@ Receipts are appended to:
 Every non-empty JSONL line must parse as a JSON object. A corrupted receipt
 ledger is an audit failure, even if earlier valid lines look complete.
 
-Example:
+Legacy/non-deterministic receipt example (useful for older and Manual Mode task
+folders, but not deterministic Full/Remote submission proof):
 
 ```json
 {
@@ -100,6 +119,59 @@ Example:
   "summary": "Expected dispatch evidence exists"
 }
 ```
+
+Deterministic Full/Remote receipt v2 starts with concrete adapter-issued
+submission proof while binding the complete work-item identity:
+
+```json
+{
+  "schema_version": "valp-dispatch-receipt.v2",
+  "receipt_id": "receipt-submit-41",
+  "task_id": "TASK-001",
+  "event_sequence": 41,
+  "ts": "2026-07-13T10:28:45Z",
+  "agent": "codex",
+  "role": "implementer",
+  "work_item_id": "implementer:codex",
+  "dispatch_id": "TASK-001:implementer:1",
+  "dispatch_generation": 1,
+  "event": "dispatch_submitted",
+  "dispatch_ref": "agents/codex/dispatch.md",
+  "expected_refs": ["agents/codex/evidence.md", "evidence/verification.md"],
+  "proof": {
+    "adapter_record": {
+      "adapter": "herdr",
+      "submission_id": "herdr-submit-7f3a"
+    }
+  }
+}
+```
+
+The matching terminal completion keeps the same identity and records the
+suspension epoch:
+
+```json
+{
+  "schema_version": "valp-dispatch-receipt.v2",
+  "receipt_id": "receipt-complete-42",
+  "task_id": "TASK-001",
+  "event_sequence": 42,
+  "ts": "2026-07-13T10:28:55Z",
+  "agent": "codex",
+  "role": "implementer",
+  "work_item_id": "implementer:codex",
+  "dispatch_id": "TASK-001:implementer:1",
+  "dispatch_generation": 1,
+  "suspension_epoch": 1,
+  "event": "dispatch_completed",
+  "dispatch_ref": "agents/codex/dispatch.md",
+  "expected_refs": ["agents/codex/evidence.md", "evidence/verification.md"]
+}
+```
+
+Terminal v2 receipts require `suspension_epoch`. Full and Remote Mode reject
+manual terminal receipts as wake evidence. Timestamps remain descriptive;
+accepted core sequence and revision CAS decide races.
 
 ## Manual Mode
 

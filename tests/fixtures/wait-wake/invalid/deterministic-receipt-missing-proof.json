@@ -1,0 +1,15 @@
+{
+  "schema_version": "valp-dispatch-receipt.v2",
+  "receipt_id": "receipt-missing-proof",
+  "task_id": "TASK-WAIT-INVALID",
+  "event_sequence": 1,
+  "ts": "2026-07-13T10:28:15Z",
+  "agent": "codex",
+  "role": "implementer",
+  "work_item_id": "implementation:codex",
+  "dispatch_id": "dispatch-implementation-1",
+  "dispatch_generation": 1,
+  "event": "dispatch_submitted",
+  "dispatch_ref": "agents/codex/dispatch.md",
+  "expected_refs": ["agents/codex/evidence.md"]
+}

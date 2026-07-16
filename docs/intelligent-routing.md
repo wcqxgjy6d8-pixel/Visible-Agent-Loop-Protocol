@@ -7,12 +7,46 @@ change the route.
 The goal is not to create a hidden optimizer. The goal is to make routing
 adaptive, auditable, and easy to correct.
 
+## Dynamic Model Gate
+
+For model-aware Full or Remote Mode routing, runtime preflight emits one closed
+model probe per candidate before scoring. The scorer combines current
+model/session evidence with capability fit; it does not treat the agent product
+name or a static configured default as the active model.
+
+High-risk role eligibility requires:
+
+```text
+probe status = observed
+active model id != unknown
+computed freshness = current
+session identity = known
+```
+
+Freshness uses a bounded TTL of 60 to 86400 seconds, default 3600. The history
+binding covers model, provider, reasoning mode, freshness state, session token,
+and agent surface. Any change invalidates model-bound history. Missing prior
+binding also invalidates historical score until fresh evidence requalifies the
+new binding.
+
+When the gate fails, routing removes implementer/final-review eligibility,
+records the missing capability, and stops or uses a visible discovery,
+prototype, or Manual Mode fallback. Requested-agent routing cannot override
+the gate.
+
+Before submit, dispatch preflight probes again. It compares the current
+model/session/freshness binding with the route-time fingerprint. Any change or
+new ineligibility blocks delivery and records task-local evidence; the dispatch
+cannot inherit a stale routing decision.
+
 ## Token-Efficient Routing
 
 The reference CLI runs the current MCP/tool scan and task-skill-router evidence
 before scoring candidates. It then selects the minimum capable team that covers
 the required roles and writes `iteration-budget.json` with limits for aggregate
 dispatch reference tokens, dispatch count, reroutes, and fix-review rounds.
+The reference correction policy permits at most three fix-review rounds; a
+third round is the final bounded correction and must not create a fourth round.
 Observed usage comes from accepted dispatch receipts and recorded dispatch
 measurements. Legacy and v2 representations of the same accepted delivery count
 once, using the v2 work-item identity as the authoritative logical dispatch. A

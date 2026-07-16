@@ -38,6 +38,15 @@ EXAMPLE_SCHEMA_BY_NAME = {
 
 
 class SchemaExampleTests(unittest.TestCase):
+    def test_model_aware_provider_matrix_matches_schema(self) -> None:
+        data = json.loads(
+            (ROOT / "examples" / "model-aware-provider-matrix.json").read_text(encoding="utf-8")
+        )
+        errors = list(
+            schema_validator(ROOT / "schemas" / "provider-matrix-model-aware.schema.json").iter_errors(data)
+        )
+        self.assertEqual(errors, [])
+
     def test_bundled_json_examples_match_schemas(self) -> None:
         validators = {
             schema_name: schema_validator(ROOT / "schemas" / schema_name)

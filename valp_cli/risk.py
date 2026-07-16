@@ -120,6 +120,15 @@ def _is_actionable_match(text: str, start: int, end: int, kind: str) -> bool:
     sentence_context = _sentence_action_context(text, start, end)
     if kind == "auth" and text[start:end] == "token" and _is_model_token_context(action_context):
         return False
+    if kind == "deploy" and text[start:end] == "deployment" and re.match(
+        r"[-\s]+grade\b", text[end:]
+    ):
+        return False
+    if kind == "metadata" and not re.search(
+        r"\b(?:change|delete|edit|modify|publish|remove|replace|set|submit|update|upload)\b",
+        action_context,
+    ):
+        return False
     follows_completed_negated_predicate = _follows_completed_negated_predicate(
         text, start
     )
@@ -173,6 +182,11 @@ def _is_model_token_context(window: str) -> bool:
         return False
     return bool(
         re.search(r"\b(llm|model|prompt|context|input|output|billing)\s+token\b", window)
+        or re.search(
+            r"\bnon[- ]sensitive\b[^.;!?\n]{0,120}\b(?:session|adapter\s+generation)\b"
+            r"[^.;!?\n]{0,80}\btoken\b",
+            window,
+        )
         or re.search(r"\bzero[- ]token\b", window)
         or re.search(r"\btoken[- ](efficient|efficiency|saving|budgeted)\b", window)
         or re.search(

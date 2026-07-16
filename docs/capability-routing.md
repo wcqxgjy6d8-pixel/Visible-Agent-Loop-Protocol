@@ -47,6 +47,19 @@ Capability profiles are routing hints, not assignments. A current scan can
 override a remembered strength, and a permission boundary can override every
 preference.
 
+Model-aware routing adds the actual runtime model to the route identity. Keep
+the agent surface, provider, reasoning mode, permissions, context, and task
+evidence alongside separate declared and observed model records. A model
+mismatch invalidates model-bound history; stale or unknown observation
+downgrades it. Unknown model identity is never strong implementation or final
+review evidence, and runtime_default alone cannot satisfy a model-aware matrix.
+
+Dynamic model-aware routing evaluates the runtime probe before scoring. The
+probe must be `observed`, freshness must compute to `current`, and its
+non-sensitive session identity must be known before the candidate is eligible
+for implementer or final-review work. An explicit request for an agent does not
+bypass this gate.
+
 ## Intelligent Routing Steps
 
 ```text
@@ -95,6 +108,12 @@ Scores explain the route; they do not prove completion.
 
 If the best implementer is medium confidence and the task is high risk, VALP
 should require review before mutation or ask for explicit approval.
+
+If every implementer or final-review candidate has an unknown, stale,
+unsupported, unavailable, or session-unbound identity, routing records
+`active_model_identity:<role>` in `capabilities_missing`. It omits the unsafe
+role assignment and exposes `discovery`, `prototype`, and `manual` as fallback
+modes. It must not silently select the only available agent.
 
 ## Routing Outputs
 
@@ -173,6 +192,10 @@ should require review before mutation or ask for explicit approval.
 - Do not route more work to an agent beyond its hard context threshold.
 - Do not allow skill recommendation to bypass role boundaries.
 - Do not allow provider matrix claims to bypass proof or approval gates.
+- Do not allow stored freshness or a declared model to replace a live dynamic
+  probe when dynamic discovery is required.
+- Do not assign implementer or final reviewer to an unknown, stale, or
+  session-unbound active model.
 - Do not hide attention/routing decisions; record selected context and masked inputs.
 - Do not let local overlay profiles become fixed assignments.
 - Do not let historical feedback replace current scans.

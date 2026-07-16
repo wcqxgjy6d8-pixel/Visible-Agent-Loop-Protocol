@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .delegation import validate_delegation_policy
+from .model_identity import model_aware_provider_errors, model_aware_role_errors
 from .risk import classify_approval_risks
 from .submission import (
     dependency_order_errors,
@@ -829,6 +830,15 @@ class TaskAudit:
         if not matrix:
             return self._fail("provider_matrix", "Provider matrix fields needed for the task are recorded", "Missing provider_matrix", evidence)
         providers = matrix.get("providers")
+        role_assignments = self.routing.get("role_assignments") or self.state.get("role_assignments") or {}
+        model_errors = model_aware_provider_errors(matrix) + model_aware_role_errors(matrix, role_assignments)
+        if model_errors:
+            return self._fail(
+                "provider_matrix",
+                "Provider matrix model-aware evidence is valid",
+                "; ".join(model_errors),
+                evidence,
+            )
         if isinstance(providers, dict) and providers:
             return self._pass("provider_matrix", "Provider matrix fields needed for the task are recorded", "Provider matrix has provider records", evidence)
         if isinstance(providers, list) and providers:

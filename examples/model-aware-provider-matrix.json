@@ -1,0 +1,169 @@
+{
+  "generated_at": "2026-07-15T12:24:47Z",
+  "runtime_id": "herdr-local",
+  "model_awareness": {
+    "required": true,
+    "dynamic_discovery_required": true,
+    "status": "degraded",
+    "provider_count": 2,
+    "unknown_providers": []
+  },
+  "providers": {
+    "codex": {
+      "provider_name": "CodexPlusPlus",
+      "model_selection": "runtime_observed",
+      "agent_surface": "codex_cli",
+      "model_identity": {
+        "agent_surface": "codex_cli",
+        "provider": "CodexPlusPlus",
+        "reasoning_mode": "high",
+        "permissions": ["task-local-evidence"],
+        "context": {"hard_compression_pct": 65},
+        "task_evidence": ["evidence/model-observations-start.md"],
+        "declared_model": {
+          "model_id": "gpt-5.6-sol",
+          "provider": "CodexPlusPlus",
+          "reasoning_mode": "xhigh",
+          "source": "Codex declaration",
+          "timestamp": "2026-07-15T12:24:47Z",
+          "confidence": "high",
+          "freshness": "current"
+        },
+        "observed_model": {
+          "model_id": "gpt-5.6-luna",
+          "provider": "CodexPlusPlus",
+          "reasoning_mode": "high",
+          "source": "HERDR worker pane",
+          "timestamp": "2026-07-15T12:24:47Z",
+          "confidence": "high",
+          "freshness": "current"
+        },
+        "model_probe": {
+          "schema_version": "valp-model-probe.v1",
+          "status": "observed",
+          "source": "example runtime adapter metadata",
+          "observed_at": "2026-07-15T12:24:47Z",
+          "ttl_seconds": 3600,
+          "model": {
+            "model_id": "gpt-5.6-luna",
+            "provider": "CodexPlusPlus",
+            "reasoning_mode": "high",
+            "confidence": "high"
+          },
+          "session_identity": {
+            "status": "known",
+            "token": "sha256:example-codex-session",
+            "source": "example adapter generation",
+            "generation": "7"
+          }
+        },
+        "freshness_evaluated_at": "2026-07-15T12:24:47Z",
+        "observation_age_seconds": 0,
+        "observation_ttl_seconds": 3600,
+        "mismatch": {
+          "status": "mismatch",
+          "handling": "invalidate",
+          "details": "Runtime observation differs from declaration."
+        },
+        "history_binding": {
+          "agent_surface": "codex_cli",
+          "model_id": "gpt-5.6-luna",
+          "provider": "CodexPlusPlus",
+          "reasoning_mode": "high",
+          "freshness": "current",
+          "session_token": "sha256:example-codex-session",
+          "fingerprint": "5899faff75d73d747cec5fd4aca33c0790bf36010c7f81ec8e4c4e0d3228c3b5"
+        },
+        "history_invalidation_reasons": [
+          "declared and observed model identities differ"
+        ],
+        "history_status": "invalidated",
+        "evidence_status": "degraded",
+        "role_eligibility": {
+          "implementer": "eligible",
+          "final_reviewer": "eligible"
+        }
+      },
+      "permissions": ["task-local-evidence"],
+      "context": {"hard_compression_pct": 65},
+      "task_evidence": ["evidence/model-observations-start.md"]
+    },
+    "claude": {
+      "provider_name": "configured-relay",
+      "model_selection": "observed_model",
+      "agent_surface": "claude",
+      "model_identity": {
+        "agent_surface": "claude",
+        "provider": "configured-relay",
+        "reasoning_mode": "unknown",
+        "permissions": ["read-only-review"],
+        "context": {"hard_compression_pct": 70},
+        "task_evidence": ["evidence/model-observations-start.md"],
+        "declared_model": {
+          "model_id": "deepseek-v4-pro",
+          "provider": "configured-relay",
+          "reasoning_mode": "unknown",
+          "source": "configured relay observation",
+          "timestamp": "2026-07-15T12:24:47Z",
+          "confidence": "high",
+          "freshness": "current"
+        },
+        "observed_model": {
+          "model_id": "deepseek-v4-pro",
+          "provider": "configured-relay",
+          "reasoning_mode": "unknown",
+          "source": "HERDR reviewer pane",
+          "timestamp": "2026-07-15T12:24:47Z",
+          "confidence": "high",
+          "freshness": "current"
+        },
+        "model_probe": {
+          "schema_version": "valp-model-probe.v1",
+          "status": "observed",
+          "source": "example runtime adapter metadata",
+          "observed_at": "2026-07-15T12:24:47Z",
+          "ttl_seconds": 3600,
+          "model": {
+            "model_id": "deepseek-v4-pro",
+            "provider": "configured-relay",
+            "reasoning_mode": "unknown",
+            "confidence": "high"
+          },
+          "session_identity": {
+            "status": "known",
+            "token": "sha256:example-claude-session",
+            "source": "example adapter generation",
+            "generation": "12"
+          }
+        },
+        "freshness_evaluated_at": "2026-07-15T12:24:47Z",
+        "observation_age_seconds": 0,
+        "observation_ttl_seconds": 3600,
+        "mismatch": {
+          "status": "match",
+          "handling": "preserve",
+          "details": "Declared and observed identities match."
+        },
+        "history_binding": {
+          "agent_surface": "claude",
+          "model_id": "deepseek-v4-pro",
+          "provider": "configured-relay",
+          "reasoning_mode": "unknown",
+          "freshness": "current",
+          "session_token": "sha256:example-claude-session",
+          "fingerprint": "f2cb52b487516fd5b496eb26eb65c87d8e133300ad9341d4fc23e106b065de89"
+        },
+        "history_invalidation_reasons": [],
+        "history_status": "valid",
+        "evidence_status": "strong",
+        "role_eligibility": {
+          "implementer": "eligible",
+          "final_reviewer": "eligible"
+        }
+      },
+      "permissions": ["read-only-review"],
+      "context": {"hard_compression_pct": 70},
+      "task_evidence": ["evidence/model-observations-start.md"]
+    }
+  }
+}

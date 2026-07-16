@@ -21,6 +21,18 @@
       "items": {"type": "string"}
     },
     "role_assignments": {"type": "object"},
+    "model_role_gate": {
+      "type": "object",
+      "required": ["enforced", "status", "blocked_roles", "fallback_modes", "reason"],
+      "properties": {
+        "enforced": {"type": "boolean"},
+        "status": {"enum": ["pass", "blocked"]},
+        "blocked_roles": {"type": "array", "items": {"enum": ["implementer", "reviewer"]}},
+        "fallback_modes": {"type": "array", "items": {"enum": ["discovery", "prototype", "manual"]}},
+        "reason": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "submission_dependencies": {
       "type": "object",
       "required": ["status", "ref"],
@@ -87,7 +99,13 @@
     },
     "skill_recommendations": {"type": "object"},
     "visible_attention": {"type": "object"},
-    "provider_matrix": {"type": "object"},
+    "provider_matrix": {
+      "type": "object",
+      "properties": {
+        "model_awareness": {"type": "object"},
+        "providers": {"type": "object"}
+      }
+    },
     "runtime_task_state_mapping": {"type": "object"},
     "squad_routing": {"type": "object"},
     "routing_feedback_ref": {"type": "string"},

@@ -925,6 +925,137 @@ Capability profiles are not assignments. They answer "what is this agent often
 good at?" Routing answers "what should this task use now, given current tools,
 context, permissions, evidence, and risk?"
 
+### 7.1 Model-Aware Routing Identity
+
+A capability route MUST distinguish the agent surface from the model that
+actually served the current runtime turn. Its routing identity is the tuple:
+
+agent surface
+actual runtime model
+provider
+reasoning mode
+permissions
+context policy and current context
+task evidence
+
+Provider matrix records MUST carry declared_model and observed_model separately.
+Each model record MUST include a model identifier (or the explicit value
+unknown), source, timestamp, confidence, and freshness. observed_model is
+runtime evidence; a declaration, configured default, or provider label cannot
+substitute for it.
+
+The record MUST include mismatch handling. A declaration/observation mismatch
+invalidates model-bound capability history for that route. A stale, low
+confidence, or unknown observation downgrades capability evidence. Unknown
+model identity remains explicit and MUST NOT qualify as strong evidence for
+high-risk implementation or final review.
+
+model_selection: runtime_default alone is not model-aware evidence. A
+model-aware provider matrix MUST instead record the model identity object and
+an evidence status of strong, degraded, unknown, or invalid. The reference CLI
+MUST reject a matrix that claims strong model-aware evidence while the observed
+identity is unknown, stale, low-confidence, or mismatched.
+
+When the runtime model changes, the adapter MUST either invalidate the affected
+history or mark it downgraded until a fresh observation and task evidence
+requalify the route. Codex App/coordinator and Codex CLI/worker remain separate
+agent surfaces even when they share a provider family; one surface's model
+observation MUST NOT qualify the other surface's evidence.
+
+#### 7.1.1 Dynamic Model Observation
+
+A model-aware Full or Remote Mode route MUST evaluate a task-local runtime probe
+for every candidate considered for implementation or final review. The probe
+MUST use adapter-visible runtime metadata. It MUST NOT read credentials, secret
+values, raw user-level provider configuration, or another surface's private
+session state to infer a model.
+
+An adapter MAY treat a bounded, currently visible model-status footer as runtime
+metadata when the agent surface does not expose a structured model field. Such
+fallback parsing MUST use a surface-specific allowlist, inspect only a bounded
+terminal tail, discard the raw screen text immediately, and persist only the
+normalized probe fields. Conversation or transcript content MUST NOT qualify as
+model evidence. An absent or unrecognized footer produces `unsupported` rather
+than a guessed identity.
+
+Every structured metadata key accepted by a model probe MUST be defined by its
+adapter as the active LLM identity. A generic deployment name, product name, or
+unscoped `model_name` field is not sufficient evidence unless that adapter
+contract gives it the active-LLM meaning.
+
+New task evidence that adopts this contract records
+`model_awareness.dynamic_discovery_required: true`. The marker makes dynamic
+probe, TTL, session-binding, history-binding, and role-gate checks audit-fatal.
+Its absence on immutable historical tasks does not claim dynamic conformance.
+
+The closed probe result is `valp-model-probe.v1` and records:
+
+```text
+status: observed | unsupported | unavailable | error
+source
+observed_at
+ttl_seconds
+model: model_id, provider, reasoning_mode, confidence
+session_identity: status, token, source, generation
+```
+
+`unsupported` means the adapter was reached but does not expose the active model
+through safe metadata. `unavailable` means the target runtime session was not
+present or could not be addressed. Neither status may be replaced with a stored
+declaration or guessed provider default. A static registry observation may be
+retained as historical evidence, but it is not a live probe.
+
+Freshness MUST be computed when routing or auditing, not copied from a stored
+`freshness` label. The reference TTL defaults to 3600 seconds and MUST remain
+between 60 and 86400 seconds. The evaluated identity records the effective TTL,
+observation age, evaluation time, and computed state `current`, `stale`, or
+`unknown`. An observation becomes stale as soon as its age exceeds the effective
+TTL. Invalid timestamps, future timestamps outside a small clock-skew allowance,
+and non-observed probes produce `unknown` freshness.
+
+The session identity token MUST be non-secret and scoped to the adapter-visible
+agent session. An adapter SHOULD derive it from a runtime-issued session id or
+generation. It MAY record a deterministic digest of an allowlisted tuple such as
+runtime id, pane or worker id, terminal or hosted-run id, and adapter generation;
+it MUST NOT expose the raw tuple when it may contain private runtime state. A pane
+id alone is not sufficient when the adapter can reuse the pane across agent
+restarts. A local pane adapter MAY include a foreground process-generation value
+in the digested tuple, but MUST NOT persist that raw value. If the adapter cannot
+produce a session-change identity, it records an unknown session identity and the
+observation cannot qualify a high-risk role.
+
+Each model-bound capability-history record MUST carry a binding over:
+
+```text
+agent surface
+model id
+provider
+reasoning mode
+computed TTL state
+session identity token
+```
+
+The route MUST invalidate model-bound history when any bound value changes, when
+freshness changes from current to stale or unknown, when a declaration/observation
+mismatch occurs, or when a current binding cannot be compared with the binding
+that qualified the history. Invalidated history contributes no positive routing
+score until fresh task evidence requalifies the new binding.
+
+For implementation and final-review roles, a candidate is eligible only when the
+active model is known, the probe status is `observed`, computed freshness is
+`current`, and the session identity is known. An ineligible candidate MUST NOT be
+silently selected even when it is the only candidate. Routing MUST instead record
+the missing capability and choose an explicit discovery, prototype, or Manual
+Mode fallback, or stop for operator action. Coordinator-only state work may
+continue when its own permission and evidence gates allow it.
+
+Immediately before a high-risk dispatch is submitted, the adapter MUST probe
+again and compare the fresh history-binding fingerprint with the binding used by
+routing. A model, provider, reasoning-mode, freshness-state, or session change,
+or a newly ineligible identity, MUST block before delivery and write visible
+task-local block evidence. Dispatch-time preflight cannot reuse the route-time
+`current` label without reevaluation.
+
 ## 8. Intelligent Routing
 
 VALP routing should be explainable and adaptive. A routing decision must record
@@ -1464,6 +1595,32 @@ context_policy
 runtime_preflight
 known_limitations
 last_verified_at
+
+Model-aware records add:
+
+agent_surface
+declared_model {model_id, provider, reasoning_mode, source, timestamp, confidence, freshness}
+observed_model {model_id, provider, reasoning_mode, source, timestamp, confidence, freshness}
+model_mismatch {status, handling, details}
+model_evidence_status
+permissions
+context
+task_evidence
+
+model_evidence_status: strong is valid only when the observed model is
+identified with current, high-confidence evidence and the declaration matches
+the observation. A provider record using only runtime_default MUST be unknown
+or rejected, never strong.
+
+Dynamic model-aware records also add:
+
+model_probe {schema_version, status, source, observed_at, ttl_seconds, model, session_identity}
+freshness_evaluated_at
+observation_age_seconds
+observation_ttl_seconds
+history_binding
+history_invalidation_reasons
+role_eligibility {implementer, final_reviewer}
 ```
 
 The provider matrix is evidence, not marketing. It must be generated from
@@ -1482,6 +1639,11 @@ MCP/tool availability
 context policy and current context signal
 recent task-local feedback
 ```
+
+Runtime model probes are metadata probes, not provider configuration scans. If
+the adapter does not expose active model and session identity safely, record
+`unsupported` or `unavailable`; do not open private configuration to fill the
+gap.
 
 For TUI agents that are sensitive to small panes, such as prototype or design
 agents, `runtime_preflight` should include the pane size and the minimum size
@@ -1961,6 +2123,9 @@ A task is done only when:
 - local overlay inputs are recorded when used;
 - selected agents and context policies are recorded;
 - provider matrix fields needed for the task are recorded;
+- dynamic model probes, computed freshness, session identity, history binding,
+  and high-risk role eligibility are recorded when model-aware routing is
+  required;
 - runtime preflight is recorded for Full Mode adapters and has no failing
   selected agent checks;
 - routing confidence, missing capabilities, and rejected high-relevance

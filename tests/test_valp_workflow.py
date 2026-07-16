@@ -21,6 +21,8 @@ from valp_cli.cli import main
 from valp_cli.submission import (
     build_submission_dependencies,
     dependency_order_errors,
+    role_expected_refs,
+    roles_for_agent,
     unmet_dependencies_for_phases,
     validate_submission_dependencies,
 )
@@ -231,6 +233,67 @@ class ValpWorkflowTests(unittest.TestCase):
                 translated["expected_refs"],
                 ["agents/codex/evidence.md", "evidence/verification.md"],
             )
+
+    def test_dispatch_translates_existing_legacy_receipts_before_dependency_check(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-16T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "hermes": {"active": True, "role": ["coordination"], "strengths": ["state"]},
+                "codex": {"active": True, "role": ["implementation"], "strengths": ["edits files"]},
+                "claude": {"active": True, "role": ["reviewer"], "strengths": ["read-only review"]},
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    task_dir = publish_task(
+                        root,
+                        "TASK-LEGACY-DEPENDENCY-TRANSLATION",
+                        "Fix a bug, verify it, and review the result.",
+                        runtime="queue",
+                    )
+
+            expected_by_agent = {
+                "hermes": ["agents/hermes/self-review.md"],
+                "codex": ["agents/codex/evidence.md", "evidence/verification.md"],
+            }
+            for refs in expected_by_agent.values():
+                for ref in refs:
+                    path = task_dir / ref
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("complete\n", encoding="utf-8")
+            with (task_dir / "dispatch-receipts.jsonl").open("a", encoding="utf-8") as handle:
+                for agent, refs in expected_by_agent.items():
+                    for event in ("dispatch_submitted", "dispatch_completed"):
+                        handle.write(
+                            json.dumps(
+                                {
+                                    "ts": "2026-07-16T00:00:00Z",
+                                    "agent": agent,
+                                    "event": event,
+                                    "exit_code": 0,
+                                    "dispatch_ref": f"agents/{agent}/dispatch.md",
+                                    "expected_refs": refs,
+                                    "proof": {"submit_proof": {"pane_id": f"pane-{agent}"}},
+                                    "runtime": {"pane_id": f"pane-{agent}"},
+                                }
+                            )
+                            + "\n"
+                        )
+
+            commands = dispatch_task(
+                root,
+                "TASK-LEGACY-DEPENDENCY-TRANSLATION",
+                agent="claude",
+                submit=True,
+                runtime="queue",
+            )
+
+        self.assertEqual(len(commands), 1)
+        self.assertIn("phase=reviewer", commands[0])
 
     def test_colocated_submission_only_translation_consumes_each_legacy_receipt_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -789,6 +852,20 @@ class ValpWorkflowTests(unittest.TestCase):
         self.assertIn("auth", auth_kinds)
         standalone_kinds = {item["kind"] for item in classify_approval_risks("Revoke the access token.")}
         self.assertIn("auth", standalone_kinds)
+
+    def test_risk_classifier_ignores_model_probe_contract_nouns_but_keeps_actions(self) -> None:
+        description = (
+            "Implement deployment-grade dynamic model identity discovery using "
+            "provider-neutral adapter-visible non-sensitive metadata and bind observations "
+            "to a non-sensitive session or adapter generation token."
+        )
+        actionable = "Deploy the service, rotate the session token, and update app metadata."
+
+        self.assertEqual(classify_approval_risks(description), [])
+        self.assertEqual(
+            {item["kind"] for item in classify_approval_risks(actionable)},
+            {"auth", "deploy", "metadata"},
+        )
 
     def test_risk_classifier_ignores_first_install_dry_run_control_words(self) -> None:
         prompt = "Smoke test VALP publish and HERDR dispatch dry run only. Do not submit to agent panes."
@@ -3660,6 +3737,24 @@ class ValpWorkflowTests(unittest.TestCase):
                     "mcp_servers": [],
                     "strengths": ["edits files", "runs tests", "writes verification evidence"],
                     "must_not_do": ["must not bypass approval gates"],
+                    "model_identity": {
+                        "agent_surface": "codex_cli",
+                        "provider": "test-provider",
+                        "declared_model": {
+                            "model_id": "test-model",
+                            "source": "test fixture",
+                            "timestamp": "2026-07-10T00:00:00Z",
+                            "confidence": "high",
+                            "freshness": "current",
+                        },
+                        "observed_model": {
+                            "model_id": "test-model",
+                            "source": "test fixture",
+                            "timestamp": "2026-07-10T00:00:00Z",
+                            "confidence": "high",
+                            "freshness": "current",
+                        },
+                    },
                 }
             },
         }
@@ -4065,12 +4160,10 @@ class ValpWorkflowTests(unittest.TestCase):
                 dispatch = dispatch_path.read_text(encoding="utf-8")
                 self.assertIn("## Project Root", dispatch)
                 self.assertIn(f'cd "{root.resolve()}"', dispatch)
-                for expected_ref in {
-                    "codex": ["agents/codex/evidence.md", "evidence/verification.md"],
-                    "claude": ["agents/claude/review.md"],
-                    "hermes": ["agents/hermes/self-review.md"],
-                    "agy": ["agents/agy/prototype.md"],
-                }.get(agent, [f"agents/{agent}/evidence.md"]):
+                expected_refs = []
+                for role in roles_for_agent(routing["role_assignments"], agent):
+                    expected_refs.extend(role_expected_refs(agent, role))
+                for expected_ref in dict.fromkeys(expected_refs):
                     self.assertIn(f".herdr-loop/tasks/TASK-SMOKE/{expected_ref}", dispatch)
                 self.assertIn("## Visible Attention Slice", dispatch)
                 self.assertIn("context-pack.json", dispatch)
@@ -4114,7 +4207,7 @@ class ValpWorkflowTests(unittest.TestCase):
         self.assertIn(".herdr-loop/tasks/TASK-BRIEF/context-pack.json", dispatch)
         self.assertIn(".herdr-loop/tasks/TASK-BRIEF/skill-recommendations.json", dispatch)
 
-    def test_routing_feedback_history_changes_evidence_prior_without_overriding_scan(self) -> None:
+    def test_unbound_live_identity_invalidates_feedback_prior(self) -> None:
         capabilities = {
             "schema_version": "valp-agent-capabilities.v1",
             "updated_at": "2026-07-10T00:00:00Z",
@@ -4127,21 +4220,71 @@ class ValpWorkflowTests(unittest.TestCase):
                     "mcp_servers": [],
                     "strengths": ["edits files", "runs tests", "writes verification evidence"],
                     "must_not_do": ["must not bypass approval gates"],
+                    "model_identity": {
+                        "agent_surface": "codex_cli",
+                        "provider": "test-provider",
+                        "declared_model": {
+                            "model_id": "test-model",
+                            "source": "test fixture",
+                            "timestamp": "2026-07-10T00:00:00Z",
+                            "confidence": "high",
+                            "freshness": "current",
+                        },
+                        "observed_model": {
+                            "model_id": "test-model",
+                            "source": "test fixture",
+                            "timestamp": "2026-07-10T00:00:00Z",
+                            "confidence": "high",
+                            "freshness": "current",
+                        },
+                    },
                 }
             },
         }
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.write_done_feedback_history(root)
+            live_preflight = {
+                "generated_at": "2026-07-15T12:05:00Z",
+                "runtime": "test queue",
+                "adapter_class": "daemon_queue",
+                "status": "pass",
+                "agents": {
+                    "codex": {
+                        "status": "pass",
+                        "model_probe": {
+                            "schema_version": "valp-model-probe.v1",
+                            "status": "observed",
+                            "source": "test queue metadata",
+                            "observed_at": "2026-07-15T12:05:00Z",
+                            "ttl_seconds": 86400,
+                            "model": {
+                                "model_id": "test-model",
+                                "provider": "test-provider",
+                                "reasoning_mode": "unknown",
+                                "confidence": "high",
+                            },
+                            "session_identity": {
+                                "status": "known",
+                                "token": "sha256:test-session",
+                                "source": "test queue generation",
+                                "generation": "1",
+                            },
+                        },
+                    }
+                },
+            }
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = publish_task(root, "TASK-PRIOR", "Fix a bug and run tests", runtime="manual")
+                    with patch("valp_cli.workflow.collect_runtime_preflight", return_value=live_preflight):
+                        task_dir = publish_task(root, "TASK-PRIOR", "Fix a bug and run tests", runtime="queue")
 
             routing = read_json(task_dir / "routing.json")
             score = routing["candidate_scores"]["codex"]
-            self.assertGreater(score["evidence_history"], 0.6)
+            self.assertEqual(score["evidence_history"], 0.0)
             self.assertTrue(score["evidence_history_refs"])
             self.assertIn("OLD-DONE", score["evidence_history_refs"][0])
+            self.assertEqual(score["model_evidence"]["history_status"], "invalidated")
 
     def test_unbacked_feedback_index_does_not_affect_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4469,6 +4612,132 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertEqual(stopped["status"], "blocked")
             self.assertIn("dispatch-count", stopped["stop_reason"])
 
+    def test_route_resumes_inflight_reroute_after_runtime_preflight_recovers(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-16T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "hermes": {
+                    "active": True,
+                    "role": ["coordination"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["state", "coordination"],
+                },
+                "codex": {
+                    "active": True,
+                    "role": ["implementation", "verification"],
+                    "skills": ["tdd"],
+                    "mcp_servers": [],
+                    "strengths": ["edits files", "runs tests"],
+                },
+                "claude": {
+                    "active": True,
+                    "role": ["reviewer"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["read-only review"],
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    task_dir = publish_task(
+                        root,
+                        "TASK-REROUTE-RECOVERY",
+                        "Fix a bug and run tests",
+                        runtime="queue",
+                    )
+                    routing = read_json(task_dir / "routing.json")
+                    digest = "sha256:" + hashlib.sha256(
+                        json.dumps(routing, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                    ).hexdigest()
+                    budget = read_json(task_dir / "iteration-budget.json")
+                    budget["status"] = "blocked"
+                    budget["stop_reason"] = "runtime preflight failure"
+                    budget["usage"]["reroutes"] = 1
+                    (task_dir / "iteration-budget.json").write_text(
+                        json.dumps(budget),
+                        encoding="utf-8",
+                    )
+                    (task_dir / "routing-history.jsonl").write_text(
+                        json.dumps(
+                            {
+                                "schema_version": "valp-routing-history.v1",
+                                "task_id": "TASK-REROUTE-RECOVERY",
+                                "event": "reroute_started",
+                                "reroute_number": 1,
+                                "previous_routing_digest": digest,
+                                "previous_selected_agents": routing["selected_agents"],
+                                "previous_role_assignments": routing["role_assignments"],
+                                "recorded_at": "2026-07-16T00:00:00Z",
+                            }
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+
+                    route_task(root, "TASK-REROUTE-RECOVERY", runtime="queue")
+
+            resumed_budget = read_json(task_dir / "iteration-budget.json")
+            history = [
+                json.loads(line)
+                for line in (task_dir / "routing-history.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertEqual(resumed_budget["status"], "active")
+        self.assertEqual(resumed_budget["usage"]["reroutes"], 1)
+        self.assertEqual(history[-1]["event"], "reroute_resumed")
+        self.assertEqual(history[-1]["reroute_number"], 1)
+
+    def test_iteration_budget_reopens_for_evidence_producing_review_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = Path(tmp)
+            budget = {
+                "schema_version": "valp-iteration-budget.v1",
+                "task_id": "TASK-REVIEW-RECOVERY",
+                "max_dispatch_reference_tokens": 1000,
+                "max_dispatches": 3,
+                "max_reroutes": 1,
+                "max_fix_review_rounds": 3,
+                "usage": {
+                    "dispatch_reference_tokens": 0,
+                    "dispatches": 0,
+                    "reroutes": 1,
+                    "fix_review_rounds": 1,
+                },
+                "status": "blocked",
+                "stop_reason": "critical or high review blocker; missing expected evidence",
+            }
+            (task_dir / "iteration-budget.json").write_text(json.dumps(budget), encoding="utf-8")
+            state = {
+                "status": "dispatching",
+                "gates": {
+                    "approval": "passed",
+                    "verification": "passed",
+                    "review": "blocked",
+                    "expected_evidence": "blocked",
+                },
+            }
+            routing = {
+                "dispatch_payload_budgets": {
+                    "claude": {"actual_reference_tokens": 100}
+                }
+            }
+
+            reopened = enforce_iteration_budget(
+                task_dir,
+                routing,
+                state,
+                [("claude", "reviewer")],
+            )
+
+        self.assertEqual(reopened["status"], "active")
+        self.assertIsNone(reopened["stop_reason"])
+
     def test_iteration_budget_counts_legacy_and_v2_submission_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
@@ -4512,7 +4781,7 @@ class ValpWorkflowTests(unittest.TestCase):
                 "max_dispatch_reference_tokens": 2000,
                 "max_dispatches": 3,
                 "max_reroutes": 1,
-                "max_fix_review_rounds": 2,
+                "max_fix_review_rounds": 3,
                 "usage": {
                     "dispatch_reference_tokens": 0,
                     "dispatches": 0,
@@ -4586,7 +4855,7 @@ class ValpWorkflowTests(unittest.TestCase):
                 "max_dispatch_reference_tokens": 2000,
                 "max_dispatches": 3,
                 "max_reroutes": 1,
-                "max_fix_review_rounds": 2,
+                "max_fix_review_rounds": 3,
                 "usage": {
                     "dispatch_reference_tokens": 0,
                     "dispatches": 0,

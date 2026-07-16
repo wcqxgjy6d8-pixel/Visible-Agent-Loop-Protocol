@@ -17,6 +17,13 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from .delegation import build_delegation_policy, validate_delegation_policy
+from .model_identity import (
+    bounded_observation_ttl,
+    model_awareness_for,
+    model_evidence_score,
+    model_identity_for,
+    model_selection_for,
+)
 from .risk import classify_approval_risks
 from .submission import (
     INVALID_EVIDENCE_STATUSES,
@@ -800,7 +807,7 @@ def iteration_budget_for(task_id: str, role_assignments: dict[str, str]) -> dict
         for role in roles
     )
     reviewer_tokens = int(DISPATCH_ROLE_BUDGETS["reviewer"]["max_reference_tokens"])
-    max_fix_review_rounds = 2
+    max_fix_review_rounds = 3
     return {
         "schema_version": "valp-iteration-budget.v1",
         "task_id": task_id,
@@ -970,18 +977,60 @@ def record_reroute_evidence(
     )
 
 
-def _iteration_safety_errors(state: dict[str, Any]) -> list[str]:
+def inflight_reroute_for_recovery(
+    directory: Path,
+    routing: dict[str, Any],
+    budget: dict[str, Any],
+    preflight: dict[str, Any],
+) -> int | None:
+    if budget.get("status") != "blocked" or budget.get("stop_reason") != "runtime preflight failure":
+        return None
+    if preflight.get("status") != "pass":
+        return None
+    history = read_json_lines(directory / "routing-history.jsonl")
+    if not history or history[-1].get("event") != "reroute_started":
+        return None
+    latest = history[-1]
+    reroute_number = int(latest.get("reroute_number") or 0)
+    if reroute_number != int((budget.get("usage") or {}).get("reroutes") or 0):
+        return None
+    payload = json.dumps(routing, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+    return reroute_number if latest.get("previous_routing_digest") == digest else None
+
+
+def record_reroute_resume_evidence(directory: Path, task_id: str, reroute_number: int) -> None:
+    append_json_line_durable(
+        directory / "routing-history.jsonl",
+        {
+            "schema_version": "valp-routing-history.v1",
+            "task_id": task_id,
+            "event": "reroute_resumed",
+            "reroute_number": reroute_number,
+            "reason": "fresh runtime preflight resolved the recorded transient blocker",
+            "recorded_at": now_iso(),
+        },
+    )
+
+
+def _iteration_safety_errors(
+    state: dict[str, Any],
+    phases: list[tuple[str, str]],
+) -> list[str]:
     errors: list[str] = []
+    phase_roles = {role for _agent, role in phases}
     if state.get("status") in {"blocked", "cancelled", "done", "failed"}:
         errors.append(f"task status is {state.get('status')}")
     gates = state.get("gates") or {}
     if gates.get("approval") in {"needs_approval", "blocked", "failed"}:
         errors.append("approval gate unresolved")
-    if gates.get("review") in {"blocked", "failed"}:
+    if gates.get("review") in {"blocked", "failed"} and not phase_roles.intersection(
+        {"implementer", "reviewer"}
+    ):
         errors.append("critical or high review blocker")
     if gates.get("verification") in {"blocked", "failed"}:
         errors.append("verification gate failed")
-    if gates.get("expected_evidence") == "blocked":
+    if gates.get("expected_evidence") == "blocked" and not phases:
         errors.append("missing expected evidence")
     if state.get("context_compression_required") or state.get("compression_required"):
         errors.append("context compression required")
@@ -997,8 +1046,25 @@ def enforce_iteration_budget(
     budget = read_json(directory / "iteration-budget.json")
     if not budget:
         return {}
+    phase_roles = {role for _agent, role in phases}
+    stop_reasons = {
+        reason.strip()
+        for reason in str(budget.get("stop_reason") or "").split(";")
+        if reason.strip()
+    }
+    resolvable_reasons = {"missing expected evidence"}
+    if phase_roles.intersection({"implementer", "reviewer"}):
+        resolvable_reasons.add("critical or high review blocker")
+    if (
+        budget.get("status") == "blocked"
+        and state.get("status") == "dispatching"
+        and stop_reasons
+        and stop_reasons.issubset(resolvable_reasons)
+    ):
+        budget["status"] = "active"
+        budget["stop_reason"] = None
     budget = refresh_iteration_budget(directory, routing, budget)
-    safety_errors = _iteration_safety_errors(state)
+    safety_errors = _iteration_safety_errors(state, phases)
     if safety_errors:
         budget["status"] = "blocked"
         budget["stop_reason"] = "; ".join(safety_errors)
@@ -2082,11 +2148,52 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
     # Skill/MCP evidence is collected before candidate scoring. Per-agent
     # slices are written after the minimum capable team is selected.
     skill_recommendations = run_skill_recommendations(root, task_id, profile, prompt)
-    candidate_scores = score_candidates(profile, agents, feedback_history, skill_recommendations)
+    routing_evaluated_at = now_iso()
+    enforce_model_role_gate = (
+        resolve_runtime(runtime) != "manual"
+        and any(isinstance(info.get("model_identity"), dict) for info in agents.values())
+    )
+    candidate_scores = score_candidates(
+        profile,
+        agents,
+        feedback_history,
+        skill_recommendations,
+        runtime_preflight=capabilities.get("runtime_preflight") or {},
+        enforce_model_role_gate=enforce_model_role_gate,
+        evaluated_at=routing_evaluated_at,
+    )
     requested_agents = validate_requested_agents(state.get("requested_agents") or [], agents)
     selected_agents = select_agents(profile, agents, candidate_scores, requested_agents)
-    role_assignments = role_assignments_for(profile, selected_agents, agents, candidate_scores, requested_agents)
-    preflight = collect_runtime_preflight(selected_agents, runtime=runtime)
+    role_assignments = role_assignments_for(
+        profile,
+        selected_agents,
+        agents,
+        candidate_scores,
+        requested_agents,
+        enforce_model_role_gate=enforce_model_role_gate,
+    )
+    required_roles = required_roles_for(profile, agents, requested_agents)
+    blocked_model_roles = [
+        role
+        for role in ("implementer", "reviewer")
+        if enforce_model_role_gate and role in required_roles and role not in role_assignments
+    ]
+    model_role_gate = {
+        "enforced": enforce_model_role_gate,
+        "status": "blocked" if blocked_model_roles else "pass",
+        "blocked_roles": blocked_model_roles,
+        "fallback_modes": ["discovery", "prototype", "manual"] if blocked_model_roles else [],
+        "reason": (
+            "No candidate has an observed, current model identity bound to a known runtime session."
+            if blocked_model_roles
+            else "High-risk model identity requirements are satisfied or not applicable."
+        ),
+    }
+    capabilities_missing = [f"active_model_identity:{role}" for role in blocked_model_roles]
+    preflight = runtime_preflight_for_agents(
+        capabilities.get("runtime_preflight") or {},
+        selected_agents,
+    )
     runtime_adapter = runtime_adapter_record(preflight, runtime=runtime)
     automation_policy = automation_policy_for(task_id, runtime_adapter, approval_risks)
     write_json(directory / "automation-policy.json", automation_policy)
@@ -2096,13 +2203,25 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
     iteration_budget = read_json(directory / "iteration-budget.json") or iteration_budget_for(task_id, role_assignments)
     reroute_count = int((iteration_budget.get("usage") or {}).get("reroutes") or 0)
     if existing_routing.get("selected_agents"):
-        reroute_count += 1
-        if reroute_count > int(iteration_budget.get("max_reroutes") or 0):
-            iteration_budget["status"] = "blocked"
-            iteration_budget["stop_reason"] = "reroute budget exhausted"
-            write_json(directory / "iteration-budget.json", iteration_budget)
-            raise SystemExit("Routing blocked by iteration budget: reroute budget exhausted")
-        record_reroute_evidence(directory, task_id, existing_routing, reroute_count)
+        inflight_reroute = inflight_reroute_for_recovery(
+            directory,
+            existing_routing,
+            iteration_budget,
+            preflight,
+        )
+        if inflight_reroute is not None:
+            reroute_count = inflight_reroute
+            iteration_budget["status"] = "active"
+            iteration_budget["stop_reason"] = None
+            record_reroute_resume_evidence(directory, task_id, reroute_count)
+        else:
+            reroute_count += 1
+            if reroute_count > int(iteration_budget.get("max_reroutes") or 0):
+                iteration_budget["status"] = "blocked"
+                iteration_budget["stop_reason"] = "reroute budget exhausted"
+                write_json(directory / "iteration-budget.json", iteration_budget)
+                raise SystemExit("Routing blocked by iteration budget: reroute budget exhausted")
+            record_reroute_evidence(directory, task_id, existing_routing, reroute_count)
         refresh_iteration_budget(directory, existing_routing, iteration_budget, reroute_count)
         if iteration_budget.get("status") != "active":
             raise SystemExit(f"Routing blocked by iteration budget: {iteration_budget.get('stop_reason') or iteration_budget.get('status')}")
@@ -2148,11 +2267,12 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             "note": "Local capability profiles are routing hints, not fixed assignments.",
         },
         "capabilities_needed": PROFILE_CAPABILITIES.get(profile, PROFILE_CAPABILITIES["generic-analysis"]),
-        "role_requirements": required_roles_for(profile, agents, requested_agents),
+        "role_requirements": required_roles,
         "role_assignments": role_assignments,
+        "model_role_gate": model_role_gate,
         "team_selection": {
             "strategy": "minimum_capable_team",
-            "required_roles": required_roles_for(profile, agents, requested_agents),
+            "required_roles": required_roles,
             "selected_agents": selected_agents,
             "supplemental_requested_agents": [agent for agent in requested_agents if agent not in role_assignments.values()],
         },
@@ -2214,12 +2334,19 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             "design_contract": visible_attention["design_contract"],
             **visible_attention["refs"],
         },
-        "provider_matrix": provider_matrix_for(selected_agents, agents, overlay, preflight),
+        "provider_matrix": provider_matrix_for(
+            selected_agents,
+            agents,
+            overlay,
+            preflight,
+            evaluated_at=routing_evaluated_at,
+            dynamic_discovery_required=enforce_model_role_gate,
+        ),
         "runtime_task_state_mapping": RUNTIME_TASK_STATE_MAPPING,
         "squad_routing": {"used": False},
         "routing_feedback_ref": "routing-feedback.json",
         "learning_feedback_ref": "learning-feedback.json",
-        "capabilities_missing": [],
+        "capabilities_missing": capabilities_missing,
     }
     skill_slice_refs = write_skill_slices(directory, task_id, selected_agents, skill_recommendations)
     routing["skill_recommendation_slices"] = skill_slice_refs
@@ -2260,7 +2387,8 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             "submission_dependencies": routing["submission_dependencies"],
             "delegation_policy": routing["delegation_policy"],
             "capabilities_needed": routing["capabilities_needed"],
-            "capabilities_missing": [],
+            "capabilities_missing": capabilities_missing,
+            "model_role_gate": model_role_gate,
             "context_policies": context_policies,
             "automation_policy": {
                 "status": "recorded",
@@ -2300,6 +2428,9 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             "count": len(delegation_policy["violations"]),
             "ref": "delegation-policy.json#violations",
         }
+    if blocked_model_roles:
+        state["status"] = "blocked"
+        state.setdefault("gates", {})["expected_evidence"] = "blocked"
     write_json(state_path, state)
     return routing
 
@@ -2309,9 +2440,13 @@ def score_candidates(
     agents: dict[str, Any],
     feedback_history: list[dict[str, Any]] | None = None,
     skill_recommendations: dict[str, Any] | None = None,
+    runtime_preflight: dict[str, Any] | None = None,
+    enforce_model_role_gate: bool = False,
+    evaluated_at: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     required_roles = PROFILE_ROLE_REQUIREMENTS.get(profile, PROFILE_ROLE_REQUIREMENTS["generic-analysis"])
     history = feedback_history or []
+    preflight_agents = (runtime_preflight or {}).get("agents") or {}
     scores: dict[str, dict[str, Any]] = {}
     for agent, info in agents.items():
         active = bool(info.get("active", True))
@@ -2333,7 +2468,27 @@ def score_candidates(
         permission_fit = 0 if not active else 1
         context_fit = 0.85
         feedback_prior = feedback_prior_for_agent(agent, profile, history)
-        evidence_history = feedback_prior["score"]
+        agent_preflight = preflight_agents.get(agent) if isinstance(preflight_agents, dict) else {}
+        runtime_probe = (
+            agent_preflight.get("model_probe")
+            if enforce_model_role_gate and isinstance(agent_preflight, dict)
+            else None
+        )
+        model_identity = model_identity_for(
+            agent,
+            info,
+            {},
+            runtime_probe=runtime_probe,
+            evaluated_at=evaluated_at,
+        )
+        blocked_roles: list[str] = []
+        if enforce_model_role_gate:
+            for role, eligibility_key in (("implementer", "implementer"), ("reviewer", "final_reviewer")):
+                if role in role_fit and model_identity["role_eligibility"][eligibility_key] != "eligible":
+                    role_fit[role] = 0.0
+                    blocked_roles.append(role)
+        model_score = model_evidence_score(model_identity)
+        evidence_history = round(min(feedback_prior["score"], model_score), 2)
         availability = 1 if runtime_status == "idle" else 0.75 if runtime_status in {"working", "focused"} else 0.65
         if not active:
             availability = 0
@@ -2341,6 +2496,10 @@ def score_candidates(
         values = [profile_fit, tool_fit, skill_fit, permission_fit, context_fit, evidence_history, availability, risk_fit]
         overall = round(sum(values) / len(values), 2)
         confidence = "high" if overall >= 0.75 else "medium" if overall >= 0.55 else "low"
+        if model_identity["evidence_status"] == "unknown":
+            confidence = "low"
+        elif model_identity["evidence_status"] != "strong" and confidence == "high":
+            confidence = "medium"
         scores[agent] = {
             "profile_fit": round(profile_fit, 2),
             "tool_fit": round(tool_fit, 2),
@@ -2360,6 +2519,22 @@ def score_candidates(
             "routing_basis": "capability_roles",
             "evidence_history_notes": feedback_prior["notes"],
             "evidence_history_refs": feedback_prior["refs"],
+            "model_evidence": {
+                "status": model_identity["evidence_status"],
+                "history_status": model_identity["history_status"],
+                "observed_model": model_identity["observed_model"]["model_id"],
+                "computed_freshness": model_identity["observed_model"]["freshness"],
+                "probe_status": model_identity["model_probe"]["status"],
+                "session_status": model_identity["model_probe"]["session_identity"]["status"],
+                "history_invalidation_reasons": model_identity["history_invalidation_reasons"],
+            },
+            "model_role_gate": {
+                "enforced": enforce_model_role_gate,
+                "status": "blocked" if blocked_roles else "eligible",
+                "blocked_roles": blocked_roles,
+                "fallback_roles": ["discovery", "prototype", "manual"] if blocked_roles else [],
+                "role_eligibility": model_identity["role_eligibility"],
+            },
         }
     return scores
 
@@ -2452,12 +2627,20 @@ def role_assignments_for(
     agents: dict[str, Any],
     scores: dict[str, dict[str, Any]],
     requested_agents: list[str] | None = None,
+    enforce_model_role_gate: bool = False,
 ) -> dict[str, str]:
     assignments: dict[str, str] = {}
     required_roles = required_roles_for(profile, agents, requested_agents)
     for role in required_roles:
+        eligible_agents = selected_agents
+        if enforce_model_role_gate and role in {"implementer", "reviewer"}:
+            eligible_agents = [
+                name
+                for name in selected_agents
+                if role not in (scores.get(name, {}).get("model_role_gate", {}).get("blocked_roles") or [])
+            ]
         ranked = sorted(
-            selected_agents,
+            eligible_agents,
             key=lambda name: (scores.get(name, {}).get("role_fit", {}).get(role, 0), scores.get(name, {}).get("overall", 0)),
             reverse=True,
         )
@@ -2465,7 +2648,8 @@ def role_assignments_for(
             assignments[role] = ranked[0]
     for agent in requested_agents or []:
         role = requested_agent_role(str(agent), agents)
-        if role in required_roles:
+        blocked_roles = scores.get(str(agent), {}).get("model_role_gate", {}).get("blocked_roles") or []
+        if role in required_roles and not (enforce_model_role_gate and role in blocked_roles):
             assignments[role] = str(agent)
     return assignments
 
@@ -2605,11 +2789,196 @@ def collect_runtime_preflight(agent_names: list[str] | None = None, runtime: str
     return collect_herdr_preflight(agent_names)
 
 
+def runtime_preflight_for_agents(
+    preflight: dict[str, Any],
+    agent_names: list[str],
+) -> dict[str, Any]:
+    selected = set(agent_names)
+    filtered = json.loads(json.dumps(preflight)) if isinstance(preflight, dict) else {}
+    all_agents = filtered.get("agents") or {}
+    filtered["agents"] = {
+        agent: record
+        for agent, record in all_agents.items()
+        if agent in selected
+    }
+    adapter_class = str(filtered.get("adapter_class") or "")
+    if adapter_class == "manual":
+        filtered["status"] = "not_applicable"
+        return filtered
+    checks = filtered.get("checks") or {}
+    records = filtered["agents"].values()
+    if any(isinstance(check, dict) and check.get("status") == "fail" for check in checks.values()):
+        filtered["status"] = "fail"
+    elif any(isinstance(record, dict) and record.get("status") == "fail" for record in records):
+        filtered["status"] = "fail"
+    elif any(isinstance(check, dict) and check.get("status") == "warn" for check in checks.values()):
+        filtered["status"] = "warn"
+    elif any(isinstance(record, dict) and record.get("status") == "warn" for record in records):
+        filtered["status"] = "warn"
+    else:
+        filtered["status"] = "pass"
+    return filtered
+
+
+def model_probe_from_runtime_metadata(
+    agent: str,
+    metadata: dict[str, Any] | None,
+    *,
+    source: str,
+    observed_at: str | None = None,
+    ttl_seconds: int = 3600,
+) -> dict[str, Any]:
+    metadata = metadata if isinstance(metadata, dict) else {}
+    def first_value(containers: list[dict[str, Any]], *keys: str) -> str:
+        for container in containers:
+            for key in keys:
+                value = container.get(key)
+                if isinstance(value, (str, int, float)) and str(value).strip():
+                    return str(value).strip()
+        return "unknown"
+
+    runtime_metadata = metadata.get("runtime") if isinstance(metadata.get("runtime"), dict) else {}
+    identity_metadata = metadata.get("model_identity") if isinstance(metadata.get("model_identity"), dict) else {}
+    model_metadata = metadata.get("model") if isinstance(metadata.get("model"), dict) else {}
+    model_id = first_value(
+        [metadata, runtime_metadata, identity_metadata],
+        "active_model_id",
+        "model_id",
+        "active_model",
+        "model_name",
+    )
+    if model_id == "unknown":
+        model_id = first_value([model_metadata], "model_id", "id", "name")
+    if model_id == "unknown" and isinstance(metadata.get("model"), str):
+        model_id = str(metadata["model"]).strip() or "unknown"
+    provider = first_value(
+        [metadata, runtime_metadata, identity_metadata, model_metadata],
+        "model_provider",
+        "provider",
+        "provider_name",
+    )
+    reasoning_mode = first_value(
+        [metadata, runtime_metadata, identity_metadata, model_metadata],
+        "reasoning_mode",
+        "reasoning",
+        "effort",
+    )
+    generation = first_value(
+        [metadata],
+        "adapter_generation",
+        "session_generation",
+        "generation",
+    )
+
+    session_parts = {"agent": agent}
+    for key in (
+        "session_change_token",
+        "session_token",
+        "session_id",
+        "terminal_id",
+        "worker_id",
+        "hosted_run_id",
+        "adapter_generation",
+        "session_generation",
+        "generation",
+    ):
+        value = metadata.get(key)
+        if isinstance(value, (str, int, float)) and str(value).strip():
+            session_parts[key] = str(value).strip()
+    session_known = len(session_parts) > 1
+    session_token = "unknown"
+    if session_known:
+        digest = hashlib.sha256(
+            json.dumps(session_parts, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        session_token = f"sha256:{digest}"
+
+    probe_status = "observed" if model_id != "unknown" else "unsupported"
+    timestamp = observed_at or now_iso()
+    return {
+        "schema_version": "valp-model-probe.v1",
+        "status": probe_status,
+        "source": source,
+        "observed_at": timestamp,
+        "ttl_seconds": bounded_observation_ttl(ttl_seconds),
+        "model": {
+            "model_id": model_id,
+            "provider": provider,
+            "reasoning_mode": reasoning_mode,
+            "confidence": "high" if probe_status == "observed" else "unknown",
+        },
+        "session_identity": {
+            "status": "known" if session_known else "unknown",
+            "token": session_token,
+            "source": source,
+            "generation": generation,
+        },
+    }
+
+
+def visible_model_metadata_for_agent(agent: str, text: str) -> dict[str, str]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()][-8:]
+    if agent == "codex":
+        pattern = re.compile(
+            r"^(?P<model>[A-Za-z0-9][A-Za-z0-9._:/-]{1,80})\s+"
+            r"(?P<reasoning>low|medium|high|xhigh)\s+·(?:\s+.*)?$",
+            re.IGNORECASE,
+        )
+        for line in reversed(lines):
+            match = pattern.fullmatch(line)
+            if match:
+                return {
+                    "model_id": match.group("model"),
+                    "reasoning_mode": match.group("reasoning").lower(),
+                }
+    if agent == "claude":
+        pattern = re.compile(
+            r"^\[(?P<provider>[A-Za-z0-9][A-Za-z0-9._ -]{0,40})\]\s+"
+            r"(?P<model>[A-Za-z0-9][A-Za-z0-9._:/-]{1,80})\s+"
+            r"[░█]+\s+\d{1,3}%.*$"
+        )
+        for line in reversed(lines):
+            match = pattern.fullmatch(line)
+            if match:
+                return {
+                    "model_id": match.group("model"),
+                    "provider": match.group("provider"),
+                }
+    if agent == "hermes":
+        pattern = re.compile(
+            r"^(?:\u2695\s+)?(?P<model>[A-Za-z0-9][A-Za-z0-9._:/-]{1,80})\s+"
+            r"·\s+\d{1,3}%(?:\s+·.*)?$"
+        )
+        for line in reversed(lines):
+            match = pattern.fullmatch(line)
+            if match:
+                return {"model_id": match.group("model")}
+    if agent == "agy":
+        pattern = re.compile(
+            r"^\?\s+for shortcuts\s+(?P<model>[A-Za-z0-9][A-Za-z0-9 ._:/+-]{1,80}?)\s+"
+            r"\((?P<reasoning>low|medium|high)\)$",
+            re.IGNORECASE,
+        )
+        for line in reversed(lines):
+            match = pattern.fullmatch(line)
+            if match:
+                return {
+                    "model_id": match.group("model"),
+                    "reasoning_mode": match.group("reasoning").lower(),
+                }
+    return {}
+
+
 def collect_manual_preflight(agent_names: list[str] | None = None) -> dict[str, Any]:
     agents = {
         agent: {
             "status": "not_applicable",
             "session_status": "manual",
+            "model_probe": model_probe_from_runtime_metadata(
+                agent,
+                {},
+                source="Manual adapter does not expose active model metadata",
+            ),
             "notes": ["Manual Mode has no runtime dispatch proof."],
         }
         for agent in agent_names or []
@@ -2639,6 +3008,11 @@ def collect_queue_preflight(agent_names: list[str] | None = None) -> dict[str, A
             "session_status": "idle",
             "output_ref": f"agents/{agent}/evidence.md",
             "expected_refs": [f"agents/{agent}/evidence.md"],
+            "model_probe": model_probe_from_runtime_metadata(
+                agent,
+                {},
+                source="Queue adapter does not expose active model metadata",
+            ),
             "notes": ["Headless queue adapters use queue/session facts instead of pane or terminal-size facts."],
         }
     return {
@@ -2694,6 +3068,25 @@ def collect_herdr_preflight(agent_names: list[str] | None = None) -> dict[str, A
     }
     for agent in agent_names or sorted(panes_by_agent):
         pane = panes_by_agent.get(agent)
+        runtime_metadata = dict(pane or {})
+        if pane:
+            pane_id = str(pane.get("pane_id"))
+            process_result = run_command([herdr, "pane", "process-info", "--pane", pane_id], timeout=5.0)
+            process_json = parse_json_stdout(process_result)
+            process_info = (process_json.get("result") or {}).get("process_info") or {}
+            process_group = process_info.get("foreground_process_group_id")
+            if isinstance(process_group, (str, int)) and str(process_group).strip():
+                runtime_metadata["session_change_token"] = f"foreground-process-group:{process_group}"
+            visible_result = run_command(
+                [herdr, "pane", "read", pane_id, "--source", "visible", "--lines", "12", "--format", "text"],
+                timeout=5.0,
+            )
+            visible_json = parse_json_stdout(visible_result)
+            visible_text = str((((visible_json.get("result") or {}).get("read") or {}).get("text")) or "")
+            if not visible_text and visible_result.get("ok"):
+                visible_text = str(visible_result.get("stdout") or "")
+            for key, value in visible_model_metadata_for_agent(agent, visible_text).items():
+                runtime_metadata.setdefault(key, value)
         agent_record = {
             "status": "warn",
             "agent_status": None,
@@ -2702,10 +3095,16 @@ def collect_herdr_preflight(agent_names: list[str] | None = None) -> dict[str, A
             "min_terminal_size": AGENT_MIN_TERMINAL_SIZE.get(agent, DEFAULT_MIN_TERMINAL_SIZE),
             "terminal_size_status": "unknown",
             "cli": cli_preflight_for_agent(agent),
+            "model_probe": model_probe_from_runtime_metadata(
+                agent,
+                runtime_metadata,
+                source="HERDR pane adapter metadata and visible footer",
+            ),
             "notes": [],
         }
         if not pane:
             agent_record["status"] = "warn"
+            agent_record["model_probe"]["status"] = "unavailable"
             agent_record["notes"].append("No current pane was reported for this agent.")
             preflight["agents"][agent] = agent_record
             continue
@@ -2775,7 +3174,15 @@ def cli_preflight_for_agent(agent: str) -> dict[str, Any]:
     }
 
 
-def provider_matrix_for(selected_agents: list[str], agents: dict[str, Any], overlay: dict[str, Any], preflight: dict[str, Any]) -> dict[str, Any]:
+def provider_matrix_for(
+    selected_agents: list[str],
+    agents: dict[str, Any],
+    overlay: dict[str, Any],
+    preflight: dict[str, Any],
+    *,
+    evaluated_at: str | None = None,
+    dynamic_discovery_required: bool = True,
+) -> dict[str, Any]:
     overlay_profiles = overlay.get("agent_capability_profiles") or {}
     providers = {}
     for agent in selected_agents:
@@ -2785,6 +3192,13 @@ def provider_matrix_for(selected_agents: list[str], agents: dict[str, Any], over
         cli_record = agent_preflight.get("cli") or {}
         runtime_report = cli_record.get("version_output") or agent_preflight.get("worker_id") or agent_preflight.get("queue_id") or "unknown"
         cli_available = cli_record.get("status") in {"pass", "warn"} if cli_record else "unknown"
+        model_identity = model_identity_for(
+            agent,
+            info,
+            overlay_profile,
+            runtime_probe=agent_preflight.get("model_probe") if dynamic_discovery_required else None,
+            evaluated_at=evaluated_at,
+        )
         providers[agent] = {
             "provider_name": agent,
             "provider_version_or_runtime_report": runtime_report,
@@ -2793,14 +3207,70 @@ def provider_matrix_for(selected_agents: list[str], agents: dict[str, Any], over
             "skill_discovery_path": overlay_profile.get("skill_library_paths") or "unknown",
             "session_resume_support": "unknown",
             "approval_behavior": overlay_profile.get("approval_behavior") or "unknown",
-            "model_selection": "runtime_default",
+            "model_selection": model_selection_for(model_identity),
+            "agent_surface": model_identity["agent_surface"],
+            "model_identity": model_identity,
+            "permissions": model_identity["permissions"],
+            "context": model_identity["context"],
+            "task_evidence": model_identity["task_evidence"],
             "max_concurrency": 1,
             "context_policy": context_policy_for(agent, info, overlay),
             "known_limitations": info.get("must_not_do") or [],
             "runtime_preflight": agent_preflight,
             "last_verified_at": now_iso(),
         }
-    return {"generated_at": now_iso(), "runtime_preflight": preflight, "providers": providers}
+    return {
+        "generated_at": now_iso(),
+        "runtime_preflight": preflight,
+        "model_awareness": model_awareness_for(
+            providers,
+            dynamic_discovery_required=dynamic_discovery_required,
+        ),
+        "providers": providers,
+    }
+
+
+def dynamic_model_dispatch_errors(
+    routing: dict[str, Any],
+    agents: dict[str, Any],
+    overlay: dict[str, Any],
+    preflight: dict[str, Any],
+    phases: list[tuple[str, str]],
+    *,
+    evaluated_at: str | None = None,
+) -> list[str]:
+    routed_matrix = routing.get("provider_matrix") or {}
+    awareness = routed_matrix.get("model_awareness") or {}
+    if awareness.get("dynamic_discovery_required") is not True:
+        return []
+    routed_providers = routed_matrix.get("providers") or {}
+    overlay_profiles = overlay.get("agent_capability_profiles") or {}
+    preflight_agents = preflight.get("agents") or {}
+    errors: list[str] = []
+    for agent, role in phases:
+        if role not in {"implementer", "reviewer"}:
+            continue
+        routed_record = routed_providers.get(agent) if isinstance(routed_providers, dict) else None
+        routed_identity = routed_record.get("model_identity") if isinstance(routed_record, dict) else None
+        agent_preflight = preflight_agents.get(agent) if isinstance(preflight_agents, dict) else None
+        if not isinstance(routed_identity, dict) or not isinstance(agent_preflight, dict):
+            errors.append(f"{role}:{agent} is missing routed or fresh model identity evidence")
+            continue
+        fresh_identity = model_identity_for(
+            agent,
+            agents.get(agent) or {},
+            overlay_profiles.get(agent) or {},
+            runtime_probe=agent_preflight.get("model_probe"),
+            evaluated_at=evaluated_at,
+        )
+        eligibility_key = "implementer" if role == "implementer" else "final_reviewer"
+        if fresh_identity["role_eligibility"][eligibility_key] != "eligible":
+            errors.append(f"{role}:{agent} active model identity is not eligible at dispatch preflight")
+        routed_fingerprint = (routed_identity.get("history_binding") or {}).get("fingerprint")
+        fresh_fingerprint = (fresh_identity.get("history_binding") or {}).get("fingerprint")
+        if not routed_fingerprint or routed_fingerprint != fresh_fingerprint:
+            errors.append(f"{role}:{agent} model/session/freshness binding changed after routing")
+    return list(dict.fromkeys(errors))
 
 
 def expected_refs_for_agents(selected_agents: list[str], role_assignments: dict[str, str] | None = None) -> dict[str, list[str]]:
@@ -4864,6 +5334,15 @@ def dispatch_task(
             raise SystemExit("Delegated dispatch is blocked by a recorded live self-modification violation")
 
     if submit and submission_dependencies:
+        translated = 0
+        if not manual_mode:
+            translated = translate_legacy_herdr_receipts(directory, task_id)
+        if translated:
+            append_timeline_event(
+                directory,
+                "runtime_receipts_translated",
+                f"Translated {translated} existing legacy runtime receipt(s) before dependency evaluation",
+            )
         receipts = load_dispatch_receipts(directory, task_id)
         automatic_frontier = (
             agent == "all"
@@ -4936,6 +5415,31 @@ def dispatch_task(
         target_summary = ", ".join(failed) if failed else "runtime checks"
         raise SystemExit("Runtime preflight failed for: " + target_summary)
     write_json(directory / "runtime-preflight.json", preflight)
+    model_dispatch_errors = dynamic_model_dispatch_errors(
+        routing,
+        (load_local_capabilities(root).get("agents") or {}),
+        load_local_overlay(root),
+        preflight,
+        phases,
+    )
+    if model_dispatch_errors:
+        write_json(
+            directory / "model-identity-dispatch-block.json",
+            {
+                "schema_version": "valp-model-identity-dispatch-block.v1",
+                "task_id": task_id,
+                "status": "blocked",
+                "errors": model_dispatch_errors,
+                "runtime_preflight_ref": "runtime-preflight.json",
+                "recorded_at": now_iso(),
+            },
+        )
+        budget = read_json(directory / "iteration-budget.json")
+        if budget:
+            budget["status"] = "blocked"
+            budget["stop_reason"] = "dynamic model identity changed after routing"
+            write_json(directory / "iteration-budget.json", budget)
+        raise SystemExit("Dispatch blocked by dynamic model identity gate: " + "; ".join(model_dispatch_errors))
     if submit and runtime_kind in {"herdr", "queue"}:
         write_wait_policy_for_phases(
             directory,

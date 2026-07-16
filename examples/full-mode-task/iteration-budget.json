@@ -5,7 +5,7 @@
   "max_dispatch_reference_tokens": 5400,
   "max_dispatches": 5,
   "max_reroutes": 1,
-  "max_fix_review_rounds": 2,
+  "max_fix_review_rounds": 3,
   "usage": {
     "dispatch_reference_tokens": 0,
     "dispatches": 0,

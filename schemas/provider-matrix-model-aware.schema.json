@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/provider-matrix-model-aware.v1.json",
+  "title": "VALP Model-Aware Provider Matrix",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["generated_at", "model_awareness", "providers"],
+  "properties": {
+    "generated_at": {"type": "string", "minLength": 1},
+    "runtime_id": {"type": "string", "minLength": 1},
+    "runtime_preflight": {"type": "object"},
+    "model_awareness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "dynamic_discovery_required", "status", "provider_count"],
+      "properties": {
+        "required": {"const": true},
+        "dynamic_discovery_required": {"const": true},
+        "status": {"enum": ["strong", "degraded", "unknown", "invalid"]},
+        "provider_count": {"type": "integer", "minimum": 1},
+        "unknown_providers": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "providers": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/provider"}
+    }
+  },
+  "$defs": {
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_id", "provider", "reasoning_mode", "source", "timestamp", "confidence", "freshness"],
+      "properties": {
+        "model_id": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "reasoning_mode": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1},
+        "timestamp": {"type": "string", "minLength": 1},
+        "confidence": {"enum": ["high", "medium", "low", "unknown"]},
+        "freshness": {"enum": ["current", "stale", "unknown"]}
+      }
+    },
+    "mismatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "handling", "details"],
+      "properties": {
+        "status": {"enum": ["match", "mismatch", "unknown", "not_applicable"]},
+        "handling": {"enum": ["preserve", "downgrade", "invalidate", "block", "not_applicable"]},
+        "details": {"type": "string", "minLength": 1}
+      }
+    },
+    "probe_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_id", "provider", "reasoning_mode", "confidence"],
+      "properties": {
+        "model_id": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "reasoning_mode": {"type": "string", "minLength": 1},
+        "confidence": {"enum": ["high", "medium", "low", "unknown"]}
+      }
+    },
+    "session_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "token", "source", "generation"],
+      "properties": {
+        "status": {"enum": ["known", "unknown"]},
+        "token": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1},
+        "generation": {"type": "string", "minLength": 1}
+      }
+    },
+    "model_probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "status", "source", "observed_at", "ttl_seconds", "model", "session_identity"],
+      "properties": {
+        "schema_version": {"const": "valp-model-probe.v1"},
+        "status": {"enum": ["observed", "unsupported", "unavailable", "error"]},
+        "source": {"type": "string", "minLength": 1},
+        "observed_at": {"type": "string", "minLength": 1},
+        "ttl_seconds": {"type": "integer", "minimum": 60, "maximum": 86400},
+        "model": {"$ref": "#/$defs/probe_model"},
+        "session_identity": {"$ref": "#/$defs/session_identity"}
+      }
+    },
+    "history_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_surface", "model_id", "provider", "reasoning_mode", "freshness", "session_token", "fingerprint"],
+      "properties": {
+        "agent_surface": {"type": "string", "minLength": 1},
+        "model_id": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "reasoning_mode": {"type": "string", "minLength": 1},
+        "freshness": {"enum": ["current", "stale", "unknown"]},
+        "session_token": {"type": "string", "minLength": 1},
+        "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "role_eligibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementer", "final_reviewer"],
+      "properties": {
+        "implementer": {"enum": ["eligible", "blocked"]},
+        "final_reviewer": {"enum": ["eligible", "blocked"]}
+      }
+    },
+    "model_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_surface", "provider", "reasoning_mode", "permissions", "context", "task_evidence", "declared_model", "observed_model", "model_probe", "freshness_evaluated_at", "observation_age_seconds", "observation_ttl_seconds", "mismatch", "history_binding", "history_invalidation_reasons", "history_status", "evidence_status", "role_eligibility"],
+      "properties": {
+        "agent_surface": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "reasoning_mode": {"type": "string", "minLength": 1},
+        "permissions": {"type": "array", "items": {"type": "string"}},
+        "context": {"type": "object"},
+        "task_evidence": {"type": "array", "items": {"type": "string"}},
+        "declared_model": {"$ref": "#/$defs/model"},
+        "observed_model": {"$ref": "#/$defs/model"},
+        "model_probe": {"$ref": "#/$defs/model_probe"},
+        "freshness_evaluated_at": {"type": "string", "minLength": 1},
+        "observation_age_seconds": {"type": ["integer", "null"]},
+        "observation_ttl_seconds": {"type": "integer", "minimum": 60, "maximum": 86400},
+        "mismatch": {"$ref": "#/$defs/mismatch"},
+        "history_binding": {"$ref": "#/$defs/history_binding"},
+        "history_invalidation_reasons": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "history_status": {"enum": ["valid", "downgraded", "invalidated"]},
+        "evidence_status": {"enum": ["strong", "degraded", "unknown", "invalid"]},
+        "role_eligibility": {"$ref": "#/$defs/role_eligibility"}
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["provider_name", "model_selection", "agent_surface", "model_identity", "permissions", "context", "task_evidence"],
+      "properties": {
+        "provider_name": {"type": "string", "minLength": 1},
+        "model_selection": {"enum": ["observed_model", "runtime_observed", "unknown", "manual", "dynamic", "static"]},
+        "agent_surface": {"type": "string", "minLength": 1},
+        "model_identity": {"$ref": "#/$defs/model_identity"},
+        "permissions": {"type": "array", "items": {"type": "string"}},
+        "context": {"type": "object"},
+        "task_evidence": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

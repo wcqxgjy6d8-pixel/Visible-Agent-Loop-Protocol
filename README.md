@@ -7,7 +7,7 @@ Agent says done. VALP asks for proof.
 ![License](https://img.shields.io/github/license/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 
-![VALP audit demo: PASS to FAIL to PASS](docs/assets/valp-audit-demo.svg)
+![VALP complete engineering architecture overview](docs/assets/valp-complete-engineering-overview.gif)
 
 VALP is an open protocol and reference CLI for visible, evidence-backed
 autonomous and multi-agent work. It catches false completion by checking
@@ -22,6 +22,8 @@ cd Visible-Agent-Loop-Protocol
 python -m pip install -r requirements-dev.txt
 bin/valp audit examples/minimal-task
 ```
+
+![VALP audit demo: PASS to FAIL to PASS](docs/assets/valp-audit-demo.svg)
 
 For automated Full Mode, [HERDR](https://github.com/ogulcancelik/herdr) is the
 current reference runtime. HERDR is not required by the protocol; any runtime

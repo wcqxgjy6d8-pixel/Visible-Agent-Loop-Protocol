@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-evidence-catalog-entry.v1.json",
+  "title": "VALP Evidence Catalog Entry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "catalog_id",
+    "task_id",
+    "source_ref",
+    "evidence_type",
+    "status",
+    "source_status",
+    "content_digest",
+    "media_type",
+    "byte_length",
+    "provenance",
+    "anonymous",
+    "indexed_at",
+    "stale_at",
+    "invalidated_at",
+    "invalidation_reason",
+    "metadata"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-evidence-catalog.v1"},
+    "catalog_id": {"type": "string", "pattern": "^catalog:[0-9a-f]{64}$"},
+    "task_id": {"type": ["string", "null"], "minLength": 1},
+    "source_ref": {
+      "type": ["string", "null"],
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)(?:\\.{0,2})(?:/|$)).+$"
+    },
+    "evidence_type": {"type": "string", "minLength": 1},
+    "status": {"enum": ["valid", "stale", "invalid"]},
+    "source_status": {
+      "enum": ["valid", "stale", "superseded", "invalid", "rejected", "blocked"]
+    },
+    "content_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "media_type": {"type": "string", "minLength": 1},
+    "byte_length": {"type": "integer", "minimum": 0},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent", "dispatch_id", "tool_call_id"],
+      "properties": {
+        "agent": {"type": ["string", "null"], "minLength": 1},
+        "dispatch_id": {"type": ["string", "null"], "minLength": 1},
+        "tool_call_id": {"type": ["string", "null"], "minLength": 1}
+      }
+    },
+    "anonymous": {"type": "boolean"},
+    "indexed_at": {"type": "string", "format": "date-time"},
+    "stale_at": {"type": ["string", "null"], "format": "date-time"},
+    "invalidated_at": {"type": ["string", "null"], "format": "date-time"},
+    "invalidation_reason": {"type": ["string", "null"]},
+    "metadata": {"type": "object"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"anonymous": {"const": true}}, "required": ["anonymous"]},
+      "then": {
+        "properties": {
+          "task_id": {"type": "null"},
+          "source_ref": {"type": "null"},
+          "provenance": {
+            "properties": {
+              "agent": {"type": "null"},
+              "dispatch_id": {"type": "null"},
+              "tool_call_id": {"type": "null"}
+            }
+          }
+        }
+      }
+    }
+  ]
+}

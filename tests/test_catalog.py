@@ -444,6 +444,15 @@ class EvidenceCatalogTests(unittest.TestCase):
         self.assertEqual(result["count"], 0)
         self.assertEqual(result["results"], [])
 
+    def test_catalog_releases_database_after_operation(self) -> None:
+        catalog = EvidenceCatalog(self.workspace)
+        self.assertEqual(catalog.search("anything")["count"], 0)
+        database = catalog.database_path
+        moved = database.with_name("evidence-catalog-moved.db")
+
+        database.replace(moved)
+        moved.replace(database)
+
     def test_show_rejects_invalid_catalog_id(self) -> None:
         with self.assertRaisesRegex(CatalogError, "invalid catalog id"):
             EvidenceCatalog(self.workspace).show("not-a-catalog-id")

@@ -59,6 +59,8 @@ class SchemaExampleTests(unittest.TestCase):
             schema_name = EXAMPLE_SCHEMA_BY_NAME.get(path.name)
             if not schema_name:
                 continue
+            if path.name == "state.json" and "runtime" in path.relative_to(ROOT / "examples").parts:
+                continue
             data = json.loads(path.read_text(encoding="utf-8"))
             for error in validators[schema_name].iter_errors(data):
                 errors.append(f"{path.relative_to(ROOT)} {error.json_path}: {error.message}")
@@ -67,7 +69,7 @@ class SchemaExampleTests(unittest.TestCase):
     def test_bundled_skill_slices_match_schema(self) -> None:
         validator = schema_validator(ROOT / "schemas" / "skill-recommendation-slice.schema.json")
         errors: list[str] = []
-        for path in sorted((ROOT / "examples").glob("*/skill-slices/*.json")):
+        for path in sorted((ROOT / "examples").rglob("skill-slices/*.json")):
             data = json.loads(path.read_text(encoding="utf-8"))
             errors.extend(
                 f"{path.relative_to(ROOT)} {error.json_path}: {error.message}"
@@ -149,8 +151,9 @@ class SchemaExampleTests(unittest.TestCase):
             "--event user_input --ref evidence/wake-requests/user-input.json",
             quickstart.replace("\\\n", " ").replace("\n", " "),
         )
-        self.assertIn("final qualifying dependency-ready barrier receipt", quickstart)
-        self.assertIn("exception short circuit", quickstart)
+        normalized_quickstart = " ".join(quickstart.split())
+        self.assertIn("final qualifying dependency-ready barrier receipt", normalized_quickstart)
+        self.assertIn("exception short circuit", normalized_quickstart)
 
     def test_spec_scopes_exactly_once_to_wake_transition_and_adapter_evidence(self) -> None:
         spec = (ROOT / "SPEC.md").read_text(encoding="utf-8")

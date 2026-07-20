@@ -1,0 +1,30 @@
+{
+  "schema_version": "valp-langgraph-submission.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "agent": "langgraph_worker",
+  "role": "implementer",
+  "work_item_id": "implementer:langgraph_worker",
+  "dispatch_id": "VALP-NON-HERDR-E2E-001:implementer:1",
+  "dispatch_generation": 1,
+  "dispatch_ref": "agents/langgraph_worker/dispatch.md",
+  "expected_refs": [
+    "agents/langgraph_worker/evidence.md",
+    "evidence/verification.md"
+  ],
+  "runtime": "LangGraph API",
+  "api_url": "http://127.0.0.1:8123",
+  "graph_id": "langgraph_worker",
+  "assistant_id": "c46186e6-3287-5bc0-bced-9ff71c8caeba",
+  "thread_id": "019f7e44-b84b-7893-bd81-d2b0e6d28a22",
+  "run_id": "019f7e45-7266-75c0-9301-d73f77714f34",
+  "submission_id": "019f7e45-7266-75c0-9301-d73f77714f34",
+  "suspension_epoch": 3,
+  "submitted_at": "2026-07-20T06:45:08.327087+00:00",
+  "initial_status": "pending",
+  "input": {
+    "attempt": "repair",
+    "task_id": "VALP-NON-HERDR-E2E-001",
+    "agent": "langgraph_worker",
+    "role": "implementer"
+  }
+}

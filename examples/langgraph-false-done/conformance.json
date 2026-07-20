@@ -1,0 +1,47 @@
+{
+  "schema_version": "valp-adapter-conformance-report.v1",
+  "case_id": "VALP-NON-HERDR-E2E-001",
+  "adapter": {
+    "id": "langgraph",
+    "runtime": "LangGraph API",
+    "runtime_version": "0.11.1",
+    "framework_version": "1.2.9",
+    "transport": "HTTP API",
+    "herdr_used": false
+  },
+  "conformance": {
+    "level": "reviewed_false_done_e2e",
+    "normative": false,
+    "scope": "this adapter and local LangGraph API development runtime pair only",
+    "checks_passed": 6,
+    "checks_total": 6,
+    "checks": [
+      {"id": "run_thread_id", "status": "pass", "evidence_ref": "task/runtime/langgraph/019f7e44-b84c-7061-80bc-14ebd75c10c3/submission.json"},
+      {"id": "submission_proof", "status": "pass", "evidence_ref": "task/dispatch-receipts.jsonl"},
+      {"id": "runtime_state", "status": "pass", "evidence_ref": "task/runtime/langgraph/019f7e44-b84c-7061-80bc-14ebd75c10c3/terminal-run.json"},
+      {"id": "output_evidence_refs", "status": "pass", "evidence_ref": "task/runtime/langgraph/019f7e45-7266-75c0-9301-d73f77714f34/run.json"},
+      {"id": "failure_reason", "status": "pass", "evidence_ref": "task/runtime/langgraph/019f7e44-b84c-7061-80bc-14ebd75c10c3/run.json"},
+      {"id": "restart_replay_identity", "status": "pass", "evidence_ref": "task/evidence/adapter-fit.md"}
+    ]
+  },
+  "runtime_identity": {
+    "false_done_run_id": "019f7e44-b84c-7061-80bc-14ebd75c10c3",
+    "repair_run_id": "019f7e45-7266-75c0-9301-d73f77714f34",
+    "worker_thread_id": "019f7e44-b84b-7893-bd81-d2b0e6d28a22",
+    "review_run_id": "019f7e45-aaf0-7f61-8d4c-856a446b5b35"
+  },
+  "acceptance": {
+    "first_failure_preserved": true,
+    "dispatch_completed_manually_fabricated": false,
+    "independent_review": true,
+    "final_synthesis": true,
+    "audit": {"status": "pass", "pass_count": 26, "warn_count": 0, "fail_count": 0, "skip_count": 2},
+    "reproduction_budget_seconds": 600,
+    "reproduction_command": "examples/langgraph-false-done/reproduce.sh"
+  },
+  "limits": [
+    "No production LangSmith deployment claim.",
+    "No deterministic coordinator auto-continuation claim.",
+    "No underlying LLM provider or model-quality claim."
+  ]
+}

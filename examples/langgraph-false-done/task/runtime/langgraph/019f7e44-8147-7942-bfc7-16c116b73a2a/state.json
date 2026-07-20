@@ -1,0 +1,50 @@
+{
+  "values": {
+    "task_id": "VALP-NON-HERDR-E2E-001",
+    "agent": "langgraph_coordinator",
+    "role": "coordinator",
+    "attempt": "initial",
+    "claim": "coordination evidence recorded",
+    "output_refs": [
+      "agents/langgraph_coordinator/self-review.md"
+    ],
+    "control_contract_ref": "control-contract.json",
+    "control_contract_digest": "sha256:b4538e48f631e2e6c05fb8db41ba1f9094cd90eb31a2545913295bce1bd1c26c",
+    "control_contract_status": "honored"
+  },
+  "next": [],
+  "tasks": [],
+  "metadata": {
+    "graph_id": "langgraph_coordinator",
+    "assistant_id": "91a60cf3-153d-5f87-991c-1e1ee35d5c4b",
+    "user_id": "",
+    "created_by": "system",
+    "run_attempt": 1,
+    "langgraph_version": "1.2.9",
+    "langgraph_api_version": "0.11.1",
+    "langgraph_plan": "enterprise",
+    "langgraph_host": "self-hosted",
+    "langgraph_api_url": "http://127.0.0.1:8123",
+    "run_id": "019f7e44-8147-7942-bfc7-16c116b73a2a",
+    "thread_id": "019f7e44-8145-7b00-a75d-85c51d7991ee",
+    "source": "loop",
+    "step": 1,
+    "parents": {},
+    "langgraph_auth_user_id": "",
+    "langgraph_request_id": "d0748485-a0d0-4cfb-95de-283805973b91"
+  },
+  "created_at": "2026-07-20T06:44:07.539089+00:00",
+  "checkpoint": {
+    "checkpoint_id": "1f184066-80a9-67f0-8001-4947ab3e2072",
+    "thread_id": "019f7e44-8145-7b00-a75d-85c51d7991ee",
+    "checkpoint_ns": ""
+  },
+  "parent_checkpoint": {
+    "checkpoint_id": "1f184066-80a2-6b26-8000-98cf1c2cff06",
+    "thread_id": "019f7e44-8145-7b00-a75d-85c51d7991ee",
+    "checkpoint_ns": ""
+  },
+  "interrupts": [],
+  "checkpoint_id": "1f184066-80a9-67f0-8001-4947ab3e2072",
+  "parent_checkpoint_id": "1f184066-80a2-6b26-8000-98cf1c2cff06"
+}

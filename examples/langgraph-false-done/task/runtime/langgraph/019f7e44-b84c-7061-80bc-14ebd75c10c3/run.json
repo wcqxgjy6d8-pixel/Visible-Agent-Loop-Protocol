@@ -1,0 +1,33 @@
+{
+  "schema_version": "valp-langgraph-run.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "agent": "langgraph_worker",
+  "role": "implementer",
+  "run_id": "019f7e44-b84c-7061-80bc-14ebd75c10c3",
+  "submission_id": "019f7e44-b84c-7061-80bc-14ebd75c10c3",
+  "thread_id": "019f7e44-b84b-7893-bd81-d2b0e6d28a22",
+  "graph_id": "langgraph_worker",
+  "assistant_id": "c46186e6-3287-5bc0-bced-9ff71c8caeba",
+  "status": "blocked",
+  "runtime_status": "success",
+  "checkpoint_id": "1f184067-06d5-6342-8001-00332db4e52f",
+  "expected_refs": [
+    "agents/langgraph_worker/evidence.md",
+    "evidence/verification.md"
+  ],
+  "missing_refs": [
+    "agents/langgraph_worker/evidence.md",
+    "evidence/verification.md"
+  ],
+  "failure_reason": {
+    "error": "missing_expected_evidence",
+    "refs": [
+      "agents/langgraph_worker/evidence.md",
+      "evidence/verification.md"
+    ]
+  },
+  "worker_cancelled": false,
+  "completed_at": "2026-07-20T06:44:21.609828+00:00",
+  "output_ref": "runtime/langgraph/019f7e44-b84c-7061-80bc-14ebd75c10c3/output.json",
+  "state_ref": "runtime/langgraph/019f7e44-b84c-7061-80bc-14ebd75c10c3/state.json"
+}

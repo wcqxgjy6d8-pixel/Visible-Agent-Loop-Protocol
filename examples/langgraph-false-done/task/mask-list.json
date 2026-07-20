@@ -1,0 +1,28 @@
+{
+  "schema_version": "valp-mask-list.v1",
+  "generated_at": "2026-07-20T06:39:05Z",
+  "profile": "agent-runtime",
+  "loop_layer": "developer_feedback_loop",
+  "masked": [
+    {
+      "item": "old chat memory without file-backed evidence",
+      "reason": "stale context is not valid routing or completion evidence"
+    },
+    {
+      "item": "hidden votes, hidden reviews, or hidden routing decisions",
+      "reason": "VALP requires visible decision input"
+    },
+    {
+      "item": "Agy prototype output as production proof",
+      "reason": "prototype evidence can inform implementation but cannot satisfy build/test/release gates"
+    },
+    {
+      "item": "release, signing, upload, deploy, auth, secrets, or destructive changes",
+      "reason": "high-risk operations require explicit user approval"
+    },
+    {
+      "item": "invalid, superseded, rejected, or blocked evidence",
+      "reason": "these evidence statuses do not satisfy done criteria"
+    }
+  ]
+}

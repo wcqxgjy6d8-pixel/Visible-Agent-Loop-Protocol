@@ -1,0 +1,51 @@
+{
+  "values": {
+    "task_id": "VALP-NON-HERDR-E2E-001",
+    "agent": "langgraph_worker",
+    "role": "implementer",
+    "attempt": "repair",
+    "claim": "Report generated successfully.",
+    "output_refs": [
+      "agents/langgraph_worker/evidence.md",
+      "evidence/verification.md"
+    ],
+    "control_contract_ref": "control-contract.json",
+    "control_contract_digest": "sha256:b4538e48f631e2e6c05fb8db41ba1f9094cd90eb31a2545913295bce1bd1c26c",
+    "control_contract_status": "honored"
+  },
+  "next": [],
+  "tasks": [],
+  "metadata": {
+    "graph_id": "langgraph_worker",
+    "assistant_id": "c46186e6-3287-5bc0-bced-9ff71c8caeba",
+    "user_id": "",
+    "created_by": "system",
+    "run_attempt": 1,
+    "langgraph_version": "1.2.9",
+    "langgraph_api_version": "0.11.1",
+    "langgraph_plan": "enterprise",
+    "langgraph_host": "self-hosted",
+    "langgraph_api_url": "http://127.0.0.1:8123",
+    "run_id": "019f7e45-7266-75c0-9301-d73f77714f34",
+    "thread_id": "019f7e44-b84b-7893-bd81-d2b0e6d28a22",
+    "source": "loop",
+    "step": 4,
+    "parents": {},
+    "langgraph_auth_user_id": "",
+    "langgraph_request_id": "78d78b72-af96-4c9d-b825-b9e364d6002e"
+  },
+  "created_at": "2026-07-20T06:45:09.250879+00:00",
+  "checkpoint": {
+    "checkpoint_id": "1f184068-cd31-610c-8004-1b04adb0b79f",
+    "thread_id": "019f7e44-b84b-7893-bd81-d2b0e6d28a22",
+    "checkpoint_ns": ""
+  },
+  "parent_checkpoint": {
+    "checkpoint_id": "1f184068-cd28-6ed0-8003-db5c85dae5da",
+    "thread_id": "019f7e44-b84b-7893-bd81-d2b0e6d28a22",
+    "checkpoint_ns": ""
+  },
+  "interrupts": [],
+  "checkpoint_id": "1f184068-cd31-610c-8004-1b04adb0b79f",
+  "parent_checkpoint_id": "1f184068-cd28-6ed0-8003-db5c85dae5da"
+}

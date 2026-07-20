@@ -54,13 +54,15 @@ What this repository proves today:
   review, agent-recommendation, approval, learning-feedback, and final
   synthesis gates for the included task folders;
 - a short [visible dispatch process proof](docs/case-studies/visible-dispatch-process-proof.md)
-  shows a real VALP/HERDR publish-and-dispatch run.
+  shows a real VALP/HERDR publish-and-dispatch run;
+- a [real LangGraph false-done case](docs/case-studies/langgraph-false-done.md)
+  preserves runtime success with missing evidence, repair, independent review,
+  and a final `fail_count=0` audit.
 
 What it does not prove yet:
 
-- a standalone public live Full Mode completion case study using a runtime end
-  to end;
-- a first-class hosted or agent-provider adapter beyond the local-process draft adapter;
+- a production-hosted LangGraph or agent-provider deployment;
+- deterministic coordinator auto-continuation across runtime restart;
 - native Full Mode guarantees on every local operating system;
 - production deployment reliability for a third-party runtime.
 
@@ -97,10 +99,10 @@ The implemented draft core adds:
 
 The proposal deliberately keeps the proof bar ahead of the release label.
 Before stable `0.3.0`, the RFC must be accepted and incorporated into
-`SPEC.md`; the remaining task reducer, live adapter restart proof, plugin
-execution isolation, and a real non-HERDR Full Mode adapter must complete a
-public sanitized end-to-end run. The draft core is shipped for evaluation, not
-as a stable platform claim.
+`SPEC.md`; the remaining task reducer, production adapter restart proof, plugin
+execution isolation, and deterministic cross-runtime continuation still need
+stronger evidence. The draft core is shipped for evaluation, not as a stable
+platform claim.
 
 Read the [full RFC](docs/rfcs/0001-v0.3-installation-control-plane.md) and the
 [current evidence matrix](docs/project-status.md) side by side: one describes
@@ -377,7 +379,7 @@ See [docs/cli-audit.md](docs/cli-audit.md).
 
 ## Proof It Works
 
-The repository includes four self-verifying task examples:
+The repository includes five self-verifying task examples:
 
 | Example | What it proves | Expected audit |
 |---|---|---|
@@ -385,6 +387,7 @@ The repository includes four self-verifying task examples:
 | `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, correction-cycle, recommendation, review, and final synthesis audit gates | `PASS`, `pass=22 warn=0 fail=0` |
 | `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=21 warn=0 fail=0` |
 | `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=14 warn=0 fail=0` |
+| `examples/langgraph-false-done/` | Real non-HERDR LangGraph false-done, repair, and independent review case | `PASS`, `pass=26 warn=0 fail=0` |
 | `docs/case-studies/visible-dispatch-process-proof.md` | Short public video of a real VALP/HERDR publish-and-dispatch process; not a standalone Full Mode completion case study | Process proof only |
 
 Run the complete smoke check:

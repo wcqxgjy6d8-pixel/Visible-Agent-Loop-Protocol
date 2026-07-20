@@ -1,0 +1,29 @@
+{
+  "schema_version": "valp-langgraph-submission.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "agent": "langgraph_coordinator",
+  "role": "coordinator",
+  "work_item_id": "coordinator:langgraph_coordinator",
+  "dispatch_id": "VALP-NON-HERDR-E2E-001:coordinator:1",
+  "dispatch_generation": 1,
+  "dispatch_ref": "agents/langgraph_coordinator/dispatch.md",
+  "expected_refs": [
+    "agents/langgraph_coordinator/self-review.md"
+  ],
+  "runtime": "LangGraph API",
+  "api_url": "http://127.0.0.1:8123",
+  "graph_id": "langgraph_coordinator",
+  "assistant_id": "91a60cf3-153d-5f87-991c-1e1ee35d5c4b",
+  "thread_id": "019f7e44-8145-7b00-a75d-85c51d7991ee",
+  "run_id": "019f7e44-8147-7942-bfc7-16c116b73a2a",
+  "submission_id": "019f7e44-8147-7942-bfc7-16c116b73a2a",
+  "suspension_epoch": 1,
+  "submitted_at": "2026-07-20T06:44:06.599174+00:00",
+  "initial_status": "pending",
+  "input": {
+    "attempt": "initial",
+    "task_id": "VALP-NON-HERDR-E2E-001",
+    "agent": "langgraph_coordinator",
+    "role": "coordinator"
+  }
+}

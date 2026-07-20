@@ -1,0 +1,34 @@
+{
+  "schema_version": "valp-agent-capabilities.v1",
+  "updated_at": "2026-07-20T00:00:00Z",
+  "source": "anonymous LangGraph false-done fixture",
+  "agents": {
+    "langgraph_coordinator": {
+      "active": true,
+      "role": ["coordination", "state", "visible_synthesis"],
+      "skills": ["task coordination"],
+      "mcp_servers": [],
+      "strengths": ["coordination", "state tracking", "final synthesis"],
+      "must_not_do": ["must not claim worker output without runtime evidence"],
+      "runtime": {"status": "idle"}
+    },
+    "langgraph_worker": {
+      "active": true,
+      "role": ["implementation", "verification"],
+      "skills": ["artifact generation"],
+      "mcp_servers": [],
+      "strengths": ["implementation", "artifact generation", "repair"],
+      "must_not_do": ["must not self-approve missing evidence"],
+      "runtime": {"status": "idle"}
+    },
+    "langgraph_reviewer": {
+      "active": true,
+      "role": ["review", "code_review", "risk_review"],
+      "skills": ["independent verification"],
+      "mcp_servers": [],
+      "strengths": ["review", "independent verification", "evidence digest checking"],
+      "must_not_do": ["read only", "must not modify worker evidence"],
+      "runtime": {"status": "idle"}
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "values": {
+    "task_id": "VALP-NON-HERDR-E2E-001",
+    "agent": "langgraph_reviewer",
+    "role": "reviewer",
+    "attempt": "review",
+    "output_refs": [
+      "agents/langgraph_reviewer/review.md"
+    ],
+    "verification": "pass",
+    "control_contract_ref": "control-contract.json",
+    "control_contract_digest": "sha256:b4538e48f631e2e6c05fb8db41ba1f9094cd90eb31a2545913295bce1bd1c26c",
+    "control_contract_status": "honored"
+  },
+  "next": [],
+  "tasks": [],
+  "metadata": {
+    "graph_id": "langgraph_reviewer",
+    "assistant_id": "c32e0829-51ea-5a4f-88c6-fd2c6bd25a2a",
+    "user_id": "",
+    "created_by": "system",
+    "run_attempt": 1,
+    "langgraph_version": "1.2.9",
+    "langgraph_api_version": "0.11.1",
+    "langgraph_plan": "enterprise",
+    "langgraph_host": "self-hosted",
+    "langgraph_api_url": "http://127.0.0.1:8123",
+    "run_id": "019f7e45-aaf0-7f61-8d4c-856a446b5b35",
+    "thread_id": "019f7e45-aaf0-7f61-8d4c-855bc4b0971e",
+    "source": "loop",
+    "step": 1,
+    "parents": {},
+    "langgraph_auth_user_id": "",
+    "langgraph_request_id": "d4db5fc3-a200-4032-a18d-ee95faf5ac92"
+  },
+  "created_at": "2026-07-20T06:45:23.792210+00:00",
+  "checkpoint": {
+    "checkpoint_id": "1f184069-57de-65de-8001-d1f491da994c",
+    "thread_id": "019f7e45-aaf0-7f61-8d4c-855bc4b0971e",
+    "checkpoint_ns": ""
+  },
+  "parent_checkpoint": {
+    "checkpoint_id": "1f184069-57cf-6674-8000-9c81332c1283",
+    "thread_id": "019f7e45-aaf0-7f61-8d4c-855bc4b0971e",
+    "checkpoint_ns": ""
+  },
+  "interrupts": [],
+  "checkpoint_id": "1f184069-57de-65de-8001-d1f491da994c",
+  "parent_checkpoint_id": "1f184069-57cf-6674-8000-9c81332c1283"
+}

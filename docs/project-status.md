@@ -12,8 +12,8 @@ multi-agent platform.
 | Repository license | MIT |
 | Reference CLI | `bin/valp` with task workflow, v0.3 installation, leader, capability, migration, plugin, hello, conformance, audit, and doctor commands |
 | Reference runtime | HERDR for the documented Full Mode path |
-| Other runtime adapters | A local-process draft adapter is implemented; hosted/non-HERDR agent adapters remain open |
-| Public examples | Three bundled fixtures, one sanitized real Manual Mode documentation case study, and one visible dispatch process video |
+| Other runtime adapters | Local-process and LangGraph API adapters are implemented; the LangGraph proof uses the local development runtime, not production hosting |
+| Public examples | Three synthetic fixtures, two sanitized real task case studies, and one visible dispatch process video |
 | Public release | Stable evaluation release `v0.2.0` |
 
 ## v0.3 Draft Implementation
@@ -39,6 +39,7 @@ bin/valp audit examples/minimal-task
 bin/valp audit examples/full-mode-task
 bin/valp audit examples/headless-queue-task
 bin/valp audit examples/real-doc-calibration-task
+bin/valp audit examples/langgraph-false-done/task
 ```
 
 The public GitHub workflow runs the smoke check on Linux, macOS, and Windows
@@ -61,6 +62,7 @@ platform.
 | Deterministic wake core | Covered locally for dependency barrier, identity rejection, revision CAS, duplicate wake, concurrent wake, and event-to-projection recovery | `valp_cli/workflow.py`, `tests/test_valp_workflow.py` |
 | v0.3 installation core | Covered for bootstrap, explicit leader selection, epoch fencing, CAS, idempotency, replay, capability registry, content-addressed claims/reviews, task Done reducer, plugin boundary, and migration dry-run | `valp_cli/control_plane.py`, `valp_cli/task_control.py`, `valp_cli/plugins.py`, `valp_cli/conformance.py`, `tests/test_control_plane.py` |
 | Local-process adapter | Covered for approved subprocess submission, lifecycle result, output evidence, and failure status | `valp_cli/process_adapter.py`, `schemas/process-adapter-run.schema.json`, `tests/test_control_plane.py` |
+| LangGraph API adapter | Covered for real run/thread identity, submission proof, state/output/checkpoint refs, failure reason, replay identity, and non-terminal wait windows | `valp_cli/langgraph_adapter.py`, `tests/test_langgraph_adapter.py` |
 | File-ledger queue concurrency | Covered on the current POSIX test host with synchronized cross-process submitters | `valp_cli/workflow.py`, `tests/test_valp_workflow.py`; real Windows subprocess proof remains open |
 | Wait/wake closed artifacts | Covered for shared closed suspension projections, immutable policy snapshots, event/reason pairing, valid/invalid fixtures, identity-bound external wake evidence, generated-result audit, and projection mismatch failure | `schemas/suspension.schema.json`, `schemas/wait-policy.schema.json`, `schemas/exception-wake.schema.json`, `schemas/wait-event.schema.json`, `schemas/wake-result.schema.json`, `tests/test_schema_examples.py`, `tests/test_valp_audit.py`, `tests/test_valp_workflow.py` |
 | Doctor diagnostics | Covered for current diagnostics | `tests/test_valp_doctor.py` |
@@ -68,10 +70,11 @@ platform.
 | Bundled synthetic Full Mode fixture | Covered by audit | `examples/full-mode-task/` |
 | Bundled synthetic headless queue fixture | Covered by audit | `examples/headless-queue-task/` |
 | Sanitized real Manual Mode documentation case study | Covered by audit | `examples/real-doc-calibration-task/` |
+| Sanitized real non-HERDR LangGraph false-done case | Covered by audit and a live reproduction script | `examples/langgraph-false-done/`, `docs/case-studies/langgraph-false-done.md` |
 | Visible HERDR publish-and-dispatch process | Covered as process proof, not CI | `docs/case-studies/visible-dispatch-process-proof.md` |
 | Live HERDR dispatch E2E completion case study | Not covered in repository CI | Requires sanitized task folder plus runtime submission and final audit evidence |
 | Live zero-model-turn deterministic wake and exactly-once coordinator continuation | Not covered in repository CI | Requires a wake-ID-bound continuation invocation receipt plus restart/restore evidence from a real adapter |
-| Non-HERDR real adapter E2E | Not covered | First-class adapter implementation is planned |
+| Non-HERDR real adapter E2E | Covered for the local LangGraph API development runtime | Production hosting and deterministic coordinator auto-continuation remain open |
 | Full state-machine transition suite | Partially covered | Installation transitions are implemented and tested; the task-level legal transition graph remains planned |
 | Context compression runtime integration | Partially covered | Semantics are documented; live adapter enforcement is not yet covered |
 | Auto Visible watcher E2E | Not covered | Trigger policy semantics exist; watcher implementation is runtime-specific |
@@ -97,8 +100,8 @@ and exports the required receipts and evidence.
 
 | Gap | Why it matters | Current handling |
 |---|---|---|
-| No standalone public live Full Mode completion case study | The visible dispatch video proves publish and runtime dispatch behavior, but not a complete sanitized Full Mode run by itself | Planned before stronger Full Mode promotion |
-| Hosted/non-HERDR agent adapters are not covered | Runtime-neutral agent claims need an independently operated agent or hosted implementation beyond a local process worker | Local-process adapter proves the adapter boundary; public agent E2E remains required for stable 0.3 |
+| No production-hosted non-HERDR completion proof | The LangGraph case proves a real local API runtime, not LangSmith or another production deployment | Keep hosting and production reliability claims out of scope until separately evidenced |
+| Non-HERDR adapter breadth is limited | One LangGraph adapter proves the boundary but not portability across multiple providers | Keep conformance claims scoped to the tested adapter/runtime pair |
 | Live Full Mode E2E coverage is limited | CLI tests cannot prove a real runtime can submit, wait, collect, and audit | Keep Full Mode claims tied to adapter proof |
 | Deterministic wake proof is local | File-lock/CAS and event-to-projection recovery tests prove the reference core, not a real HERDR or non-HERDR continuation | Do not claim P2 or cross-runtime conformance until both live paths exist |
 | Windows directory durability is unproven | The reference core flushes files but has no evidenced Windows parent-directory sync equivalent | Do not claim sudden-power-loss durability on Windows; require adapter-specific proof |

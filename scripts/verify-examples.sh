@@ -99,12 +99,14 @@ for path in sorted((root / "examples").rglob("*.json")):
     schema_name = schema_by_name.get(path.name)
     if not schema_name:
         continue
+    if path.name == "state.json" and "runtime" in path.relative_to(root / "examples").parts:
+        continue
     data = json.loads(path.read_text(encoding="utf-8"))
     for error in validators[schema_name].iter_errors(data):
         errors.append(f"{path} {error.json_path}: {error.message}")
 
 slice_validator = validator_for("skill-recommendation-slice.schema.json")
-for path in sorted((root / "examples").glob("*/skill-slices/*.json")):
+for path in sorted((root / "examples").rglob("skill-slices/*.json")):
     data = json.loads(path.read_text(encoding="utf-8"))
     for error in slice_validator.iter_errors(data):
         errors.append(f"{path} {error.json_path}: {error.message}")
@@ -132,7 +134,7 @@ if errors:
 PY
 
 echo "==> Running unit tests"
-"$PYTHON_BIN" -m unittest tests/test_catalog.py tests/test_control_plane.py tests/test_github_workflow.py tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py tests/test_schema_examples.py
+"$PYTHON_BIN" -m unittest tests/test_adapter_starter.py tests/test_catalog.py tests/test_control_plane.py tests/test_github_workflow.py tests/test_langgraph_adapter.py tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py tests/test_schema_examples.py
 
 echo "==> Running v0.3 draft core conformance"
 "$PYTHON_BIN" -m valp_cli conformance --profile core-writer
@@ -148,6 +150,9 @@ echo "==> Auditing headless queue example"
 
 echo "==> Auditing real documentation calibration case study"
 "$PYTHON_BIN" -m valp_cli audit examples/real-doc-calibration-task
+
+echo "==> Auditing real LangGraph false-done case study"
+"$PYTHON_BIN" -m valp_cli audit examples/langgraph-false-done/task
 
 echo "==> Benchmarking role-budgeted dispatch size"
 "$PYTHON_BIN" scripts/benchmark-dispatch-size.py

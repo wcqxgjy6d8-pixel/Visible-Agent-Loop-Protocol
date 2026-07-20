@@ -8,6 +8,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -145,7 +146,7 @@ DEFAULT_MIN_TERMINAL_SIZE = {"width": 60, "height": 20}
 AGENT_MIN_TERMINAL_SIZE = {
     "agy": {"width": 70, "height": 24},
 }
-RUNTIME_CHOICES = {"auto", "manual", "herdr", "queue"}
+RUNTIME_CHOICES = {"auto", "manual", "herdr", "langgraph", "queue"}
 DISPATCH_BRIEF_CHAR_LIMIT = 480
 SKILL_TASK_LABEL_CHAR_LIMIT = 120
 DISPATCH_ROLE_BUDGETS = {
@@ -679,6 +680,8 @@ def runtime_from_adapter_record(runtime: dict[str, Any]) -> str:
         return "manual"
     if runtime_class == "daemon_queue":
         return "queue"
+    if runtime_class == "hosted_local_platform" and "langgraph" in runtime_name:
+        return "langgraph"
     if runtime_class == "pane_controller":
         return "herdr"
     return "auto"
@@ -2763,6 +2766,14 @@ def runtime_adapter_record(preflight: dict[str, Any] | None = None, runtime: str
             "state_mapping_ref": "docs/task-state-machine.md",
             "preflight": preflight,
         }
+    if runtime_kind == "langgraph":
+        return {
+            "class": "hosted_local_platform",
+            "name": "LangGraph API",
+            "full_mode_capable": preflight.get("status") != "fail",
+            "state_mapping_ref": "docs/task-state-machine.md",
+            "preflight": preflight,
+        }
     if runtime_kind == "herdr":
         return {
             "class": "pane_controller",
@@ -2786,6 +2797,10 @@ def collect_runtime_preflight(agent_names: list[str] | None = None, runtime: str
         return collect_manual_preflight(agent_names)
     if runtime_kind == "queue":
         return collect_queue_preflight(agent_names)
+    if runtime_kind == "langgraph":
+        from .langgraph_adapter import collect_langgraph_preflight
+
+        return collect_langgraph_preflight(agent_names)
     return collect_herdr_preflight(agent_names)
 
 
@@ -4720,16 +4735,20 @@ def observe_expected_evidence_completions(
     return appended
 
 
-def suspend_task(root: Path, task_id: str, timeout_seconds: float = 300.0) -> dict[str, Any]:
+def suspend_task(root: Path, task_id: str, timeout_seconds: float | None = None) -> dict[str, Any]:
     root = workspace_root(root)
     directory = task_dir(root, task_id)
     state_path = directory / "state.json"
-    if not math.isfinite(timeout_seconds) or timeout_seconds < 0:
-        raise SystemExit("Wait timeout must be a finite non-negative number")
     with task_state_lock(directory):
         state = recover_wait_projection(directory, read_json_strict(state_path))
         if state.get("status") == "suspended":
             return state.get("suspension") or {}
+        if timeout_seconds is None:
+            raise SystemExit(
+                "Creating a suspension requires an explicit protocol execution timeout"
+            )
+        if not math.isfinite(timeout_seconds) or timeout_seconds < 0:
+            raise SystemExit("Execution timeout must be a finite non-negative number")
         if state.get("schema_version") != "valp-visible-loop-state.v2":
             raise SystemExit("Legacy v1 task state is read-only; deterministic wait requires state v2")
         if state.get("status") in {"done", "failed", "cancelled"}:
@@ -5083,12 +5102,24 @@ def wait_for_task(
     task_id: str,
     timeout_seconds: float = 300.0,
     poll_interval_seconds: float = 0.25,
+    execution_timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
+    if not math.isfinite(timeout_seconds) or timeout_seconds < 0:
+        raise SystemExit("Wait timeout must be a finite non-negative number")
     if not math.isfinite(poll_interval_seconds) or poll_interval_seconds < 0:
         raise SystemExit("Poll interval must be a finite non-negative number")
+    if execution_timeout_seconds is not None and (
+        not math.isfinite(execution_timeout_seconds) or execution_timeout_seconds < 0
+    ):
+        raise SystemExit("Execution timeout must be a finite non-negative number")
     root = workspace_root(root)
     directory = task_dir(root, task_id)
-    suspension = suspend_task(root, task_id, timeout_seconds=timeout_seconds)
+    suspension = suspend_task(
+        root,
+        task_id,
+        timeout_seconds=execution_timeout_seconds,
+    )
+    observation_deadline = time.monotonic() + timeout_seconds
     scan_cursor = int(
         suspension.get("receipt_cursor")
         or suspension.get("receipt_count_at_entry")
@@ -5142,10 +5173,34 @@ def wait_for_task(
                 return reduced
             current = reduced
 
-        deadline_text = str(current.get("deadline_at") or "").replace("Z", "+00:00")
-        deadline = datetime.fromisoformat(deadline_text)
-        if datetime.now(timezone.utc) >= deadline:
-            return resume_suspended_task(root, task_id, "timeout")
+        execution_deadline_text = str(
+            current.get("execution_deadline") or current.get("deadline_at") or ""
+        )
+        try:
+            execution_deadline = datetime.fromisoformat(
+                execution_deadline_text.replace("Z", "+00:00")
+            )
+        except ValueError:
+            raise SystemExit("Suspension execution deadline is missing or invalid")
+        if execution_deadline.tzinfo is None:
+            raise SystemExit("Suspension execution deadline must include a timezone")
+        if datetime.now(timezone.utc) >= execution_deadline.astimezone(timezone.utc):
+            return resume_suspended_task(
+                root,
+                task_id,
+                "timeout",
+                resume_ref="state.json#execution_deadline",
+            )
+
+        if time.monotonic() >= observation_deadline:
+            return {
+                **current,
+                "wait_window": {
+                    "status": "elapsed",
+                    "timeout_seconds": timeout_seconds,
+                    "worker_cancelled": False,
+                },
+            }
 
         time.sleep(max(0.01, poll_interval_seconds))
 
@@ -5440,7 +5495,7 @@ def dispatch_task(
             budget["stop_reason"] = "dynamic model identity changed after routing"
             write_json(directory / "iteration-budget.json", budget)
         raise SystemExit("Dispatch blocked by dynamic model identity gate: " + "; ".join(model_dispatch_errors))
-    if submit and runtime_kind in {"herdr", "queue"}:
+    if submit and runtime_kind in {"herdr", "langgraph", "queue"}:
         write_wait_policy_for_phases(
             directory,
             task_id,
@@ -5465,6 +5520,41 @@ def dispatch_task(
             )
             if submit:
                 write_queue_submission(directory, task_id, target, target_role, expected)
+            continue
+        if runtime_kind == "langgraph":
+            from .langgraph_adapter import submit_langgraph_run
+
+            command = [
+                "valp",
+                "adapter",
+                "langgraph",
+                "run",
+                task_id,
+                "--workspace",
+                str(root),
+                "--agent",
+                target,
+                "--role",
+                target_role,
+                "--graph-id",
+                target,
+            ]
+            if wait_seconds is not None:
+                command.extend(["--wait-seconds", str(wait_seconds)])
+            commands.append(shlex.join(command))
+            if submit:
+                result = submit_langgraph_run(
+                    root,
+                    task_id,
+                    target,
+                    target_role,
+                    graph_id=target,
+                    input_data={"attempt": "initial"},
+                    expected_refs=expected,
+                    wait_seconds=30.0 if wait_seconds is None else wait_seconds,
+                )
+                if result["status"] == "blocked":
+                    raise SystemExit(f"LangGraph run blocked by VALP evidence gate: {result['run_ref']}")
             continue
         if runtime_kind != "herdr":
             raise SystemExit(f"Runtime {runtime_kind} is not supported by this reference dispatch helper.")

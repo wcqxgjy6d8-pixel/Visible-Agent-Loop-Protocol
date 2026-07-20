@@ -111,9 +111,16 @@ When dispatch uses a zero evidence-wait window, the adapter returns after
 submission proof without marking missing immediate evidence as blocked; the
 wait bridge owns that later completion transition.
 
-The coordinator model is not a watcher. A runtime keeps one blocking
-`valp wait` process or event subscription alive; periodic Lead-Agent status
-turns are non-conforming because they consume model tokens.
+The coordinator model is not a watcher. A runtime keeps a `valp wait` process
+or event subscription alive; periodic Lead-Agent status turns are
+non-conforming because they consume model tokens. `valp wait --timeout` bounds
+one local observation window only. When that window elapses, the task remains
+suspended, workers remain active, and a later qualifying receipt can still
+wake the same suspension epoch. Creating the suspension requires an explicit
+`--execution-timeout`, which is persisted as the protocol execution deadline.
+Reattaching with another observation window neither resets nor consumes that
+deadline. Reaching the persisted deadline wakes the task as `timeout` and
+transitions it to `blocked`; it does not cancel the worker.
 
 ```bash
 valp resume TASK-ID --workspace /path/to/workspace \

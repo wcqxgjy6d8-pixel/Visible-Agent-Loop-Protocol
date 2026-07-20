@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 import contextlib
 import errno
 import hashlib
@@ -1054,7 +1055,7 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertTrue(commands[0].startswith("Manual Mode:"))
             self.assertNotIn("herdr-loop", commands[0])
 
-    def test_wait_command_suspends_and_resumes_on_timeout(self) -> None:
+    def test_wait_command_timeout_keeps_worker_and_suspension_active(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             with patch("valp_cli.workflow.local_capabilities_path", return_value=root / "missing-capabilities.json"):
@@ -1084,6 +1085,8 @@ class ValpWorkflowTests(unittest.TestCase):
                     str(root),
                     "--timeout",
                     "0",
+                    "--execution-timeout",
+                    "60",
                     "--poll-interval",
                     "0",
                     "--json",
@@ -1091,11 +1094,148 @@ class ValpWorkflowTests(unittest.TestCase):
 
             result = json.loads(output.getvalue())
             state = read_json(task_dir / "state.json")
+            suspension = state["suspension"]
+            entered_at = datetime.fromisoformat(suspension["entered_at"].replace("Z", "+00:00"))
+            execution_deadline = datetime.fromisoformat(
+                suspension["execution_deadline"].replace("Z", "+00:00")
+            )
             self.assertEqual(exit_code, 0)
-            self.assertEqual(result["resume_event"], "timeout")
+            self.assertEqual(result["status"], "waiting")
+            self.assertEqual(result["wait_window"]["status"], "elapsed")
+            self.assertFalse(result["wait_window"]["worker_cancelled"])
+            self.assertEqual(state["status"], "suspended")
+            self.assertEqual(suspension["status"], "waiting")
+            self.assertEqual((execution_deadline - entered_at).total_seconds(), 60)
+            self.assertNotIn("accepted_wake", suspension)
+
+            second_output = io.StringIO()
+            with contextlib.redirect_stdout(second_output):
+                second_exit_code = main([
+                    "wait",
+                    "TASK-WAIT-TIMEOUT",
+                    "--workspace",
+                    str(root),
+                    "--timeout",
+                    "0",
+                    "--poll-interval",
+                    "0",
+                    "--json",
+                ])
+
+            second_result = json.loads(second_output.getvalue())
+            second_state = read_json(task_dir / "state.json")
+            self.assertEqual(second_exit_code, 0)
+            self.assertEqual(second_result["status"], "waiting")
+            self.assertEqual(second_state["suspension"]["suspension_epoch"], suspension["suspension_epoch"])
+            self.assertEqual(second_state["suspension"]["execution_deadline"], suspension["execution_deadline"])
+
+    def test_late_reviewer_receipt_wakes_after_wait_window_elapsed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_id = "TASK-WAIT-SLOW-REVIEWER"
+            task_dir, items = self.write_deterministic_wait_fixture(
+                root,
+                task_id,
+                [{"agent": "claude", "role": "reviewer"}],
+            )
+
+            waiting = wait_for_task(
+                root,
+                task_id,
+                timeout_seconds=0,
+                poll_interval_seconds=0,
+                execution_timeout_seconds=60,
+            )
+            state_while_waiting = read_json(task_dir / "state.json")
+            receipts_while_waiting = [
+                json.loads(line)
+                for line in (task_dir / "dispatch-receipts.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+            self.assertEqual(waiting["status"], "waiting")
+            self.assertEqual(state_while_waiting["status"], "suspended")
+            self.assertEqual(state_while_waiting["suspension"]["pending_work_item_ids"], ["reviewer:claude"])
+            self.assertFalse(
+                any(receipt.get("event") in {"dispatch_blocked", "cancellation"} for receipt in receipts_while_waiting)
+            )
+
+            evidence_ref = str(items[0]["expected_refs"][0])
+            evidence_path = task_dir / evidence_ref
+            evidence_path.parent.mkdir(parents=True, exist_ok=True)
+            evidence_path.write_text("Independent review passed after a long-running analysis.\n", encoding="utf-8")
+            completion = self.deterministic_receipt(
+                task_id,
+                items[0],
+                "dispatch_completed",
+                2,
+                suspension_epoch=int(waiting["suspension_epoch"]),
+            )
+            with (task_dir / "dispatch-receipts.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(completion) + "\n")
+
+            resumed = wait_for_task(
+                root,
+                task_id,
+                timeout_seconds=0,
+                poll_interval_seconds=0,
+            )
+            final_state = read_json(task_dir / "state.json")
+
+            self.assertEqual(resumed["status"], "resumed")
+            self.assertEqual(resumed["resume_event"], "receipt")
+            self.assertEqual(resumed["accepted_wake"]["wake_reason"], "dependency_ready")
+            self.assertEqual(resumed["suspension_epoch"], waiting["suspension_epoch"])
+            self.assertEqual(resumed["execution_deadline"], waiting["execution_deadline"])
+            self.assertEqual(final_state["status"], "executing")
+
+    def test_reached_execution_deadline_blocks_without_cancelling_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.local_capabilities_path", return_value=root / "missing-capabilities.json"):
+                with patch("valp_cli.workflow.local_overlay_path", return_value=root / "missing-overlay.json"):
+                    task_dir = publish_task(
+                        root,
+                        "TASK-WAIT-EXECUTION-DEADLINE",
+                        "Review the task evidence",
+                        runtime="manual",
+                    )
+
+            agent = read_json(task_dir / "routing.json")["selected_agents"][0]
+            with (task_dir / "dispatch-receipts.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({
+                    "ts": "2026-07-11T00:00:00Z",
+                    "agent": agent,
+                    "event": "manual_delivery_attested",
+                    "dispatch_ref": f"agents/{agent}/dispatch.md",
+                }) + "\n")
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                exit_code = main([
+                    "wait",
+                    "TASK-WAIT-EXECUTION-DEADLINE",
+                    "--workspace",
+                    str(root),
+                    "--timeout",
+                    "0",
+                    "--execution-timeout",
+                    "0",
+                    "--poll-interval",
+                    "0",
+                    "--json",
+                ])
+
+            result = json.loads(output.getvalue())
+            state = read_json(task_dir / "state.json")
+            receipts = [
+                json.loads(line)
+                for line in (task_dir / "dispatch-receipts.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(result["accepted_wake"]["wake_reason"], "timeout")
             self.assertEqual(state["status"], "blocked")
-            self.assertEqual(state["suspension"]["status"], "resumed")
             self.assertEqual(state["suspension"]["resume_event"], "timeout")
+            self.assertFalse(any(receipt.get("event") == "cancellation" for receipt in receipts))
 
     def test_wait_does_not_accept_a_non_wake_state_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1136,6 +1276,7 @@ class ValpWorkflowTests(unittest.TestCase):
                     "TASK-WAIT-OVERWRITE",
                     timeout_seconds=60,
                     poll_interval_seconds=0,
+                    execution_timeout_seconds=60,
                 )
 
             state = read_json(task_dir / "state.json")
@@ -1234,6 +1375,7 @@ class ValpWorkflowTests(unittest.TestCase):
                     task_id,
                     timeout_seconds=60,
                     poll_interval_seconds=0,
+                    execution_timeout_seconds=60,
                 )
 
             state = read_json(task_dir / "state.json")
@@ -1273,6 +1415,7 @@ class ValpWorkflowTests(unittest.TestCase):
                     task_id,
                     timeout_seconds=60,
                     poll_interval_seconds=0,
+                    execution_timeout_seconds=60,
                 )
 
             receipts = [
@@ -1301,13 +1444,18 @@ class ValpWorkflowTests(unittest.TestCase):
                 task_id,
                 timeout_seconds=0,
                 poll_interval_seconds=0,
+                execution_timeout_seconds=60,
             )
 
             receipts = [
                 json.loads(line)
                 for line in (task_dir / "dispatch-receipts.jsonl").read_text(encoding="utf-8").splitlines()
             ]
-            self.assertEqual(result["accepted_wake"]["wake_reason"], "timeout")
+            state = read_json(task_dir / "state.json")
+            self.assertEqual(result["status"], "waiting")
+            self.assertNotIn("accepted_wake", result)
+            self.assertEqual(state["status"], "suspended")
+            self.assertEqual(state["suspension"]["status"], "waiting")
             self.assertFalse(
                 any(
                     receipt.get("event") == "dispatch_completed"
@@ -1371,6 +1519,7 @@ class ValpWorkflowTests(unittest.TestCase):
                     task_id,
                     timeout_seconds=60,
                     poll_interval_seconds=0,
+                    execution_timeout_seconds=60,
                 )
 
             self.assertEqual(sleep_count, 2)
@@ -2349,6 +2498,54 @@ class ValpWorkflowTests(unittest.TestCase):
             events = (task_dir / "wait-events.jsonl").read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(events), 2)
             self.assertEqual(read_json(task_dir / "state.json")["revision"], 2)
+
+    def test_receipt_and_execution_deadline_race_commits_one_winner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_id = "TASK-WAIT-RECEIPT-DEADLINE-RACE"
+            task_dir, items = self.write_deterministic_wait_fixture(root, task_id)
+            suspension = suspend_task(root, task_id, timeout_seconds=0)
+            receipt = self.deterministic_receipt(
+                task_id,
+                items[0],
+                "dispatch_completed",
+                2,
+                suspension_epoch=int(suspension["suspension_epoch"]),
+            )
+            with (task_dir / "dispatch-receipts.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(receipt) + "\n")
+
+            def wake(resume_event: str) -> tuple[str, object]:
+                try:
+                    resume_ref = (
+                        "dispatch-receipts.jsonl#2"
+                        if resume_event == "receipt"
+                        else "state.json#execution_deadline"
+                    )
+                    return (
+                        "accepted",
+                        resume_suspended_task(
+                            root,
+                            task_id,
+                            resume_event,
+                            resume_ref=resume_ref,
+                        ),
+                    )
+                except SystemExit as error:
+                    return ("rejected", str(error))
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(wake, ["receipt", "timeout"]))
+
+            accepted = [value for status, value in results if status == "accepted"]
+            rejected = [value for status, value in results if status == "rejected"]
+            state = read_json(task_dir / "state.json")
+            events = (task_dir / "wait-events.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual((len(accepted), len(rejected)), (1, 1))
+            self.assertIn("Conflicting wake", str(rejected[0]))
+            self.assertIn(state["suspension"]["accepted_wake"]["wake_reason"], {"dependency_ready", "timeout"})
+            self.assertEqual(len(events), 2)
+            self.assertEqual(state["revision"], 2)
 
     def test_committed_wait_event_repairs_missing_projection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

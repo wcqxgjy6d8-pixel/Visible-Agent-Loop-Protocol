@@ -1,0 +1,37 @@
+{
+  "schema_version": "valp-agent-recommendations.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "status": "resolved",
+  "summary": "All selected-agent recommendations were reviewed. Coordinator and reviewer returned not_required; the worker's fail-closed recommendation was accepted inside adapter scope.",
+  "complexity_policy": {
+    "max_recommendation_rounds": 2,
+    "max_new_dispatches_without_user_approval": 1,
+    "current_scope": "One LangGraph API adapter and one reproducible non-HERDR false-done tracer bullet.",
+    "stop_conditions": [
+      "Do not add another runtime adapter.",
+      "Do not expand SPEC.md.",
+      "Do not add hosted deployment, UI, or vector retrieval.",
+      "Escalate release, publish, auth, secrets, or production deployment."
+    ]
+  },
+  "entries": [
+    {
+      "id": "rec-langgraph-worker-001",
+      "agent": "langgraph_worker",
+      "source_ref": "agents/langgraph_worker/evidence.md",
+      "recommendation": "Keep missing expected evidence fail-closed.",
+      "coordinator_decision": "accepted",
+      "decision_status": "resolved",
+      "rationale": "This is the core adapter safety property demonstrated by the preserved first failure.",
+      "scope_boundary": "Apply only to the LangGraph adapter completion mapping in this task.",
+      "complexity_impact": "low",
+      "follow_up_refs": [
+        "final-synthesis.md"
+      ],
+      "created_at": "2026-07-20T06:45:09Z",
+      "resolved_at": "2026-07-20T06:46:00Z"
+    }
+  ],
+  "open_items": [],
+  "notes": "The not_required recommendations remain visible in coordinator and reviewer evidence."
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "valp-runtime-adapter.v1",
+  "adapter_id": "{{adapter_name}}",
+  "entrypoint": "adapter.py",
+  "capabilities": {
+    "runtime_submission_id": "required",
+    "submission_proof": "required",
+    "runtime_state": "required",
+    "output_and_evidence_refs": "required",
+    "failure_reason": "required",
+    "restart_or_replay_identity": "required",
+    "non_terminal_wait_timeout": "required"
+  }
+}

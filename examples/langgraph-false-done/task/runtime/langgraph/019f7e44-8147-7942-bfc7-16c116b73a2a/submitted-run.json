@@ -1,0 +1,57 @@
+{
+  "run_id": "019f7e44-8147-7942-bfc7-16c116b73a2a",
+  "thread_id": "019f7e44-8145-7b00-a75d-85c51d7991ee",
+  "assistant_id": "91a60cf3-153d-5f87-991c-1e1ee35d5c4b",
+  "metadata": {
+    "created_by": "system",
+    "graph_id": "langgraph_coordinator",
+    "assistant_id": "91a60cf3-153d-5f87-991c-1e1ee35d5c4b"
+  },
+  "status": "pending",
+  "kwargs": {
+    "input": {
+      "attempt": "initial",
+      "task_id": "VALP-NON-HERDR-E2E-001",
+      "agent": "langgraph_coordinator",
+      "role": "coordinator"
+    },
+    "command": null,
+    "config": {
+      "configurable": {
+        "langgraph_auth_user": null,
+        "langgraph_auth_user_id": "",
+        "langgraph_auth_permissions": [],
+        "langgraph_request_id": "d0748485-a0d0-4cfb-95de-283805973b91",
+        "__request_start_time_ms__": 1784529846598,
+        "__after_seconds__": 0,
+        "run_id": "019f7e44-8147-7942-bfc7-16c116b73a2a",
+        "thread_id": "019f7e44-8145-7b00-a75d-85c51d7991ee",
+        "graph_id": "langgraph_coordinator",
+        "assistant_id": "91a60cf3-153d-5f87-991c-1e1ee35d5c4b",
+        "user_id": ""
+      },
+      "metadata": {
+        "created_by": "system",
+        "graph_id": "langgraph_coordinator",
+        "assistant_id": "91a60cf3-153d-5f87-991c-1e1ee35d5c4b"
+      }
+    },
+    "context": {},
+    "stream_mode": [
+      "values"
+    ],
+    "interrupt_before": null,
+    "interrupt_after": null,
+    "webhook": null,
+    "feedback_keys": null,
+    "temporary": false,
+    "subgraphs": false,
+    "resumable": false,
+    "checkpoint_during": true,
+    "durability": "async"
+  },
+  "multitask_strategy": "enqueue",
+  "created_at": "2026-07-20T06:44:06.599174+00:00",
+  "updated_at": "2026-07-20T06:44:06.599176+00:00",
+  "langsmith_session_name": null
+}

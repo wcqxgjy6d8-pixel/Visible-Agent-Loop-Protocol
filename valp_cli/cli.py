@@ -11,9 +11,11 @@ from .catalog import CatalogError, EvidenceCatalog
 from .doctor import collect_doctor_report, render_text_summary, report_to_dict as doctor_report_to_dict, write_markdown_report
 from .control_plane import ControlPlaneError, InstallationCore, PROTOCOL_VERSION, installation_root, load_observations
 from .conformance import run_conformance
+from .adapter_starter import AdapterStarterError, initialize_adapter
 from .plugins import load_plugin_manifest
 from .task_control import TASK_STATUSES, init_task, task_state, transition_task
 from .process_adapter import run_process
+from .langgraph_adapter import LangGraphAdapterError, resume_langgraph_run, submit_langgraph_run
 from .workflow import RUNTIME_CHOICES, collect_runtime_preflight, dispatch_task, publish_task, read_json, resume_suspended_task, route_task, scan_workspace, wait_for_task
 
 
@@ -93,7 +95,17 @@ notes:
     wait = sub.add_parser("wait", help="Suspend coordinator turns until a deterministic resume event")
     wait.add_argument("task_id", help="Task id")
     wait.add_argument("--workspace", default=".", help="Workspace root")
-    wait.add_argument("--timeout", type=float, default=300.0, help="Maximum suspended wait in seconds")
+    wait.add_argument(
+        "--timeout",
+        type=float,
+        default=300.0,
+        help="Observation window in seconds; expiry leaves workers running and the task suspended",
+    )
+    wait.add_argument(
+        "--execution-timeout",
+        type=float,
+        help="Protocol execution deadline in seconds; required only when creating a new suspension",
+    )
     wait.add_argument("--poll-interval", type=float, default=0.25, help="Runtime polling interval in seconds")
     wait.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
@@ -239,6 +251,10 @@ notes:
 
     adapter = sub.add_parser("adapter", help="Run an explicit runtime adapter")
     adapter_sub = adapter.add_subparsers(dest="adapter_command", required=True)
+    adapter_init = adapter_sub.add_parser("init", help="Create a provider-neutral adapter starter")
+    adapter_init.add_argument("target", help="New or empty output directory")
+    adapter_init.add_argument("--name", required=True, help="Lowercase adapter identifier")
+    adapter_init.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     process = adapter_sub.add_parser("process", help="Use the real local-process Full Mode adapter")
     process_sub = process.add_subparsers(dest="process_command", required=True)
     process_run = process_sub.add_parser("run", help="Dry-run or execute one addressable local worker")
@@ -249,6 +265,27 @@ notes:
     process_run.add_argument("--workspace", default=".", help="Workspace/control root parent")
     process_run.add_argument("--root", help="Explicit control root")
     process_run.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    langgraph = adapter_sub.add_parser("langgraph", help="Use a LangGraph API runtime without HERDR")
+    langgraph_sub = langgraph.add_subparsers(dest="langgraph_command", required=True)
+    langgraph_run = langgraph_sub.add_parser("run", help="Submit and evidence-gate one LangGraph run")
+    langgraph_run.add_argument("task_id")
+    langgraph_run.add_argument("--workspace", default=".", help="Workspace root")
+    langgraph_run.add_argument("--agent", required=True)
+    langgraph_run.add_argument("--role", required=True, choices=["coordinator", "implementer", "reviewer", "prototype", "researcher", "other"])
+    langgraph_run.add_argument("--graph-id", help="LangGraph graph/assistant identifier; defaults to agent")
+    langgraph_run.add_argument("--thread-id", help="Reuse a prior LangGraph thread for repair or replay")
+    langgraph_run.add_argument("--input-json", default="{}", help="JSON object passed to the graph")
+    langgraph_run.add_argument("--expected-ref", action="append", help="Override expected task-local evidence ref; repeatable")
+    langgraph_run.add_argument("--api-url", help="LangGraph API base URL")
+    langgraph_run.add_argument("--wait-seconds", type=float, default=30.0, help="Pause window; expiry keeps the runtime job alive")
+    langgraph_run.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    langgraph_resume = langgraph_sub.add_parser("resume", help="Resume waiting for an existing LangGraph run without resubmitting")
+    langgraph_resume.add_argument("task_id")
+    langgraph_resume.add_argument("--workspace", default=".", help="Workspace root")
+    langgraph_resume.add_argument("--run-id", required=True, help="Existing LangGraph runtime run ID")
+    langgraph_resume.add_argument("--wait-seconds", type=float, default=30.0, help="Pause window; expiry keeps the runtime job alive")
+    langgraph_resume.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     catalog = sub.add_parser("catalog", help="Build and query the optional local evidence catalog")
     catalog_sub = catalog.add_subparsers(dest="catalog_command", required=True)
@@ -462,9 +499,12 @@ def main(argv: list[str] | None = None) -> int:
             args.task_id,
             timeout_seconds=args.timeout,
             poll_interval_seconds=args.poll_interval,
+            execution_timeout_seconds=args.execution_timeout,
         )
         if args.json:
             print(json.dumps(result, indent=2, ensure_ascii=False))
+        elif result.get("status") == "waiting":
+            print("VALP wait paused: workers remain active; wait again or resume when a qualifying receipt arrives.")
         else:
             print(f"VALP wait resumed: {result.get('resume_event', 'unknown')}")
         return 0
@@ -674,6 +714,53 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"Process adapter {result['status']}: {result['run_ref']}")
         return 0 if result["status"] in {"dry_run", "completed"} else 1
+
+    if args.command == "adapter" and args.adapter_command == "init":
+        try:
+            result = initialize_adapter(Path(args.target), args.name)
+        except AdapterStarterError as error:
+            raise SystemExit(f"VALP-E-ADAPTER-INIT: {error}") from error
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print(f"VALP adapter starter created: {result['target']}")
+            print(f"Verify: {result['verification_command']}")
+        return 0
+
+    if args.command == "adapter" and args.adapter_command == "langgraph":
+        try:
+            if args.langgraph_command == "run":
+                input_data = json.loads(args.input_json)
+                if not isinstance(input_data, dict):
+                    raise LangGraphAdapterError("--input-json must be a JSON object")
+                result = submit_langgraph_run(
+                    Path(args.workspace),
+                    args.task_id,
+                    args.agent,
+                    args.role,
+                    graph_id=args.graph_id,
+                    input_data=input_data,
+                    expected_refs=args.expected_ref,
+                    thread_id=args.thread_id,
+                    wait_seconds=args.wait_seconds,
+                    api_url=args.api_url,
+                )
+            else:
+                result = resume_langgraph_run(
+                    Path(args.workspace),
+                    args.task_id,
+                    args.run_id,
+                    wait_seconds=args.wait_seconds,
+                )
+        except (LangGraphAdapterError, json.JSONDecodeError) as error:
+            raise SystemExit(f"VALP-E-LANGGRAPH-ADAPTER: {error}") from error
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print(f"LangGraph adapter {result['status']}: {result['run_ref']}")
+            if result["status"] == "waiting":
+                print("Runtime job remains active; resume this run ID after the pause window.")
+        return 0 if result["status"] in {"completed", "waiting"} else 1
 
     if args.command == "catalog":
         try:

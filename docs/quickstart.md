@@ -333,7 +333,8 @@ After delivery proof exists, suspend coordinator model turns while workers run:
 
 ```bash
 bin/valp dispatch TASK-001 --workspace /path/to/workspace --wait-seconds 0 --submit
-bin/valp wait TASK-001 --workspace /path/to/workspace --timeout 300
+bin/valp wait TASK-001 --workspace /path/to/workspace \
+  --timeout 300 --execution-timeout 3600
 ```
 
 The zero evidence-wait window makes the HERDR call submission-only: it returns
@@ -341,16 +342,22 @@ after pane delivery proof and does not wait for expected evidence. The generated
 wait policy still carries the exact expected refs, and `valp wait` owns later
 evidence observation and the completion receipt.
 
-Keep this single command or runtime subscription pending. Do not ask a Lead
-Agent to poll status every few seconds: every model turn spends tokens. The
-`valp wait` process performs local receipt/evidence observation without model
-calls and returns only after a committed wake or exception.
+Keep this command or runtime subscription pending while convenient. Do not ask
+a Lead Agent to poll status every few seconds: every model turn spends tokens.
+The `valp wait` process performs local receipt/evidence observation without
+model calls. Its `--timeout` is only the current observation window: expiry
+returns `waiting`, leaves the worker running, and preserves the suspension so a
+later receipt can wake the coordinator. The first wait that creates a
+suspension also requires `--execution-timeout`; this records the protocol
+deadline once. Later wait calls reattach to the same suspension and reuse that
+deadline, so they need only a new observation `--timeout`.
 
-The runtime process returns only for the final qualifying dependency-ready barrier receipt
-or an exception short circuit: a matching blocked work item, timeout, runtime
-failure, cancellation, or explicit user input. Intermediate completions and
-unrelated terminal receipts do not return from `valp wait`. Another runtime or
-user-facing surface can wake it explicitly with:
+The runtime process resumes only for the final qualifying dependency-ready
+barrier receipt or an exception short circuit: a matching blocked work item,
+an independently established execution deadline, runtime failure,
+cancellation, or explicit user input. Intermediate completions, unrelated
+terminal receipts, and an elapsed CLI observation window do not resume the
+task. Another runtime or user-facing surface can wake it explicitly with:
 
 ```bash
 bin/valp resume TASK-001 --workspace /path/to/workspace --event user_input --ref evidence/wake-requests/user-input.json

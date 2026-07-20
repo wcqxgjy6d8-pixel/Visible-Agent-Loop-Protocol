@@ -1,0 +1,8 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "langgraph_coordinator": "./graph.py:langgraph_coordinator",
+    "langgraph_worker": "./graph.py:langgraph_worker",
+    "langgraph_reviewer": "./graph.py:langgraph_reviewer"
+  }
+}

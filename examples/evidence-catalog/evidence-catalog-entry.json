@@ -1,0 +1,26 @@
+{
+  "schema_version": "valp-evidence-catalog.v1",
+  "catalog_id": "catalog:2833f4ef36788f9615206865c627537a972199eeeb7d7969c3d2cab673d2cc53",
+  "task_id": null,
+  "source_ref": null,
+  "evidence_type": "test-output",
+  "status": "valid",
+  "source_status": "valid",
+  "content_digest": "sha256:2e3785f9116237b8556dd142f9696c20a977c3212d896197680e8eb3ecd42f5c",
+  "media_type": "text/markdown",
+  "byte_length": 86,
+  "provenance": {
+    "agent": null,
+    "dispatch_id": null,
+    "tool_call_id": null
+  },
+  "anonymous": true,
+  "indexed_at": "2026-07-19T00:00:00Z",
+  "stale_at": null,
+  "invalidated_at": null,
+  "invalidation_reason": null,
+  "metadata": {
+    "synthetic": true,
+    "scenario": "local-recall"
+  }
+}

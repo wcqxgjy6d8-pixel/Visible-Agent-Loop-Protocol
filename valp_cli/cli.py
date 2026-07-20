@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 from pathlib import Path
 
 from . import __version__
 from .audit import FAIL, TaskAudit, print_text_report, report_to_dict, resolve_task_dir
+from .catalog import CatalogError, EvidenceCatalog
 from .doctor import collect_doctor_report, render_text_summary, report_to_dict as doctor_report_to_dict, write_markdown_report
 from .control_plane import ControlPlaneError, InstallationCore, PROTOCOL_VERSION, installation_root, load_observations
 from .conformance import run_conformance
@@ -247,6 +249,96 @@ notes:
     process_run.add_argument("--workspace", default=".", help="Workspace/control root parent")
     process_run.add_argument("--root", help="Explicit control root")
     process_run.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    catalog = sub.add_parser("catalog", help="Build and query the optional local evidence catalog")
+    catalog_sub = catalog.add_subparsers(dest="catalog_command", required=True)
+    catalog_index = catalog_sub.add_parser("index", help="Index registered evidence for one task")
+    catalog_index.add_argument("task_id", nargs="?", help="Task id under .herdr-loop/tasks")
+    catalog_index.add_argument("--all", dest="index_all", action="store_true", help="Index all tasks with evidence-status.json")
+    catalog_index.add_argument("--workspace", default=".", help="Workspace root")
+    catalog_index.add_argument("--database", help="Workspace-relative catalog database path")
+    catalog_index.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    catalog_search = catalog_sub.add_parser("search", help="Search valid catalog evidence by default")
+    catalog_search.add_argument("query", nargs="?", default="", help="FTS5 keyword query")
+    catalog_search.add_argument(
+        "--status",
+        action="append",
+        choices=["valid", "stale", "invalid"],
+        help="Catalog status filter; repeat to include multiple statuses (default: valid)",
+    )
+    catalog_search.add_argument("--type", dest="evidence_type", help="Exact evidence type filter")
+    catalog_search.add_argument("--agent", help="Exact provenance agent filter")
+    catalog_search.add_argument("--task", dest="catalog_task_id", help="Exact task id filter")
+    catalog_search.add_argument("--digest", help="Exact sha256 content digest filter")
+    catalog_search.add_argument("--limit", type=int, default=20, help="Maximum results (1-100)")
+    catalog_search.add_argument("--workspace", default=".", help="Workspace root")
+    catalog_search.add_argument("--database", help="Workspace-relative catalog database path")
+    catalog_search.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    catalog_fixtures = catalog_sub.add_parser(
+        "fixtures", help="Index an explicit anonymous synthetic fixture manifest"
+    )
+    catalog_fixtures.add_argument("manifest", help="Fixture manifest path inside the workspace")
+    catalog_fixtures.add_argument("--workspace", default=".", help="Workspace root")
+    catalog_fixtures.add_argument("--database", help="Workspace-relative catalog database path")
+    catalog_fixtures.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    catalog_fixture = catalog_sub.add_parser(
+        "fixture", help="Search only anonymous synthetic fixture evidence"
+    )
+    catalog_fixture.add_argument("query", nargs="?", default="", help="FTS5 keyword query")
+    catalog_fixture.add_argument(
+        "--status",
+        action="append",
+        choices=["valid", "stale", "invalid"],
+        help="Catalog status filter (default: valid)",
+    )
+    catalog_fixture.add_argument("--type", dest="evidence_type", help="Exact evidence type filter")
+    catalog_fixture.add_argument("--limit", type=int, default=20, help="Maximum results (1-100)")
+    catalog_fixture.add_argument("--workspace", default=".", help="Workspace root")
+    catalog_fixture.add_argument("--database", help="Workspace-relative catalog database path")
+    catalog_fixture.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    catalog_context = catalog_sub.add_parser(
+        "context", help="Assemble digest-verified cited context from catalog evidence"
+    )
+    catalog_context.add_argument("query", help="FTS5 keyword query")
+    catalog_context.add_argument(
+        "--status",
+        action="append",
+        choices=["valid", "stale", "invalid"],
+        help="Catalog status filter (default: valid)",
+    )
+    catalog_context.add_argument("--type", dest="evidence_type", help="Exact evidence type filter")
+    catalog_context.add_argument("--agent", help="Exact provenance agent filter")
+    catalog_context.add_argument("--task", dest="catalog_task_id", help="Exact task id filter")
+    catalog_context.add_argument("--anonymous", action="store_true", help="Use anonymous fixtures only")
+    catalog_context.add_argument("--limit", type=int, default=5, help="Maximum evidence items (1-100)")
+    catalog_context.add_argument("--max-chars", type=int, default=4000, help="Context budget (256-50000)")
+    catalog_context.add_argument("--workspace", default=".", help="Workspace root")
+    catalog_context.add_argument("--database", help="Workspace-relative catalog database path")
+    catalog_context.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    catalog_show = catalog_sub.add_parser("show", help="Show one catalog entry")
+    catalog_show.add_argument("catalog_id")
+    catalog_show.add_argument("--workspace", default=".", help="Workspace root")
+    catalog_show.add_argument("--database", help="Workspace-relative catalog database path")
+    catalog_show.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    catalog_verify = catalog_sub.add_parser("verify", help="Verify one entry against its source digest")
+    catalog_verify.add_argument("catalog_id")
+    catalog_verify.add_argument("--workspace", default=".", help="Workspace root")
+    catalog_verify.add_argument("--database", help="Workspace-relative catalog database path")
+    catalog_verify.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    catalog_sweep = catalog_sub.add_parser("sweep", help="Mark drifted entries stale")
+    catalog_sweep.add_argument("--workspace", default=".", help="Workspace root")
+    catalog_sweep.add_argument("--database", help="Workspace-relative catalog database path")
+    catalog_sweep.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    catalog_invalidate = catalog_sub.add_parser(
+        "invalidate", help="Invalidate one entry and mark dependent entries stale"
+    )
+    catalog_invalidate.add_argument("catalog_id")
+    catalog_invalidate.add_argument("--reason", required=True, help="Recorded invalidation reason")
+    catalog_invalidate.add_argument("--workspace", default=".", help="Workspace root")
+    catalog_invalidate.add_argument("--database", help="Workspace-relative catalog database path")
+    catalog_invalidate.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     audit = sub.add_parser("audit", help="Audit a VALP task evidence folder")
     audit.add_argument("path", nargs="?", default=".", help="Task folder or workspace root")
@@ -582,6 +674,101 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"Process adapter {result['status']}: {result['run_ref']}")
         return 0 if result["status"] in {"dry_run", "completed"} else 1
+
+    if args.command == "catalog":
+        try:
+            catalog = EvidenceCatalog(
+                Path(args.workspace),
+                Path(args.database) if args.database else None,
+            )
+            if args.catalog_command == "index":
+                if bool(args.task_id) == bool(args.index_all):
+                    raise CatalogError("catalog index requires exactly one TASK_ID or --all")
+                result = catalog.index_workspace() if args.index_all else catalog.index_task(args.task_id)
+            elif args.catalog_command == "fixtures":
+                result = catalog.index_fixtures(Path(args.manifest))
+            elif args.catalog_command == "search":
+                result = catalog.search(
+                    args.query,
+                    statuses=args.status,
+                    evidence_type=args.evidence_type,
+                    agent=args.agent,
+                    task_id=args.catalog_task_id,
+                    content_digest=args.digest,
+                    limit=args.limit,
+                )
+            elif args.catalog_command == "fixture":
+                result = catalog.search(
+                    args.query,
+                    statuses=args.status,
+                    evidence_type=args.evidence_type,
+                    anonymous_only=True,
+                    limit=args.limit,
+                )
+            elif args.catalog_command == "context":
+                result = catalog.context(
+                    args.query,
+                    statuses=args.status,
+                    evidence_type=args.evidence_type,
+                    agent=args.agent,
+                    task_id=args.catalog_task_id,
+                    anonymous_only=args.anonymous,
+                    limit=args.limit,
+                    max_chars=args.max_chars,
+                )
+            elif args.catalog_command == "show":
+                result = catalog.show(args.catalog_id)
+            elif args.catalog_command == "verify":
+                result = catalog.verify(args.catalog_id)
+            elif args.catalog_command == "sweep":
+                result = catalog.sweep()
+            elif args.catalog_command == "invalidate":
+                result = catalog.invalidate(args.catalog_id, args.reason)
+            else:  # pragma: no cover - argparse prevents this branch
+                raise CatalogError(f"unsupported catalog command: {args.catalog_command}")
+        except (CatalogError, OSError, json.JSONDecodeError, sqlite3.Error) as error:
+            raise SystemExit(f"VALP-E-CATALOG: {error}") from error
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        elif args.catalog_command == "index":
+            if args.index_all:
+                print(
+                    f"Catalog indexed {result['indexed_count']} evidence item(s) "
+                    f"across {result['task_count']} task(s) (skipped {result['skipped_count']})."
+                )
+            else:
+                print(
+                    f"Catalog indexed {result['indexed_count']} evidence item(s) "
+                    f"for {result['task_id']} (skipped {result['skipped_count']})."
+                )
+        elif args.catalog_command == "fixtures":
+            print(f"Catalog indexed {result['indexed_count']} anonymous fixture(s).")
+        elif args.catalog_command in {"search", "fixture"}:
+            for item in result["results"]:
+                print(f"{item['citation']} score={item['score']:.6f}")
+            print(f"Results: {result['count']}")
+        elif args.catalog_command == "context":
+            print(result["context"])
+            if result["omitted"]:
+                print(f"Omitted: {len(result['omitted'])}")
+        elif args.catalog_command == "verify":
+            print(
+                f"Catalog verify {'PASS' if result['ok'] else 'FAIL'}: "
+                f"{result['catalog_id']} ({result['reason']})"
+            )
+        elif args.catalog_command == "sweep":
+            print(
+                f"Catalog sweep: stale={result['stale_count']} "
+                f"invalid={result['invalid_count']} unchanged={result['unchanged_count']}"
+            )
+        elif args.catalog_command == "invalidate":
+            print(
+                f"Catalog invalidated {result['entry']['catalog_id']}; "
+                f"stale dependents={len(result['stale_dependents'])}"
+            )
+        else:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 1 if args.catalog_command == "verify" and not result["ok"] else 0
 
     if args.command == "audit":
         directory = resolve_task_dir(Path(args.path), args.task_id)

@@ -72,6 +72,8 @@ schema_by_name = {
     "correction-cycle.json": "correction-cycle.schema.json",
     "delegation-policy.json": "delegation-policy.schema.json",
     "evidence-board.json": "evidence-board.schema.json",
+    "evidence-catalog-entry.json": "evidence-catalog-entry.schema.json",
+    "evidence-catalog-fixtures.json": "evidence-catalog-fixtures.schema.json",
     "evidence-status.json": "evidence-status.schema.json",
     "exception-wake.json": "exception-wake.schema.json",
     "local-overlay.json": "local-overlay.schema.json",
@@ -130,7 +132,7 @@ if errors:
 PY
 
 echo "==> Running unit tests"
-"$PYTHON_BIN" -m unittest tests/test_control_plane.py tests/test_github_workflow.py tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py tests/test_schema_examples.py
+"$PYTHON_BIN" -m unittest tests/test_catalog.py tests/test_control_plane.py tests/test_github_workflow.py tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py tests/test_schema_examples.py
 
 echo "==> Running v0.3 draft core conformance"
 "$PYTHON_BIN" -m valp_cli conformance --profile core-writer

@@ -19,6 +19,8 @@ EXAMPLE_SCHEMA_BY_NAME = {
     "correction-cycle.json": "correction-cycle.schema.json",
     "delegation-policy.json": "delegation-policy.schema.json",
     "evidence-board.json": "evidence-board.schema.json",
+    "evidence-catalog-entry.json": "evidence-catalog-entry.schema.json",
+    "evidence-catalog-fixtures.json": "evidence-catalog-fixtures.schema.json",
     "evidence-status.json": "evidence-status.schema.json",
     "exception-wake.json": "exception-wake.schema.json",
     "local-overlay.json": "local-overlay.schema.json",

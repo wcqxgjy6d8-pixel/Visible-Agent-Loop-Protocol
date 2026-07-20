@@ -1,0 +1,29 @@
+{
+  "schema_version": "valp-evidence-catalog-fixtures.v1",
+  "fixtures": [
+    {
+      "fixture_id": "root-verification",
+      "source_ref": "root-verification.md",
+      "evidence_type": "test-output",
+      "status": "valid",
+      "depends_on": [],
+      "metadata": {
+        "synthetic": true,
+        "scenario": "local-recall"
+      }
+    },
+    {
+      "fixture_id": "derived-review",
+      "source_ref": "derived-review.md",
+      "evidence_type": "independent-review",
+      "status": "valid",
+      "depends_on": [
+        "root-verification"
+      ],
+      "metadata": {
+        "synthetic": true,
+        "scenario": "dependency-cascade"
+      }
+    }
+  ]
+}

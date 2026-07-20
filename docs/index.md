@@ -50,11 +50,12 @@ capability truth remains separated into declared, present, callable, and
 task-verified layers; messages, state, claims, failures, and review gain strict
 machine contracts; and provider plugins stay outside the deterministic core.
 
-Stable `0.3.0` would require implementation, schema and migration work,
-negative/recovery conformance tests, and a real non-HERDR Full Mode end-to-end
-proof. See the [project status matrix](project-status.md) for what is verified
-today and the [RFC](rfcs/0001-v0.3-installation-control-plane.md) for the
-proposed target.
+The first real non-HERDR end-to-end proof now exists for the local LangGraph API
+development runtime. Stable `0.3.0` still requires the remaining implementation,
+schema and migration work, negative/recovery conformance, and stronger restart
+and continuation proof. See the [project status matrix](project-status.md) for
+what is verified today and the [RFC](rfcs/0001-v0.3-installation-control-plane.md)
+for the proposed target.
 
 First useful actions:
 

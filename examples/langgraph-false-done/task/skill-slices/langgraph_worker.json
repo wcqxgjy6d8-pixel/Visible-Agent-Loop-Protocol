@@ -1,0 +1,12 @@
+{
+  "schema_version": "valp-skill-recommendation-slice.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "agent": "langgraph_worker",
+  "status": "failed",
+  "source_ref": "skill-recommendations.json",
+  "provider_reachable": false,
+  "recommendations": [],
+  "missing_skills": [],
+  "omitted_match_count": 0,
+  "generated_at": "2026-07-20T06:39:05Z"
+}

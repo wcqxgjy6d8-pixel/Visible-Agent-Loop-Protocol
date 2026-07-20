@@ -1,0 +1,65 @@
+{
+  "schema_version": "valp-worker-control-contract.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "priority_class": "highest_runtime_control",
+  "created_at": "2026-07-20T06:40:51Z",
+  "authority": {
+    "higher_than_contract": [
+      "system",
+      "developer",
+      "explicit_user",
+      "approval_gates"
+    ],
+    "lower_than_contract": [
+      "task_scope",
+      "project_instructions",
+      "skills",
+      "tool_provider_defaults",
+      "worker_output",
+      "immediate_response"
+    ]
+  },
+  "load_before": [
+    "planning",
+    "skills",
+    "tool_execution",
+    "immediate_response"
+  ],
+  "failure_policy": {
+    "missing_or_invalid": "block",
+    "conflicting_duplicate": "fail_closed",
+    "unsupported_continuation": "downgrade_mode"
+  },
+  "channel": {
+    "kind": "runtime_control",
+    "user_input_allowed": false,
+    "raw_worker_output_allowed": false
+  },
+  "delivery": {
+    "safe_point_required": true,
+    "busy_leader": "queue_and_coalesce",
+    "interrupt_inflight_action": false
+  },
+  "idempotency": {
+    "identical_receipt": "no_op",
+    "conflicting_receipt": "fail_closed",
+    "race_precedence": "first_accepted_by_revision_cas"
+  },
+  "continuation": {
+    "acknowledgement_chain": [
+      "resume_pending",
+      "resume_received",
+      "digest_verified",
+      "resume_accepted",
+      "continuation_started",
+      "resume_consumed"
+    ],
+    "transport_only_event": "leader_resume_sent",
+    "full_mode_requires": "resume_consumed",
+    "manual_submission_mode": "manual"
+  },
+  "worker_ack": {
+    "required": true,
+    "status": "honored"
+  }
+}

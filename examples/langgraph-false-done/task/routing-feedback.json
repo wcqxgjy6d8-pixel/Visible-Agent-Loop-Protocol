@@ -1,0 +1,85 @@
+{
+  "schema_version": "valp-routing-feedback.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "profile": "agent-runtime",
+  "selected_agents": [
+    "langgraph_coordinator",
+    "langgraph_worker",
+    "langgraph_reviewer"
+  ],
+  "candidate_agents": [
+    "langgraph_coordinator",
+    "langgraph_worker",
+    "langgraph_reviewer"
+  ],
+  "routing_confidence": {
+    "overall": "high",
+    "notes": [
+      "All three graph IDs were observed through the live LangGraph assistants API.",
+      "Implementation and review used separate graph, thread, run, and assistant identities."
+    ]
+  },
+  "expected_evidence": [
+    "agents/langgraph_coordinator/self-review.md",
+    "agents/langgraph_worker/evidence.md",
+    "evidence/verification.md",
+    "agents/langgraph_reviewer/review.md"
+  ],
+  "actual_evidence": [
+    "agents/langgraph_coordinator/self-review.md",
+    "evidence/first-failure-audit.md",
+    "agents/langgraph_worker/evidence.md",
+    "evidence/verification.md",
+    "agents/langgraph_reviewer/review.md",
+    "dispatch-receipts.jsonl",
+    "final-synthesis.md"
+  ],
+  "verification_result": "passed",
+  "review_result": "passed",
+  "approval_outcomes": [],
+  "blockers": [
+    {
+      "status": "fixed",
+      "kind": "missing_expected_evidence",
+      "evidence_ref": "evidence/first-failure-audit.md"
+    }
+  ],
+  "result": "done",
+  "lessons": [
+    "A LangGraph success state is submission/runtime evidence, not VALP completion evidence.",
+    "A short adapter wait window must preserve the runtime job and resume by run ID.",
+    "Repair replay is auditable when the same thread ID and a new run/checkpoint ID are retained."
+  ],
+  "next_routing_hints": [
+    "Use one graph ID per routed role and verify it during runtime preflight.",
+    "Keep reviewer graph/thread identity separate from the implementer.",
+    "Treat missing runtime model identity as a declared limitation, not inferred proof."
+  ],
+  "worked": [
+    "The adapter recorded the runtime run ID before waiting.",
+    "The first successful run was blocked because expected evidence was absent.",
+    "The repaired run reused the original worker thread and passed independent review."
+  ],
+  "did_not_work": [
+    "The clean main baseline did not yet generate worker control contracts; task-local control files came from the installed unmerged generator and are recorded as source drift."
+  ],
+  "context_gaps": [
+    "The deterministic graph does not expose an underlying LLM model/provider identity."
+  ],
+  "learning_feedback_ref": "learning-feedback.json",
+  "rule_change_proposals": [
+    {
+      "proposal": "Keep LangGraph pause-window expiry non-terminal and resumable by run ID.",
+      "target_layer": "runtime_adapter",
+      "evidence_refs": [
+        "dispatch-receipts.jsonl",
+        "evidence/first-failure-audit.md"
+      ],
+      "disposition": "accepted"
+    }
+  ],
+  "privacy_notes": [
+    "The fixture contains anonymous graph role names, localhost URLs, generated UUIDs, and task-local refs only."
+  ],
+  "updated_at": "2026-07-20T06:46:00Z"
+}

@@ -1,0 +1,259 @@
+{
+  "schema_version": "valp-visible-loop-state.v2",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "profile": "agent-runtime",
+    "status": "done",
+    "revision": 1,
+  "risk": {
+    "approval_required": false,
+    "matches": []
+  },
+  "selected_agents": [
+    "langgraph_coordinator",
+    "langgraph_reviewer",
+    "langgraph_worker"
+  ],
+  "capabilities_needed": [
+    "mcp",
+    "skills",
+    "connector",
+    "state",
+    "verification"
+  ],
+  "capabilities_missing": [],
+  "gates": {
+        "dispatch_receipts": "passed",
+        "expected_evidence": "passed",
+        "verification": "passed",
+        "review": "passed",
+    "approval": "not_required"
+  },
+  "approval_required": [],
+    "updated_at": "2026-07-20T06:46:00Z",
+  "requested_agents": [
+    "langgraph_coordinator",
+    "langgraph_worker",
+    "langgraph_reviewer"
+  ],
+  "loop_layer": "developer_feedback_loop",
+  "runtime_adapter": {
+    "class": "hosted_local_platform",
+    "name": "LangGraph API",
+    "full_mode_capable": true,
+    "state_mapping_ref": "docs/task-state-machine.md",
+    "preflight": {
+      "generated_at": "2026-07-20T06:39:04.027961Z",
+      "runtime": "LangGraph API",
+      "adapter_class": "hosted_local_platform",
+      "status": "pass",
+      "checks": {
+        "langgraph_api": {
+          "status": "pass",
+          "api_url": "http://127.0.0.1:8123",
+          "health": {
+            "ok": true
+          }
+        }
+      },
+      "agents": {
+        "langgraph_coordinator": {
+          "status": "pass",
+          "graph_id": "langgraph_coordinator",
+          "assistant_ids": [
+            "91a60cf3-153d-5f87-991c-1e1ee35d5c4b"
+          ],
+          "session_status": "idle",
+          "expected_refs": [],
+          "notes": [
+            "LangGraph uses thread/run identities instead of pane fields."
+          ]
+        },
+        "langgraph_worker": {
+          "status": "pass",
+          "graph_id": "langgraph_worker",
+          "assistant_ids": [
+            "c46186e6-3287-5bc0-bced-9ff71c8caeba"
+          ],
+          "session_status": "idle",
+          "expected_refs": [],
+          "notes": [
+            "LangGraph uses thread/run identities instead of pane fields."
+          ]
+        },
+        "langgraph_reviewer": {
+          "status": "pass",
+          "graph_id": "langgraph_reviewer",
+          "assistant_ids": [
+            "c32e0829-51ea-5a4f-88c6-fd2c6bd25a2a"
+          ],
+          "session_status": "idle",
+          "expected_refs": [],
+          "notes": [
+            "LangGraph uses thread/run identities instead of pane fields."
+          ]
+        }
+      }
+    }
+  },
+  "local_overlay": {
+    "used": true,
+    "ref": ".herdr-loop/local-overlay.json",
+    "note": "Local capability profiles are routing hints, not fixed assignments."
+  },
+  "runtime_task_state_mapping": {
+    "queued": "accepted_by_runtime_not_delivery",
+    "dispatched": "dispatch_submitted_only_with_proof",
+    "running": "executing",
+    "completed": "dispatch_completed_only_with_expected_evidence",
+    "failed": "failed_or_blocked_with_reason",
+    "cancelled": "cancelled"
+  },
+  "provider_matrix": {
+    "status": "scanned",
+    "ref": "routing.json"
+  },
+  "squad_routing": {
+    "used": false
+  },
+  "requested_agent_roles": {
+    "langgraph_coordinator": "coordinator",
+    "langgraph_worker": "implementer",
+    "langgraph_reviewer": "reviewer"
+  },
+  "role_assignments": {
+    "coordinator": "langgraph_coordinator",
+    "implementer": "langgraph_worker",
+    "reviewer": "langgraph_reviewer"
+  },
+  "submission_dependencies": {
+    "status": "recorded",
+    "ref": "submission-dependencies.json"
+  },
+    "delegation_policy": {
+        "status": "recorded",
+        "ref": "delegation-policy.json"
+    },
+    "control_contract": {
+        "status": "recorded",
+        "ref": "control-contract.json",
+        "digest": "sha256:b4538e48f631e2e6c05fb8db41ba1f9094cd90eb31a2545913295bce1bd1c26c",
+        "priority_class": "highest_runtime_control"
+    },
+    "control_slices": {
+        "langgraph_coordinator": "control-slices/langgraph_coordinator.json",
+        "langgraph_reviewer": "control-slices/langgraph_reviewer.json",
+        "langgraph_worker": "control-slices/langgraph_worker.json"
+    },
+  "model_role_gate": {
+    "enforced": false,
+    "status": "pass",
+    "blocked_roles": [],
+    "fallback_modes": [],
+    "reason": "High-risk model identity requirements are satisfied or not applicable."
+  },
+  "context_policies": {
+    "langgraph_coordinator": {
+      "soft_warning_pct": 50,
+      "hard_compression_pct": 60,
+      "emergency_stop_pct": 80
+    },
+    "langgraph_reviewer": {
+      "soft_warning_pct": 60,
+      "hard_compression_pct": 70,
+      "emergency_stop_pct": 80
+    },
+    "langgraph_worker": {
+      "soft_warning_pct": 55,
+      "hard_compression_pct": 65,
+      "emergency_stop_pct": 80
+    }
+  },
+  "automation_policy": {
+    "status": "recorded",
+    "ref": "automation-policy.json",
+    "selected_action": "continue_until_gate",
+    "audit_grade": "runtime"
+  },
+  "context_pack": {
+    "status": "recorded",
+    "ref": "context-pack.json"
+  },
+  "dispatch_payload_budgets": {
+    "langgraph_coordinator": {
+      "role": "coordinator",
+      "max_chars": 3000,
+      "max_reference_tokens": 750,
+      "token_estimator": "ceil(chars/4)",
+      "actual_chars": 2949,
+      "actual_reference_tokens": 738,
+      "dispatch_ref": "agents/langgraph_coordinator/dispatch.md",
+      "skill_slice_ref": "skill-slices/langgraph_coordinator.json"
+    },
+    "langgraph_reviewer": {
+      "role": "reviewer",
+      "max_chars": 2400,
+      "max_reference_tokens": 600,
+      "token_estimator": "ceil(chars/4)",
+      "actual_chars": 2275,
+      "actual_reference_tokens": 569,
+      "dispatch_ref": "agents/langgraph_reviewer/dispatch.md",
+      "skill_slice_ref": "skill-slices/langgraph_reviewer.json"
+    },
+    "langgraph_worker": {
+      "role": "implementer",
+      "max_chars": 2800,
+      "max_reference_tokens": 700,
+      "token_estimator": "ceil(chars/4)",
+      "actual_chars": 2729,
+      "actual_reference_tokens": 683,
+      "dispatch_ref": "agents/langgraph_worker/dispatch.md",
+      "skill_slice_ref": "skill-slices/langgraph_worker.json"
+    }
+  },
+  "iteration_budget": {
+    "status": "recorded",
+    "ref": "iteration-budget.json"
+  },
+  "skill_recommendations": {
+    "status": "complete",
+    "backend": "task-skill-router",
+    "ref": "skill-recommendations.json",
+    "coordinator_only": true
+  },
+  "skill_recommendation_slices": {
+    "langgraph_coordinator": "skill-slices/langgraph_coordinator.json",
+    "langgraph_reviewer": "skill-slices/langgraph_reviewer.json",
+    "langgraph_worker": "skill-slices/langgraph_worker.json"
+  },
+  "visible_attention": {
+    "status": "recorded",
+    "loop_layer": "developer_feedback_loop",
+    "attention_map": "attention-map.json",
+    "context_selection": "context-selection.json",
+    "context_pack": "context-pack.json",
+    "mask_list": "mask-list.json",
+    "evidence_board": "evidence-board.json",
+    "visible_routing": "visible-routing.md"
+  },
+  "routing_confidence": {
+    "overall": "high",
+    "score": 0.79,
+    "reason": "Computed from local capability scan and overlay hints."
+  },
+  "routing_feedback": {
+    "status": "expected",
+    "ref": "routing-feedback.json"
+  },
+    "learning_feedback": {
+        "status": "recorded",
+        "ref": "learning-feedback.json"
+    },
+    "agent_recommendations": {
+        "status": "resolved",
+        "ref": "agent-recommendations.json"
+    },
+    "final_synthesis": {
+        "status": "recorded",
+        "ref": "final-synthesis.md"
+    }
+}

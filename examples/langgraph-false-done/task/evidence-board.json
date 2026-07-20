@@ -1,0 +1,38 @@
+{
+  "schema_version": "valp-evidence-board.v1",
+  "generated_at": "2026-07-20T06:39:05Z",
+  "profile": "agent-runtime",
+  "loop_layer": "developer_feedback_loop",
+  "selected_agents": [
+    "langgraph_coordinator",
+    "langgraph_reviewer",
+    "langgraph_worker"
+  ],
+  "claims": [
+    {
+      "claim": "routing decision is visible",
+      "status": "recorded",
+      "required_evidence": [
+        "attention-map.json",
+        "visible-routing.md"
+      ]
+    },
+    {
+      "claim": "selected agents have visible dispatches",
+      "status": "needs_dispatch_completion",
+      "required_evidence": [
+        "agents/<agent>/dispatch.md",
+        "dispatch-receipts.jsonl"
+      ]
+    },
+    {
+      "claim": "runtime or build success",
+      "status": "not_yet_claimed",
+      "required_evidence": [
+        "command log",
+        "gate JSON",
+        "task evidence path"
+      ]
+    }
+  ]
+}

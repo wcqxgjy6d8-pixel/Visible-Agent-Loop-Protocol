@@ -1,0 +1,29 @@
+{
+  "schema_version": "valp-iteration-budget.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "strategy": "minimum_capable_team",
+  "max_dispatch_reference_tokens": 5900,
+  "max_dispatches": 5,
+  "max_reroutes": 1,
+  "max_fix_review_rounds": 3,
+  "usage": {
+    "dispatch_reference_tokens": 2701,
+    "dispatches": 4,
+    "reroutes": 0,
+    "fix_review_rounds": 1
+  },
+  "status": "completed",
+  "stop_reason": "task completed within budget",
+  "stop_conditions": [
+    "dispatch reference-token budget exhausted",
+    "dispatch-count budget exhausted",
+    "reroute budget exhausted",
+    "fix-review-round budget exhausted",
+    "approval gate unresolved",
+    "runtime preflight failure",
+    "missing expected evidence",
+    "critical or high review blocker",
+    "context compression required"
+  ],
+  "updated_at": "2026-07-20T06:46:00Z"
+}

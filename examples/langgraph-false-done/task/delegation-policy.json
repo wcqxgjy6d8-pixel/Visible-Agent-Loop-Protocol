@@ -1,0 +1,19 @@
+{
+  "schema_version": "valp-delegation-policy.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "reference_enforcement": "dispatch_and_audit",
+  "runtime_enforcement": "adapter_required",
+  "live_self_modification": {
+    "mode": "forbidden",
+    "protected_surfaces": [
+      "skills",
+      "plugins",
+      "memory",
+      "mcp_config",
+      "agent_config"
+    ],
+    "repository_changes": "allowed_when_task_scoped_and_not_live_loaded",
+    "violation_effect": "invalidate_evidence_and_block"
+  },
+  "violations": []
+}

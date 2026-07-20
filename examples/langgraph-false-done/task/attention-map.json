@@ -1,0 +1,53 @@
+{
+  "schema_version": "valp-visible-attention-map.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "profile": "agent-runtime",
+  "loop_layer": "developer_feedback_loop",
+  "generated_at": "2026-07-20T06:39:05Z",
+  "heads": {
+    "state_gate": {
+      "selected": "langgraph_coordinator",
+      "candidate": "role:coordinator",
+      "score": 0.8,
+      "status": "selected"
+    },
+    "implementation": {
+      "selected": "langgraph_worker",
+      "candidate": "role:implementer",
+      "score": 0.78,
+      "status": "selected"
+    },
+    "ux_review": {
+      "selected": "langgraph_reviewer",
+      "candidate": "role:reviewer",
+      "score": 0.8,
+      "status": "selected"
+    },
+    "prototype": {
+      "selected": null,
+      "candidate": "role:prototype",
+      "score": null,
+      "status": "not_selected"
+    }
+  },
+  "selected_agents": [
+    "langgraph_coordinator",
+    "langgraph_reviewer",
+    "langgraph_worker"
+  ],
+  "role_assignments": {
+    "coordinator": "langgraph_coordinator",
+    "implementer": "langgraph_worker",
+    "reviewer": "langgraph_reviewer"
+  },
+  "candidate_scores_ref": "routing.json#candidate_scores",
+  "skill_recommendations": {
+    "status": "complete",
+    "ref": "skill-recommendations.json"
+  },
+  "context_selection_ref": "context-selection.json",
+  "context_pack_ref": "context-pack.json",
+  "mask_list_ref": "mask-list.json",
+  "evidence_board_ref": "evidence-board.json",
+  "visible_summary_ref": "visible-routing.md"
+}

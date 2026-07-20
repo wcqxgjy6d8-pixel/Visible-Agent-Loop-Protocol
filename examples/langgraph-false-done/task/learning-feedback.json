@@ -1,0 +1,87 @@
+{
+  "schema_version": "valp-learning-feedback.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "profile": "agent-runtime",
+  "result": "done",
+  "routing_feedback_ref": "routing-feedback.json",
+  "learning_items": [
+    {
+      "kind": "adapter",
+      "observation": "LangGraph API exposes stable thread, run, assistant, runtime status, output, error, and checkpoint identities suitable for a VALP adapter.",
+      "evidence_refs": [
+        "runtime/langgraph/019f7e44-b84c-7061-80bc-14ebd75c10c3/submission.json",
+        "runtime/langgraph/019f7e45-7266-75c0-9301-d73f77714f34/state.json"
+      ],
+      "confidence": "high",
+      "next_effect": "Use the LangGraph API run ID as the concrete runtime submission ID for this adapter."
+    },
+    {
+      "kind": "failure",
+      "observation": "Runtime success with missing expected evidence must append dispatch_blocked and preserve the runtime output.",
+      "evidence_refs": [
+        "evidence/first-failure-audit.md",
+        "runtime/langgraph/019f7e44-b84c-7061-80bc-14ebd75c10c3/run.json",
+        "dispatch-receipts.jsonl"
+      ],
+      "confidence": "high",
+      "next_effect": "Never map LangGraph success directly to dispatch_completed."
+    },
+    {
+      "kind": "automation",
+      "observation": "Wait expiry is a coordinator pause, not worker failure or cancellation.",
+      "evidence_refs": [
+        "dispatch-receipts.jsonl"
+      ],
+      "confidence": "high",
+      "next_effect": "Return waiting with a deterministic resume command and keep the run active."
+    },
+    {
+      "kind": "verification",
+      "observation": "The repair reused the original worker thread and advanced to a new run/checkpoint before separate reviewer verification.",
+      "evidence_refs": [
+        "agents/langgraph_worker/evidence.md",
+        "agents/langgraph_reviewer/review.md",
+        "dispatch-receipts.jsonl"
+      ],
+      "confidence": "high",
+      "next_effect": "Require thread continuity plus a distinct reviewer identity in future replay demonstrations."
+    }
+  ],
+  "proposed_updates": [
+    {
+      "target_layer": "runtime_adapter",
+      "proposal": "Ship the executable LangGraph adapter and its pause/resume semantics.",
+      "evidence_refs": [
+        "dispatch-receipts.jsonl",
+        "evidence/first-failure-audit.md"
+      ],
+      "disposition": "accepted",
+      "approval_required": false,
+      "owner": "coordinator"
+    },
+    {
+      "target_layer": "docs",
+      "proposal": "Publish the one-page false-done case study and ten-minute replay steps.",
+      "evidence_refs": [
+        "final-synthesis.md"
+      ],
+      "disposition": "accepted",
+      "approval_required": false,
+      "owner": "coordinator"
+    },
+    {
+      "target_layer": "protocol",
+      "proposal": "No SPEC change is required for this adoption tracer bullet.",
+      "evidence_refs": [
+        "routing-feedback.json"
+      ],
+      "disposition": "not_required",
+      "approval_required": false,
+      "owner": "coordinator"
+    }
+  ],
+  "privacy_notes": [
+    "Learning records contain anonymous role IDs and task-local evidence refs only."
+  ],
+  "updated_at": "2026-07-20T06:46:00Z"
+}

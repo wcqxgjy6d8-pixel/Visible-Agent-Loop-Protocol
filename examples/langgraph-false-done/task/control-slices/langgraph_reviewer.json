@@ -1,0 +1,18 @@
+{
+  "schema_version": "valp-control-slice.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "agent": "langgraph_reviewer",
+  "work_item_ids": [
+    "reviewer:langgraph_reviewer"
+  ],
+  "control_contract_ref": "control-contract.json",
+  "control_contract_digest": "sha256:b4538e48f631e2e6c05fb8db41ba1f9094cd90eb31a2545913295bce1bd1c26c",
+  "priority_class": "highest_runtime_control",
+  "load_before": [
+    "planning",
+    "skills",
+    "tool_execution",
+    "immediate_response"
+  ],
+  "missing_or_invalid": "block"
+}

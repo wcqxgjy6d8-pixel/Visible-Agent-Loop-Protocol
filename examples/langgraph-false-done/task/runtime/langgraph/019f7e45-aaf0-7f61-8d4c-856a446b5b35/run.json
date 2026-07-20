@@ -1,0 +1,23 @@
+{
+  "schema_version": "valp-langgraph-run.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "agent": "langgraph_reviewer",
+  "role": "reviewer",
+  "run_id": "019f7e45-aaf0-7f61-8d4c-856a446b5b35",
+  "submission_id": "019f7e45-aaf0-7f61-8d4c-856a446b5b35",
+  "thread_id": "019f7e45-aaf0-7f61-8d4c-855bc4b0971e",
+  "graph_id": "langgraph_reviewer",
+  "assistant_id": "c32e0829-51ea-5a4f-88c6-fd2c6bd25a2a",
+  "status": "completed",
+  "runtime_status": "success",
+  "checkpoint_id": "1f184069-57de-65de-8001-d1f491da994c",
+  "expected_refs": [
+    "agents/langgraph_reviewer/review.md"
+  ],
+  "missing_refs": [],
+  "failure_reason": null,
+  "worker_cancelled": false,
+  "completed_at": "2026-07-20T06:45:23.793778+00:00",
+  "output_ref": "runtime/langgraph/019f7e45-aaf0-7f61-8d4c-856a446b5b35/output.json",
+  "state_ref": "runtime/langgraph/019f7e45-aaf0-7f61-8d4c-856a446b5b35/state.json"
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": "valp-context-selection.v1",
+  "generated_at": "2026-07-20T06:39:05Z",
+  "profile": "agent-runtime",
+  "loop_layer": "developer_feedback_loop",
+  "selected": [
+    {
+      "path": ".herdr-loop/tasks/VALP-NON-HERDR-E2E-001/task.md",
+      "reason": "active task brief"
+    },
+    {
+      "path": "AGENTS.md",
+      "reason": "project operating rules"
+    },
+    {
+      "path": "pyproject.toml",
+      "reason": "Python build/test surface"
+    },
+    {
+      "path": ".herdr-loop/local-overlay.json",
+      "reason": "workspace-local routing overlay"
+    },
+    {
+      "path": ".herdr-loop/agents/capabilities.json",
+      "reason": "workspace agent capability scan"
+    }
+  ],
+  "not_selected": []
+}

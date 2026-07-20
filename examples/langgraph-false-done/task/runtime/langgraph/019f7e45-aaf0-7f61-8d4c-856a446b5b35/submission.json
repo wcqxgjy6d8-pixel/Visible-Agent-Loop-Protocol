@@ -1,0 +1,29 @@
+{
+  "schema_version": "valp-langgraph-submission.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "agent": "langgraph_reviewer",
+  "role": "reviewer",
+  "work_item_id": "reviewer:langgraph_reviewer",
+  "dispatch_id": "VALP-NON-HERDR-E2E-001:reviewer:1",
+  "dispatch_generation": 1,
+  "dispatch_ref": "agents/langgraph_reviewer/dispatch.md",
+  "expected_refs": [
+    "agents/langgraph_reviewer/review.md"
+  ],
+  "runtime": "LangGraph API",
+  "api_url": "http://127.0.0.1:8123",
+  "graph_id": "langgraph_reviewer",
+  "assistant_id": "c32e0829-51ea-5a4f-88c6-fd2c6bd25a2a",
+  "thread_id": "019f7e45-aaf0-7f61-8d4c-855bc4b0971e",
+  "run_id": "019f7e45-aaf0-7f61-8d4c-856a446b5b35",
+  "submission_id": "019f7e45-aaf0-7f61-8d4c-856a446b5b35",
+  "suspension_epoch": 4,
+  "submitted_at": "2026-07-20T06:45:22.800989+00:00",
+  "initial_status": "pending",
+  "input": {
+    "attempt": "review",
+    "task_id": "VALP-NON-HERDR-E2E-001",
+    "agent": "langgraph_reviewer",
+    "role": "reviewer"
+  }
+}

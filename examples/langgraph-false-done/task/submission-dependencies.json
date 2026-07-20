@@ -1,0 +1,76 @@
+{
+  "schema_version": "valp-submission-dependencies.v2",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "ordering_source": "dispatch-receipts.jsonl#line-order",
+  "work_items": [
+    {
+      "work_item_id": "coordinator:langgraph_coordinator",
+      "agent": "langgraph_coordinator",
+      "role": "coordinator",
+      "dispatch_id": "VALP-NON-HERDR-E2E-001:coordinator:1",
+      "dispatch_generation": 1,
+      "expected_refs": [
+        "agents/langgraph_coordinator/self-review.md"
+      ]
+    },
+    {
+      "work_item_id": "implementer:langgraph_worker",
+      "agent": "langgraph_worker",
+      "role": "implementer",
+      "dispatch_id": "VALP-NON-HERDR-E2E-001:implementer:1",
+      "dispatch_generation": 1,
+      "expected_refs": [
+        "agents/langgraph_worker/evidence.md",
+        "evidence/verification.md"
+      ]
+    },
+    {
+      "work_item_id": "reviewer:langgraph_reviewer",
+      "agent": "langgraph_reviewer",
+      "role": "reviewer",
+      "dispatch_id": "VALP-NON-HERDR-E2E-001:reviewer:1",
+      "dispatch_generation": 1,
+      "expected_refs": [
+        "agents/langgraph_reviewer/review.md"
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "id": "coordinator-before-implementer",
+      "prerequisite_role": "coordinator",
+      "prerequisite_agent": "langgraph_coordinator",
+      "dependent_role": "implementer",
+      "dependent_agent": "langgraph_worker",
+      "prerequisite_refs": [
+        "agents/langgraph_coordinator/self-review.md"
+      ],
+      "prerequisite_work_item_id": "coordinator:langgraph_coordinator",
+      "prerequisite_dispatch_generation": 1,
+      "dependent_work_item_id": "implementer:langgraph_worker",
+      "dependent_dispatch_generation": 1,
+      "dependent_refs": [
+        "agents/langgraph_worker/evidence.md",
+        "evidence/verification.md"
+      ]
+    },
+    {
+      "id": "implementer-before-reviewer",
+      "prerequisite_role": "implementer",
+      "prerequisite_agent": "langgraph_worker",
+      "dependent_role": "reviewer",
+      "dependent_agent": "langgraph_reviewer",
+      "prerequisite_refs": [
+        "agents/langgraph_worker/evidence.md",
+        "evidence/verification.md"
+      ],
+      "prerequisite_work_item_id": "implementer:langgraph_worker",
+      "prerequisite_dispatch_generation": 1,
+      "dependent_work_item_id": "reviewer:langgraph_reviewer",
+      "dependent_dispatch_generation": 1,
+      "dependent_refs": [
+        "agents/langgraph_reviewer/review.md"
+      ]
+    }
+  ]
+}

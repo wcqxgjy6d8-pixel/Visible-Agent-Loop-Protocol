@@ -1,0 +1,43 @@
+{
+  "schema_version": "valp-correction-cycle.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "status": "fixed",
+  "max_rounds": 3,
+  "rounds": [
+    {
+      "round": 1,
+      "trigger": "dispatch_blocked",
+      "owner": "langgraph_worker",
+      "status": "fixed",
+      "started_at": "2026-07-20T06:44:21Z",
+      "ended_at": "2026-07-20T06:45:09Z",
+      "reason": "The first LangGraph run reported success but did not create either expected evidence ref.",
+      "rejected_refs": [
+        "runtime/langgraph/019f7e44-b84c-7061-80bc-14ebd75c10c3/run.json"
+      ],
+      "required_actions": [
+        "Reuse the original LangGraph thread identity",
+        "Create both expected evidence refs",
+        "Require adapter-generated completion only after evidence validation",
+        "Run an independent reviewer in a separate thread"
+      ],
+      "evidence_refs": [
+        "evidence/first-failure-audit.md",
+        "runtime/langgraph/019f7e45-7266-75c0-9301-d73f77714f34/run.json",
+        "agents/langgraph_worker/evidence.md",
+        "evidence/verification.md",
+        "agents/langgraph_reviewer/review.md"
+      ],
+      "receipt_refs": [
+        "dispatch-receipts.jsonl"
+      ]
+    }
+  ],
+  "final_outcome": "fixed",
+  "final_evidence_refs": [
+    "agents/langgraph_worker/evidence.md",
+    "evidence/verification.md",
+    "agents/langgraph_reviewer/review.md"
+  ],
+  "notes": "Event sequence 4 remains the preserved false-done block; event sequence 6 is the later repair completion."
+}

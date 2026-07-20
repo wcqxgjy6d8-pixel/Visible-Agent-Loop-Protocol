@@ -45,3 +45,6 @@ Repository = "https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol"
 
 [tool.setuptools.packages.find]
 include = ["valp_cli*"]
+
+[tool.setuptools.package-data]
+valp_cli = ["templates/adapter-starter/*"]

@@ -1,0 +1,129 @@
+{
+  "schema_version": "valp-context-pack.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "profile": "agent-runtime",
+  "loop_layer": "developer_feedback_loop",
+  "generated_at": "2026-07-20T06:39:05Z",
+  "budget": {
+    "target_tokens": 500,
+    "target_chars": 2400
+  },
+  "dispatch_role_budgets": {
+    "langgraph_coordinator": {
+      "role": "coordinator",
+      "max_chars": 3000,
+      "max_reference_tokens": 750,
+      "token_estimator": "ceil(chars/4)"
+    },
+    "langgraph_reviewer": {
+      "role": "reviewer",
+      "max_chars": 2400,
+      "max_reference_tokens": 600,
+      "token_estimator": "ceil(chars/4)"
+    },
+    "langgraph_worker": {
+      "role": "implementer",
+      "max_chars": 2800,
+      "max_reference_tokens": 700,
+      "token_estimator": "ceil(chars/4)"
+    }
+  },
+  "sources": [
+    {
+      "ref": "task.md",
+      "reason": "selected visible context"
+    },
+    {
+      "ref": "AGENTS.md",
+      "reason": "selected visible context"
+    },
+    {
+      "ref": "pyproject.toml",
+      "reason": "selected visible context"
+    },
+    {
+      "ref": ".herdr-loop/local-overlay.json",
+      "reason": "selected visible context"
+    },
+    {
+      "ref": ".herdr-loop/agents/capabilities.json",
+      "reason": "selected visible context"
+    }
+  ],
+  "items": [
+    {
+      "section": "project",
+      "summary": "Load the active task and project operating rules from selected task-local refs; do not rely on hidden chat context.",
+      "evidence_refs": [
+        "task.md"
+      ],
+      "recipient_agents": [
+        "langgraph_coordinator",
+        "langgraph_reviewer",
+        "langgraph_worker"
+      ]
+    },
+    {
+      "section": "task_scope",
+      "summary": "Stay inside the task brief, expected evidence refs, visible routing, and permission boundary recorded for this task.",
+      "evidence_refs": [
+        "task.md",
+        "visible-routing.md"
+      ],
+      "recipient_agents": [
+        "langgraph_coordinator",
+        "langgraph_reviewer",
+        "langgraph_worker"
+      ]
+    },
+    {
+      "section": "verification",
+      "summary": "Completion claims require concrete files, command output, screenshots, receipts, reviews, or gate evidence.",
+      "evidence_refs": [
+        "evidence-board.json",
+        "dispatch-receipts.jsonl"
+      ],
+      "recipient_agents": [
+        "langgraph_coordinator",
+        "langgraph_reviewer",
+        "langgraph_worker"
+      ]
+    },
+    {
+      "section": "permission_boundary",
+      "summary": "Do not bypass approval gates or expand into release, auth, secrets, destructive, privacy, signing, migration, memory, or agent-configuration changes.",
+      "evidence_refs": [
+        "automation-policy.json",
+        "state.json"
+      ],
+      "recipient_agents": [
+        "langgraph_coordinator",
+        "langgraph_reviewer",
+        "langgraph_worker"
+      ]
+    },
+    {
+      "section": "routing_prior",
+      "summary": "Historical feedback is a routing prior only; current scan, tools, permissions, context, approvals, and expected evidence override it.",
+      "evidence_refs": [],
+      "recipient_agents": [
+        "langgraph_coordinator",
+        "langgraph_reviewer",
+        "langgraph_worker"
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "item": "raw private transcript",
+      "reason": "not task-local evidence"
+    },
+    {
+      "item": "stale memory without evidence refs",
+      "reason": "cannot override current scan"
+    }
+  ],
+  "privacy_notes": [
+    "Context pack stores summaries and refs, not secrets or hidden conversations."
+  ]
+}

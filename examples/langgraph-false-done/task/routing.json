@@ -1,0 +1,813 @@
+{
+  "schema_version": "valp-capability-routing.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "profile": "agent-runtime",
+  "runtime_adapter": {
+    "class": "hosted_local_platform",
+    "name": "LangGraph API",
+    "full_mode_capable": true,
+    "state_mapping_ref": "docs/task-state-machine.md",
+    "preflight": {
+      "generated_at": "2026-07-20T06:39:04.027961Z",
+      "runtime": "LangGraph API",
+      "adapter_class": "hosted_local_platform",
+      "status": "pass",
+      "checks": {
+        "langgraph_api": {
+          "status": "pass",
+          "api_url": "http://127.0.0.1:8123",
+          "health": {
+            "ok": true
+          }
+        }
+      },
+      "agents": {
+        "langgraph_coordinator": {
+          "status": "pass",
+          "graph_id": "langgraph_coordinator",
+          "assistant_ids": [
+            "91a60cf3-153d-5f87-991c-1e1ee35d5c4b"
+          ],
+          "session_status": "idle",
+          "expected_refs": [],
+          "notes": [
+            "LangGraph uses thread/run identities instead of pane fields."
+          ]
+        },
+        "langgraph_worker": {
+          "status": "pass",
+          "graph_id": "langgraph_worker",
+          "assistant_ids": [
+            "c46186e6-3287-5bc0-bced-9ff71c8caeba"
+          ],
+          "session_status": "idle",
+          "expected_refs": [],
+          "notes": [
+            "LangGraph uses thread/run identities instead of pane fields."
+          ]
+        },
+        "langgraph_reviewer": {
+          "status": "pass",
+          "graph_id": "langgraph_reviewer",
+          "assistant_ids": [
+            "c32e0829-51ea-5a4f-88c6-fd2c6bd25a2a"
+          ],
+          "session_status": "idle",
+          "expected_refs": [],
+          "notes": [
+            "LangGraph uses thread/run identities instead of pane fields."
+          ]
+        }
+      }
+    }
+  },
+  "risk": {
+    "approval_required": false,
+    "matches": []
+  },
+  "local_overlay": {
+    "used": true,
+    "ref": ".herdr-loop/local-overlay.json",
+    "note": "Local capability profiles are routing hints, not fixed assignments."
+  },
+  "capabilities_needed": [
+    "mcp",
+    "skills",
+    "connector",
+    "state",
+    "verification"
+  ],
+  "role_requirements": [
+    "coordinator",
+    "implementer",
+    "reviewer"
+  ],
+  "role_assignments": {
+    "coordinator": "langgraph_coordinator",
+    "implementer": "langgraph_worker",
+    "reviewer": "langgraph_reviewer"
+  },
+  "model_role_gate": {
+    "enforced": false,
+    "status": "pass",
+    "blocked_roles": [],
+    "fallback_modes": [],
+    "reason": "High-risk model identity requirements are satisfied or not applicable."
+  },
+  "team_selection": {
+    "strategy": "minimum_capable_team",
+    "required_roles": [
+      "coordinator",
+      "implementer",
+      "reviewer"
+    ],
+    "selected_agents": [
+      "langgraph_coordinator",
+      "langgraph_reviewer",
+      "langgraph_worker"
+    ],
+    "supplemental_requested_agents": []
+  },
+  "submission_dependencies": {
+    "status": "recorded",
+    "ref": "submission-dependencies.json"
+  },
+  "delegation_policy": {
+    "status": "recorded",
+    "ref": "delegation-policy.json"
+  },
+  "iteration_budget": {
+    "status": "recorded",
+    "ref": "iteration-budget.json"
+  },
+  "control_contract": {
+    "status": "recorded",
+    "ref": "control-contract.json",
+    "digest": "sha256:b4538e48f631e2e6c05fb8db41ba1f9094cd90eb31a2545913295bce1bd1c26c",
+    "priority_class": "highest_runtime_control"
+  },
+  "control_slices": {
+    "langgraph_coordinator": "control-slices/langgraph_coordinator.json",
+    "langgraph_reviewer": "control-slices/langgraph_reviewer.json",
+    "langgraph_worker": "control-slices/langgraph_worker.json"
+  },
+  "coordinator_selection": {
+    "selected_agent": "langgraph_coordinator",
+    "selection_rule": "Selected from current capability evidence, local overlay hints, runtime availability, context policy, and task profile. The open protocol does not name a universal leader."
+  },
+  "selected_agents": [
+    "langgraph_coordinator",
+    "langgraph_reviewer",
+    "langgraph_worker"
+  ],
+  "requested_agents": [
+    "langgraph_coordinator",
+    "langgraph_worker",
+    "langgraph_reviewer"
+  ],
+  "requested_agent_roles": {
+    "langgraph_coordinator": "coordinator",
+    "langgraph_worker": "implementer",
+    "langgraph_reviewer": "reviewer"
+  },
+  "agent_match_reasons": {
+    "langgraph_coordinator": [
+      "coordination",
+      "state",
+      "visible_synthesis",
+      "coordination",
+      "state tracking"
+    ],
+    "langgraph_reviewer": [
+      "review",
+      "code_review",
+      "risk_review",
+      "review",
+      "independent verification"
+    ],
+    "langgraph_worker": [
+      "implementation",
+      "verification",
+      "implementation",
+      "artifact generation"
+    ]
+  },
+  "candidate_scores": {
+    "langgraph_coordinator": {
+      "profile_fit": 0.8,
+      "tool_fit": 0.85,
+      "skill_fit": 0.71,
+      "skill_evidence": {
+        "source_ref": "skill-recommendations.json",
+        "provider_reachable_match_count": 14
+      },
+      "permission_fit": 1,
+      "context_fit": 0.85,
+      "evidence_history": 0.25,
+      "availability": 1,
+      "risk_fit": 0.9,
+      "overall": 0.8,
+      "confidence": "low",
+      "role_fit": {
+        "coordinator": 0.8,
+        "implementer": 0.25,
+        "reviewer": 0.25
+      },
+      "routing_basis": "capability_roles",
+      "evidence_history_notes": [],
+      "evidence_history_refs": [],
+      "model_evidence": {
+        "status": "unknown",
+        "history_status": "downgraded",
+        "observed_model": "unknown",
+        "computed_freshness": "current",
+        "probe_status": "unsupported",
+        "session_status": "unknown",
+        "history_invalidation_reasons": []
+      },
+      "model_role_gate": {
+        "enforced": false,
+        "status": "eligible",
+        "blocked_roles": [],
+        "fallback_roles": [],
+        "role_eligibility": {
+          "implementer": "blocked",
+          "final_reviewer": "blocked"
+        }
+      }
+    },
+    "langgraph_worker": {
+      "profile_fit": 0.65,
+      "tool_fit": 0.85,
+      "skill_fit": 0.71,
+      "skill_evidence": {
+        "source_ref": "skill-recommendations.json",
+        "provider_reachable_match_count": 14
+      },
+      "permission_fit": 1,
+      "context_fit": 0.85,
+      "evidence_history": 0.25,
+      "availability": 1,
+      "risk_fit": 0.9,
+      "overall": 0.78,
+      "confidence": "low",
+      "role_fit": {
+        "coordinator": 0.25,
+        "implementer": 0.65,
+        "reviewer": 0.25
+      },
+      "routing_basis": "capability_roles",
+      "evidence_history_notes": [],
+      "evidence_history_refs": [],
+      "model_evidence": {
+        "status": "unknown",
+        "history_status": "downgraded",
+        "observed_model": "unknown",
+        "computed_freshness": "current",
+        "probe_status": "unsupported",
+        "session_status": "unknown",
+        "history_invalidation_reasons": []
+      },
+      "model_role_gate": {
+        "enforced": false,
+        "status": "eligible",
+        "blocked_roles": [],
+        "fallback_roles": [],
+        "role_eligibility": {
+          "implementer": "blocked",
+          "final_reviewer": "blocked"
+        }
+      }
+    },
+    "langgraph_reviewer": {
+      "profile_fit": 0.8,
+      "tool_fit": 0.85,
+      "skill_fit": 0.71,
+      "skill_evidence": {
+        "source_ref": "skill-recommendations.json",
+        "provider_reachable_match_count": 14
+      },
+      "permission_fit": 1,
+      "context_fit": 0.85,
+      "evidence_history": 0.25,
+      "availability": 1,
+      "risk_fit": 0.9,
+      "overall": 0.8,
+      "confidence": "low",
+      "role_fit": {
+        "coordinator": 0.25,
+        "implementer": 0.0,
+        "reviewer": 0.8
+      },
+      "routing_basis": "capability_roles",
+      "evidence_history_notes": [],
+      "evidence_history_refs": [],
+      "model_evidence": {
+        "status": "unknown",
+        "history_status": "downgraded",
+        "observed_model": "unknown",
+        "computed_freshness": "current",
+        "probe_status": "unsupported",
+        "session_status": "unknown",
+        "history_invalidation_reasons": []
+      },
+      "model_role_gate": {
+        "enforced": false,
+        "status": "eligible",
+        "blocked_roles": [],
+        "fallback_roles": [],
+        "role_eligibility": {
+          "implementer": "blocked",
+          "final_reviewer": "blocked"
+        }
+      }
+    }
+  },
+  "routing_confidence": {
+    "overall": "high",
+    "score": 0.79,
+    "reason": "Computed from local capability scan and overlay hints."
+  },
+  "rejected_candidates": [],
+  "selected_agent_context_policies": {
+    "langgraph_coordinator": {
+      "soft_warning_pct": 50,
+      "hard_compression_pct": 60,
+      "emergency_stop_pct": 80
+    },
+    "langgraph_reviewer": {
+      "soft_warning_pct": 60,
+      "hard_compression_pct": 70,
+      "emergency_stop_pct": 80
+    },
+    "langgraph_worker": {
+      "soft_warning_pct": 55,
+      "hard_compression_pct": 65,
+      "emergency_stop_pct": 80
+    }
+  },
+  "automation_policy": {
+    "schema_version": "valp-automation-policy.v1",
+    "status": "recorded",
+    "ref": "automation-policy.json",
+    "selected_action": "continue_until_gate",
+    "audit_grade": "runtime"
+  },
+  "context_pack": {
+    "schema_version": "valp-context-pack.v1",
+    "status": "recorded",
+    "ref": "context-pack.json"
+  },
+  "skill_recommendations": {
+    "schema_version": "valp-skill-recommendations.v1",
+    "status": "complete",
+    "backend": "task-skill-router",
+    "ref": "skill-recommendations.json",
+    "routing": {
+      "priority": "P1",
+      "decision": "auto-load",
+      "reason": "Highest-priority routing decision across batch tasks.",
+      "report_policy": "silent"
+    },
+    "missing_skills": [
+      {
+        "skill": "dispatching-parallel-agents",
+        "confidence": 0.28,
+        "install_hint": "Install the 'dispatching-parallel-agents' skill into one of skills_dirs, then rerun task-skill-router."
+      }
+    ],
+    "coordinator_only": true
+  },
+  "visible_attention": {
+    "schema_version": "valp-visible-attention.v1",
+    "status": "recorded",
+    "loop_layer": "developer_feedback_loop",
+    "design_contract": {
+      "status": "missing",
+      "path": null,
+      "reason": "No DESIGN.md or .stitch/DESIGN.md found in the workspace."
+    },
+    "attention_map": "attention-map.json",
+    "context_selection": "context-selection.json",
+    "context_pack": "context-pack.json",
+    "mask_list": "mask-list.json",
+    "evidence_board": "evidence-board.json",
+    "visible_routing": "visible-routing.md"
+  },
+  "provider_matrix": {
+    "generated_at": "2026-07-20T06:39:05Z",
+    "runtime_preflight": {
+      "generated_at": "2026-07-20T06:39:04.027961Z",
+      "runtime": "LangGraph API",
+      "adapter_class": "hosted_local_platform",
+      "status": "pass",
+      "checks": {
+        "langgraph_api": {
+          "status": "pass",
+          "api_url": "http://127.0.0.1:8123",
+          "health": {
+            "ok": true
+          }
+        }
+      },
+      "agents": {
+        "langgraph_coordinator": {
+          "status": "pass",
+          "graph_id": "langgraph_coordinator",
+          "assistant_ids": [
+            "91a60cf3-153d-5f87-991c-1e1ee35d5c4b"
+          ],
+          "session_status": "idle",
+          "expected_refs": [],
+          "notes": [
+            "LangGraph uses thread/run identities instead of pane fields."
+          ]
+        },
+        "langgraph_worker": {
+          "status": "pass",
+          "graph_id": "langgraph_worker",
+          "assistant_ids": [
+            "c46186e6-3287-5bc0-bced-9ff71c8caeba"
+          ],
+          "session_status": "idle",
+          "expected_refs": [],
+          "notes": [
+            "LangGraph uses thread/run identities instead of pane fields."
+          ]
+        },
+        "langgraph_reviewer": {
+          "status": "pass",
+          "graph_id": "langgraph_reviewer",
+          "assistant_ids": [
+            "c32e0829-51ea-5a4f-88c6-fd2c6bd25a2a"
+          ],
+          "session_status": "idle",
+          "expected_refs": [],
+          "notes": [
+            "LangGraph uses thread/run identities instead of pane fields."
+          ]
+        }
+      }
+    },
+    "model_awareness": {
+      "required": true,
+      "dynamic_discovery_required": false,
+      "status": "degraded",
+      "provider_count": 3,
+      "unknown_providers": [
+        "langgraph_coordinator",
+        "langgraph_reviewer",
+        "langgraph_worker"
+      ]
+    },
+    "providers": {
+      "langgraph_coordinator": {
+        "provider_name": "langgraph_coordinator",
+        "provider_version_or_runtime_report": "unknown",
+        "cli_available": "unknown",
+        "mcp_support": "unknown",
+        "skill_discovery_path": "unknown",
+        "session_resume_support": "unknown",
+        "approval_behavior": "unknown",
+        "model_selection": "unknown",
+        "agent_surface": "langgraph_coordinator",
+        "model_identity": {
+          "agent_surface": "langgraph_coordinator",
+          "provider": "langgraph_coordinator",
+          "reasoning_mode": "unknown",
+          "permissions": [],
+          "context": {},
+          "task_evidence": [],
+          "declared_model": {
+            "model_id": "unknown",
+            "provider": "langgraph_coordinator",
+            "reasoning_mode": "unknown",
+            "source": "declared capability registry",
+            "timestamp": "2026-07-20T06:39:05Z",
+            "confidence": "unknown",
+            "freshness": "unknown"
+          },
+          "observed_model": {
+            "model_id": "unknown",
+            "provider": "langgraph_coordinator",
+            "reasoning_mode": "unknown",
+            "source": "runtime observation unavailable",
+            "timestamp": "2026-07-20T06:39:05Z",
+            "confidence": "unknown",
+            "freshness": "current"
+          },
+          "model_probe": {
+            "schema_version": "valp-model-probe.v1",
+            "status": "unsupported",
+            "source": "runtime model probe unavailable",
+            "observed_at": "2026-07-20T06:39:05Z",
+            "ttl_seconds": 3600,
+            "model": {
+              "model_id": "unknown",
+              "provider": "langgraph_coordinator",
+              "reasoning_mode": "unknown",
+              "confidence": "unknown"
+            },
+            "session_identity": {
+              "status": "unknown",
+              "token": "unknown",
+              "source": "runtime session identity unavailable",
+              "generation": "unknown"
+            }
+          },
+          "freshness_evaluated_at": "2026-07-20T06:39:05Z",
+          "observation_age_seconds": 0,
+          "observation_ttl_seconds": 3600,
+          "mismatch": {
+            "status": "unknown",
+            "handling": "downgrade",
+            "details": "Declared or observed model identity is unknown."
+          },
+          "history_binding": {
+            "agent_surface": "langgraph_coordinator",
+            "model_id": "unknown",
+            "provider": "langgraph_coordinator",
+            "reasoning_mode": "unknown",
+            "freshness": "current",
+            "session_token": "unknown",
+            "fingerprint": "96f5511edd5fd576b43eaf61244374f5f795d1de106e5cebab36d005cadaa9d0"
+          },
+          "history_invalidation_reasons": [],
+          "history_status": "downgraded",
+          "evidence_status": "unknown",
+          "role_eligibility": {
+            "implementer": "blocked",
+            "final_reviewer": "blocked"
+          }
+        },
+        "permissions": [],
+        "context": {},
+        "task_evidence": [],
+        "max_concurrency": 1,
+        "context_policy": {
+          "soft_warning_pct": 50,
+          "hard_compression_pct": 60,
+          "emergency_stop_pct": 80
+        },
+        "known_limitations": [
+          "must not claim worker output without runtime evidence"
+        ],
+        "runtime_preflight": {
+          "status": "pass",
+          "graph_id": "langgraph_coordinator",
+          "assistant_ids": [
+            "91a60cf3-153d-5f87-991c-1e1ee35d5c4b"
+          ],
+          "session_status": "idle",
+          "expected_refs": [],
+          "notes": [
+            "LangGraph uses thread/run identities instead of pane fields."
+          ]
+        },
+        "last_verified_at": "2026-07-20T06:39:05Z"
+      },
+      "langgraph_reviewer": {
+        "provider_name": "langgraph_reviewer",
+        "provider_version_or_runtime_report": "unknown",
+        "cli_available": "unknown",
+        "mcp_support": "unknown",
+        "skill_discovery_path": "unknown",
+        "session_resume_support": "unknown",
+        "approval_behavior": "unknown",
+        "model_selection": "unknown",
+        "agent_surface": "langgraph_reviewer",
+        "model_identity": {
+          "agent_surface": "langgraph_reviewer",
+          "provider": "langgraph_reviewer",
+          "reasoning_mode": "unknown",
+          "permissions": [],
+          "context": {},
+          "task_evidence": [],
+          "declared_model": {
+            "model_id": "unknown",
+            "provider": "langgraph_reviewer",
+            "reasoning_mode": "unknown",
+            "source": "declared capability registry",
+            "timestamp": "2026-07-20T06:39:05Z",
+            "confidence": "unknown",
+            "freshness": "unknown"
+          },
+          "observed_model": {
+            "model_id": "unknown",
+            "provider": "langgraph_reviewer",
+            "reasoning_mode": "unknown",
+            "source": "runtime observation unavailable",
+            "timestamp": "2026-07-20T06:39:05Z",
+            "confidence": "unknown",
+            "freshness": "current"
+          },
+          "model_probe": {
+            "schema_version": "valp-model-probe.v1",
+            "status": "unsupported",
+            "source": "runtime model probe unavailable",
+            "observed_at": "2026-07-20T06:39:05Z",
+            "ttl_seconds": 3600,
+            "model": {
+              "model_id": "unknown",
+              "provider": "langgraph_reviewer",
+              "reasoning_mode": "unknown",
+              "confidence": "unknown"
+            },
+            "session_identity": {
+              "status": "unknown",
+              "token": "unknown",
+              "source": "runtime session identity unavailable",
+              "generation": "unknown"
+            }
+          },
+          "freshness_evaluated_at": "2026-07-20T06:39:05Z",
+          "observation_age_seconds": 0,
+          "observation_ttl_seconds": 3600,
+          "mismatch": {
+            "status": "unknown",
+            "handling": "downgrade",
+            "details": "Declared or observed model identity is unknown."
+          },
+          "history_binding": {
+            "agent_surface": "langgraph_reviewer",
+            "model_id": "unknown",
+            "provider": "langgraph_reviewer",
+            "reasoning_mode": "unknown",
+            "freshness": "current",
+            "session_token": "unknown",
+            "fingerprint": "0ce0193d4d0b1bdefbb9e69f22ccf543cc8c3a25408723684e152b83005a5f5d"
+          },
+          "history_invalidation_reasons": [],
+          "history_status": "downgraded",
+          "evidence_status": "unknown",
+          "role_eligibility": {
+            "implementer": "blocked",
+            "final_reviewer": "blocked"
+          }
+        },
+        "permissions": [],
+        "context": {},
+        "task_evidence": [],
+        "max_concurrency": 1,
+        "context_policy": {
+          "soft_warning_pct": 60,
+          "hard_compression_pct": 70,
+          "emergency_stop_pct": 80
+        },
+        "known_limitations": [
+          "read only",
+          "must not modify worker evidence"
+        ],
+        "runtime_preflight": {
+          "status": "pass",
+          "graph_id": "langgraph_reviewer",
+          "assistant_ids": [
+            "c32e0829-51ea-5a4f-88c6-fd2c6bd25a2a"
+          ],
+          "session_status": "idle",
+          "expected_refs": [],
+          "notes": [
+            "LangGraph uses thread/run identities instead of pane fields."
+          ]
+        },
+        "last_verified_at": "2026-07-20T06:39:05Z"
+      },
+      "langgraph_worker": {
+        "provider_name": "langgraph_worker",
+        "provider_version_or_runtime_report": "unknown",
+        "cli_available": "unknown",
+        "mcp_support": "unknown",
+        "skill_discovery_path": "unknown",
+        "session_resume_support": "unknown",
+        "approval_behavior": "unknown",
+        "model_selection": "unknown",
+        "agent_surface": "langgraph_worker",
+        "model_identity": {
+          "agent_surface": "langgraph_worker",
+          "provider": "langgraph_worker",
+          "reasoning_mode": "unknown",
+          "permissions": [],
+          "context": {},
+          "task_evidence": [],
+          "declared_model": {
+            "model_id": "unknown",
+            "provider": "langgraph_worker",
+            "reasoning_mode": "unknown",
+            "source": "declared capability registry",
+            "timestamp": "2026-07-20T06:39:05Z",
+            "confidence": "unknown",
+            "freshness": "unknown"
+          },
+          "observed_model": {
+            "model_id": "unknown",
+            "provider": "langgraph_worker",
+            "reasoning_mode": "unknown",
+            "source": "runtime observation unavailable",
+            "timestamp": "2026-07-20T06:39:05Z",
+            "confidence": "unknown",
+            "freshness": "current"
+          },
+          "model_probe": {
+            "schema_version": "valp-model-probe.v1",
+            "status": "unsupported",
+            "source": "runtime model probe unavailable",
+            "observed_at": "2026-07-20T06:39:05Z",
+            "ttl_seconds": 3600,
+            "model": {
+              "model_id": "unknown",
+              "provider": "langgraph_worker",
+              "reasoning_mode": "unknown",
+              "confidence": "unknown"
+            },
+            "session_identity": {
+              "status": "unknown",
+              "token": "unknown",
+              "source": "runtime session identity unavailable",
+              "generation": "unknown"
+            }
+          },
+          "freshness_evaluated_at": "2026-07-20T06:39:05Z",
+          "observation_age_seconds": 0,
+          "observation_ttl_seconds": 3600,
+          "mismatch": {
+            "status": "unknown",
+            "handling": "downgrade",
+            "details": "Declared or observed model identity is unknown."
+          },
+          "history_binding": {
+            "agent_surface": "langgraph_worker",
+            "model_id": "unknown",
+            "provider": "langgraph_worker",
+            "reasoning_mode": "unknown",
+            "freshness": "current",
+            "session_token": "unknown",
+            "fingerprint": "58215cfea2cf853cec574f549d210c70a90ab6cf53af09ea57fd001b9c315922"
+          },
+          "history_invalidation_reasons": [],
+          "history_status": "downgraded",
+          "evidence_status": "unknown",
+          "role_eligibility": {
+            "implementer": "blocked",
+            "final_reviewer": "blocked"
+          }
+        },
+        "permissions": [],
+        "context": {},
+        "task_evidence": [],
+        "max_concurrency": 1,
+        "context_policy": {
+          "soft_warning_pct": 55,
+          "hard_compression_pct": 65,
+          "emergency_stop_pct": 80
+        },
+        "known_limitations": [
+          "must not self-approve missing evidence"
+        ],
+        "runtime_preflight": {
+          "status": "pass",
+          "graph_id": "langgraph_worker",
+          "assistant_ids": [
+            "c46186e6-3287-5bc0-bced-9ff71c8caeba"
+          ],
+          "session_status": "idle",
+          "expected_refs": [],
+          "notes": [
+            "LangGraph uses thread/run identities instead of pane fields."
+          ]
+        },
+        "last_verified_at": "2026-07-20T06:39:05Z"
+      }
+    }
+  },
+  "runtime_task_state_mapping": {
+    "queued": "accepted_by_runtime_not_delivery",
+    "dispatched": "dispatch_submitted_only_with_proof",
+    "running": "executing",
+    "completed": "dispatch_completed_only_with_expected_evidence",
+    "failed": "failed_or_blocked_with_reason",
+    "cancelled": "cancelled"
+  },
+  "squad_routing": {
+    "used": false
+  },
+  "routing_feedback_ref": "routing-feedback.json",
+  "learning_feedback_ref": "learning-feedback.json",
+  "capabilities_missing": [],
+  "skill_recommendation_slices": {
+    "langgraph_coordinator": "skill-slices/langgraph_coordinator.json",
+    "langgraph_reviewer": "skill-slices/langgraph_reviewer.json",
+    "langgraph_worker": "skill-slices/langgraph_worker.json"
+  },
+  "dispatch_payload_budgets": {
+    "langgraph_coordinator": {
+      "role": "coordinator",
+      "max_chars": 3000,
+      "max_reference_tokens": 750,
+      "token_estimator": "ceil(chars/4)",
+      "actual_chars": 2949,
+      "actual_reference_tokens": 738,
+      "dispatch_ref": "agents/langgraph_coordinator/dispatch.md",
+      "skill_slice_ref": "skill-slices/langgraph_coordinator.json"
+    },
+    "langgraph_reviewer": {
+      "role": "reviewer",
+      "max_chars": 2400,
+      "max_reference_tokens": 600,
+      "token_estimator": "ceil(chars/4)",
+      "actual_chars": 2275,
+      "actual_reference_tokens": 569,
+      "dispatch_ref": "agents/langgraph_reviewer/dispatch.md",
+      "skill_slice_ref": "skill-slices/langgraph_reviewer.json"
+    },
+    "langgraph_worker": {
+      "role": "implementer",
+      "max_chars": 2800,
+      "max_reference_tokens": 700,
+      "token_estimator": "ceil(chars/4)",
+      "actual_chars": 2729,
+      "actual_reference_tokens": 683,
+      "dispatch_ref": "agents/langgraph_worker/dispatch.md",
+      "skill_slice_ref": "skill-slices/langgraph_worker.json"
+    }
+  }
+}

@@ -1,0 +1,1203 @@
+{
+  "schema_version": "valp-skill-recommendations.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "profile": "agent-runtime",
+  "execution_tasks": [
+    "Use a real non-HERDR LangGraph API runtime to produce a reproducible false-done: runtime success while evidence/report.md is absent; VALP must block, preserve the first failure, rerun the same thread to create the report, obtain independent verification and review, write final synthesis, and finish with valp audit fail_count=0. Deliver an adapter starter template, one executable LangGraph adapter, a sanitized task/conformance fixture, and a one-page public case study. Do not expand SPEC.md or add another runtime adapter.",
+    "inspect agent runtime, routing, or connector behavior",
+    "verify runtime preflight, dispatch, receipts, and evidence"
+  ],
+  "generated_at": "2026-07-20T06:39:04Z",
+  "status": "complete",
+  "backend": "task-skill-router",
+  "command": [
+    "/home/valp-user/.local/bin/task-skill-router",
+    "--batch"
+  ],
+  "exit_code": 0,
+  "routing": {
+    "priority": "P1",
+    "decision": "auto-load",
+    "reason": "Highest-priority routing decision across batch tasks.",
+    "report_policy": "silent"
+  },
+  "results": [
+    {
+      "task": "Use a real non-HERDR LangGraph API runtime to produce a reproducible false-done: runtime success while evidence/report.md is absent; VALP must block, preserve the first failure, rerun the same thread to create the report, obtain independent verification and review, write final synthesis, and finish with valp audit fail_count=0. Deliver an adapter starter template, one executable LangGraph adapter, a sanitized task/conformance fixture, and a one-page public case study. Do not expand SPEC.md or add another runtime adapter.",
+      "num_skills_discovered": 216,
+      "num_community_mappings": 35,
+      "num_community_only_mappings": 4,
+      "skills_dirs": [
+        "/home/valp-user/.task-skill-router/skills",
+        "/home/valp-user/.codex/skills",
+        "/home/valp-user/.claude/skills",
+        "/home/valp-user/.agents/skills",
+        "/home/valp-user/.hermes/skills"
+      ],
+      "config_path": "/home/valp-user/.config/task-skill-router/config.yaml",
+      "community_path": "/home/valp-user/.config/task-skill-router/community.yaml",
+      "confidence_threshold": 0.12,
+      "matches": [
+        {
+          "skill": "product-runtime-eval",
+          "installed": true,
+          "path": "/home/valp-user/.hermes/skills/product-runtime-eval/SKILL.md",
+          "confidence": 0.669,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
+          "commands": [],
+          "provider": "hermes",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "hermes",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.331,
+            "final_confidence": 0.669,
+            "matched_intents": [
+              "verification-eval",
+              "agent-orchestration"
+            ],
+            "preferred_skill": false,
+            "penalties": []
+          },
+          "intent_boosts": [
+            "verification-eval",
+            "agent-orchestration"
+          ]
+        },
+        {
+          "skill": "product-operating-layer",
+          "installed": true,
+          "path": "/home/valp-user/.claude/skills/product-operating-layer/SKILL.md",
+          "confidence": 0.542,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
+          "commands": [],
+          "provider": "claude",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "claude",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.268,
+            "final_confidence": 0.542,
+            "matched_intents": [
+              "verification-eval",
+              "agent-orchestration"
+            ],
+            "preferred_skill": false,
+            "penalties": []
+          },
+          "intent_boosts": [
+            "verification-eval",
+            "agent-orchestration"
+          ]
+        },
+        {
+          "skill": "herdr-coordinator-self-review",
+          "installed": true,
+          "path": "/home/valp-user/.hermes/skills/devops/herdr-coordinator-self-review/SKILL.md",
+          "confidence": 0.258,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
+          "commands": [],
+          "provider": "hermes",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "hermes",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.191,
+            "final_confidence": 0.258,
+            "matched_intents": [
+              "agent-orchestration"
+            ],
+            "preferred_skill": false,
+            "penalties": []
+          },
+          "intent_boosts": [
+            "agent-orchestration"
+          ]
+        },
+        {
+          "skill": "project-context-injection",
+          "installed": true,
+          "path": "/home/valp-user/.hermes/skills/project-context-injection/SKILL.md",
+          "confidence": 0.22,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
+          "commands": [],
+          "provider": "hermes",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "hermes",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.158,
+            "final_confidence": 0.22,
+            "matched_intents": [
+              "agent-orchestration"
+            ],
+            "preferred_skill": false,
+            "penalties": []
+          },
+          "intent_boosts": [
+            "agent-orchestration"
+          ]
+        },
+        {
+          "skill": "requesting-code-review",
+          "installed": true,
+          "path": "/home/valp-user/.hermes/skills/software-development/requesting-code-review/SKILL.md",
+          "confidence": 0.22,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata + community mapping; intent boost: agent-orchestration",
+          "commands": [],
+          "provider": "hermes",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "hermes",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.157,
+            "final_confidence": 0.22,
+            "matched_intents": [
+              "agent-orchestration"
+            ],
+            "preferred_skill": false,
+            "penalties": []
+          },
+          "intent_boosts": [
+            "agent-orchestration"
+          ]
+        }
+      ],
+      "missing_skills": [],
+      "high_risk": false,
+      "routing": {
+        "priority": "P1",
+        "decision": "auto-load",
+        "reason": "Strong installed workflow match.",
+        "load_limit": 3,
+        "report_policy": "silent"
+      },
+      "task_intents": [
+        "verification-eval",
+        "agent-orchestration"
+      ],
+      "provider_filter": {
+        "agent": "any",
+        "active": false,
+        "filtered_count": 0,
+        "filtered_matches": []
+      },
+      "routing_trace": {
+        "task_intents": [
+          "verification-eval",
+          "agent-orchestration"
+        ],
+        "score_policies": [
+          "intent profiles can raise semantically aligned skills above raw TF-IDF",
+          "skill lifecycle skills are penalized unless the task asks to create, install, or find skills",
+          "provider-specific skills are hidden when --agent cannot reach that provider"
+        ]
+      },
+      "no_match_reason": null
+    },
+    {
+      "task": "inspect agent runtime, routing, or connector behavior",
+      "num_skills_discovered": 216,
+      "num_community_mappings": 35,
+      "num_community_only_mappings": 4,
+      "skills_dirs": [
+        "/home/valp-user/.task-skill-router/skills",
+        "/home/valp-user/.codex/skills",
+        "/home/valp-user/.claude/skills",
+        "/home/valp-user/.agents/skills",
+        "/home/valp-user/.hermes/skills"
+      ],
+      "config_path": "/home/valp-user/.config/task-skill-router/config.yaml",
+      "community_path": "/home/valp-user/.config/task-skill-router/community.yaml",
+      "confidence_threshold": 0.12,
+      "matches": [
+        {
+          "skill": "product-runtime-eval",
+          "installed": true,
+          "path": "/home/valp-user/.hermes/skills/product-runtime-eval/SKILL.md",
+          "confidence": 0.428,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata",
+          "commands": [],
+          "provider": "hermes",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "hermes",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.428,
+            "final_confidence": 0.428,
+            "matched_intents": [],
+            "preferred_skill": false,
+            "penalties": []
+          }
+        },
+        {
+          "skill": "product-operating-layer",
+          "installed": true,
+          "path": "/home/valp-user/.claude/skills/product-operating-layer/SKILL.md",
+          "confidence": 0.338,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata",
+          "commands": [],
+          "provider": "claude",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "claude",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.338,
+            "final_confidence": 0.338,
+            "matched_intents": [],
+            "preferred_skill": false,
+            "penalties": []
+          }
+        },
+        {
+          "skill": "hermes-agent",
+          "installed": true,
+          "path": "/home/valp-user/.hermes/skills/autonomous-ai-agents/hermes-agent/SKILL.md",
+          "confidence": 0.232,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata",
+          "commands": [],
+          "provider": "hermes",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "hermes",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.232,
+            "final_confidence": 0.232,
+            "matched_intents": [],
+            "preferred_skill": false,
+            "penalties": []
+          }
+        },
+        {
+          "skill": "node-inspect-debugger",
+          "installed": true,
+          "path": "/home/valp-user/.hermes/skills/software-development/node-inspect-debugger/SKILL.md",
+          "confidence": 0.223,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata",
+          "commands": [],
+          "provider": "hermes",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "hermes",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.223,
+            "final_confidence": 0.223,
+            "matched_intents": [],
+            "preferred_skill": false,
+            "penalties": []
+          }
+        },
+        {
+          "skill": "codebase-inspection",
+          "installed": true,
+          "path": "/home/valp-user/.hermes/skills/github/codebase-inspection/SKILL.md",
+          "confidence": 0.22,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata; intent boost: codebase-analysis",
+          "commands": [],
+          "provider": "hermes",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "hermes",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.127,
+            "final_confidence": 0.22,
+            "matched_intents": [
+              "codebase-analysis"
+            ],
+            "preferred_skill": false,
+            "penalties": []
+          },
+          "intent_boosts": [
+            "codebase-analysis"
+          ]
+        }
+      ],
+      "missing_skills": [],
+      "high_risk": false,
+      "routing": {
+        "priority": "P1",
+        "decision": "auto-load",
+        "reason": "Strong installed workflow match.",
+        "load_limit": 3,
+        "report_policy": "silent"
+      },
+      "task_intents": [
+        "codebase-analysis"
+      ],
+      "provider_filter": {
+        "agent": "any",
+        "active": false,
+        "filtered_count": 0,
+        "filtered_matches": []
+      },
+      "routing_trace": {
+        "task_intents": [
+          "codebase-analysis"
+        ],
+        "score_policies": [
+          "intent profiles can raise semantically aligned skills above raw TF-IDF",
+          "skill lifecycle skills are penalized unless the task asks to create, install, or find skills",
+          "provider-specific skills are hidden when --agent cannot reach that provider"
+        ]
+      },
+      "no_match_reason": null
+    },
+    {
+      "task": "verify runtime preflight, dispatch, receipts, and evidence",
+      "num_skills_discovered": 216,
+      "num_community_mappings": 35,
+      "num_community_only_mappings": 4,
+      "skills_dirs": [
+        "/home/valp-user/.task-skill-router/skills",
+        "/home/valp-user/.codex/skills",
+        "/home/valp-user/.claude/skills",
+        "/home/valp-user/.agents/skills",
+        "/home/valp-user/.hermes/skills"
+      ],
+      "config_path": "/home/valp-user/.config/task-skill-router/config.yaml",
+      "community_path": "/home/valp-user/.config/task-skill-router/community.yaml",
+      "confidence_threshold": 0.12,
+      "matches": [
+        {
+          "skill": "product-runtime-eval",
+          "installed": true,
+          "path": "/home/valp-user/.hermes/skills/product-runtime-eval/SKILL.md",
+          "confidence": 0.712,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
+          "commands": [],
+          "provider": "hermes",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "hermes",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.352,
+            "final_confidence": 0.712,
+            "matched_intents": [
+              "verification-eval",
+              "agent-orchestration"
+            ],
+            "preferred_skill": false,
+            "penalties": []
+          },
+          "intent_boosts": [
+            "verification-eval",
+            "agent-orchestration"
+          ]
+        },
+        {
+          "skill": "product-operating-layer",
+          "installed": true,
+          "path": "/home/valp-user/.claude/skills/product-operating-layer/SKILL.md",
+          "confidence": 0.373,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
+          "commands": [],
+          "provider": "claude",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "claude",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.184,
+            "final_confidence": 0.373,
+            "matched_intents": [
+              "verification-eval",
+              "agent-orchestration"
+            ],
+            "preferred_skill": false,
+            "penalties": []
+          },
+          "intent_boosts": [
+            "verification-eval",
+            "agent-orchestration"
+          ]
+        },
+        {
+          "skill": "dispatching-parallel-agents",
+          "installed": false,
+          "path": "",
+          "confidence": 0.28,
+          "mode": "recommend",
+          "reason": "community mapping; intent boost: agent-orchestration",
+          "commands": [],
+          "provider": "community",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "community",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.208,
+            "final_confidence": 0.28,
+            "matched_intents": [
+              "agent-orchestration"
+            ],
+            "preferred_skill": false,
+            "penalties": []
+          },
+          "intent_boosts": [
+            "agent-orchestration"
+          ],
+          "install_hint": "Install the 'dispatching-parallel-agents' skill into one of skills_dirs, then rerun task-skill-router."
+        },
+        {
+          "skill": "herdr-coordinator-self-review",
+          "installed": true,
+          "path": "/home/valp-user/.hermes/skills/devops/herdr-coordinator-self-review/SKILL.md",
+          "confidence": 0.269,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
+          "commands": [],
+          "provider": "hermes",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "hermes",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.199,
+            "final_confidence": 0.269,
+            "matched_intents": [
+              "agent-orchestration"
+            ],
+            "preferred_skill": false,
+            "penalties": []
+          },
+          "intent_boosts": [
+            "agent-orchestration"
+          ]
+        },
+        {
+          "skill": "triage",
+          "installed": true,
+          "path": "/home/valp-user/.agents/skills/triage/SKILL.md",
+          "confidence": 0.22,
+          "mode": "auto-load",
+          "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
+          "commands": [],
+          "provider": "shared",
+          "provider_reachability": {
+            "agent": "any",
+            "provider": "shared",
+            "reachable": true
+          },
+          "score_trace": {
+            "base_confidence": 0.116,
+            "final_confidence": 0.22,
+            "matched_intents": [
+              "agent-orchestration"
+            ],
+            "preferred_skill": false,
+            "penalties": []
+          },
+          "intent_boosts": [
+            "agent-orchestration"
+          ]
+        }
+      ],
+      "missing_skills": [
+        {
+          "skill": "dispatching-parallel-agents",
+          "confidence": 0.28,
+          "install_hint": "Install the 'dispatching-parallel-agents' skill into one of skills_dirs, then rerun task-skill-router."
+        }
+      ],
+      "high_risk": false,
+      "routing": {
+        "priority": "P1",
+        "decision": "auto-load",
+        "reason": "Strong installed workflow match.",
+        "load_limit": 3,
+        "report_policy": "silent"
+      },
+      "task_intents": [
+        "verification-eval",
+        "agent-orchestration"
+      ],
+      "provider_filter": {
+        "agent": "any",
+        "active": false,
+        "filtered_count": 0,
+        "filtered_matches": []
+      },
+      "routing_trace": {
+        "task_intents": [
+          "verification-eval",
+          "agent-orchestration"
+        ],
+        "score_policies": [
+          "intent profiles can raise semantically aligned skills above raw TF-IDF",
+          "skill lifecycle skills are penalized unless the task asks to create, install, or find skills",
+          "provider-specific skills are hidden when --agent cannot reach that provider"
+        ]
+      },
+      "no_match_reason": null
+    }
+  ],
+  "missing_skills": [
+    {
+      "skill": "dispatching-parallel-agents",
+      "confidence": 0.28,
+      "install_hint": "Install the 'dispatching-parallel-agents' skill into one of skills_dirs, then rerun task-skill-router."
+    }
+  ],
+  "raw": {
+    "batch": true,
+    "num_tasks": 3,
+    "results": [
+      {
+        "task": "Use a real non-HERDR LangGraph API runtime to produce a reproducible false-done: runtime success while evidence/report.md is absent; VALP must block, preserve the first failure, rerun the same thread to create the report, obtain independent verification and review, write final synthesis, and finish with valp audit fail_count=0. Deliver an adapter starter template, one executable LangGraph adapter, a sanitized task/conformance fixture, and a one-page public case study. Do not expand SPEC.md or add another runtime adapter.",
+        "num_skills_discovered": 216,
+        "num_community_mappings": 35,
+        "num_community_only_mappings": 4,
+        "skills_dirs": [
+          "/home/valp-user/.task-skill-router/skills",
+          "/home/valp-user/.codex/skills",
+          "/home/valp-user/.claude/skills",
+          "/home/valp-user/.agents/skills",
+          "/home/valp-user/.hermes/skills"
+        ],
+        "config_path": "/home/valp-user/.config/task-skill-router/config.yaml",
+        "community_path": "/home/valp-user/.config/task-skill-router/community.yaml",
+        "confidence_threshold": 0.12,
+        "matches": [
+          {
+            "skill": "product-runtime-eval",
+            "installed": true,
+            "path": "/home/valp-user/.hermes/skills/product-runtime-eval/SKILL.md",
+            "confidence": 0.669,
+            "mode": "auto-load",
+            "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
+            "commands": [],
+            "provider": "hermes",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "hermes",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.331,
+              "final_confidence": 0.669,
+              "matched_intents": [
+                "verification-eval",
+                "agent-orchestration"
+              ],
+              "preferred_skill": false,
+              "penalties": []
+            },
+            "intent_boosts": [
+              "verification-eval",
+              "agent-orchestration"
+            ]
+          },
+          {
+            "skill": "product-operating-layer",
+            "installed": true,
+            "path": "/home/valp-user/.claude/skills/product-operating-layer/SKILL.md",
+            "confidence": 0.542,
+            "mode": "auto-load",
+            "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
+            "commands": [],
+            "provider": "claude",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "claude",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.268,
+              "final_confidence": 0.542,
+              "matched_intents": [
+                "verification-eval",
+                "agent-orchestration"
+              ],
+              "preferred_skill": false,
+              "penalties": []
+            },
+            "intent_boosts": [
+              "verification-eval",
+              "agent-orchestration"
+            ]
+          },
+          {
+            "skill": "herdr-coordinator-self-review",
+            "installed": true,
+            "path": "/home/valp-user/.hermes/skills/devops/herdr-coordinator-self-review/SKILL.md",
+            "confidence": 0.258,
+            "mode": "auto-load",
+            "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
+            "commands": [],
+            "provider": "hermes",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "hermes",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.191,
+              "final_confidence": 0.258,
+              "matched_intents": [
+                "agent-orchestration"
+              ],
+              "preferred_skill": false,
+              "penalties": []
+            },
+            "intent_boosts": [
+              "agent-orchestration"
+            ]
+          },
+          {
+            "skill": "project-context-injection",
+            "installed": true,
+            "path": "/home/valp-user/.hermes/skills/project-context-injection/SKILL.md",
+            "confidence": 0.22,
+            "mode": "auto-load",
+            "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
+            "commands": [],
+            "provider": "hermes",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "hermes",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.158,
+              "final_confidence": 0.22,
+              "matched_intents": [
+                "agent-orchestration"
+              ],
+              "preferred_skill": false,
+              "penalties": []
+            },
+            "intent_boosts": [
+              "agent-orchestration"
+            ]
+          },
+          {
+            "skill": "requesting-code-review",
+            "installed": true,
+            "path": "/home/valp-user/.hermes/skills/software-development/requesting-code-review/SKILL.md",
+            "confidence": 0.22,
+            "mode": "auto-load",
+            "reason": "TF-IDF match on skill metadata + community mapping; intent boost: agent-orchestration",
+            "commands": [],
+            "provider": "hermes",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "hermes",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.157,
+              "final_confidence": 0.22,
+              "matched_intents": [
+                "agent-orchestration"
+              ],
+              "preferred_skill": false,
+              "penalties": []
+            },
+            "intent_boosts": [
+              "agent-orchestration"
+            ]
+          }
+        ],
+        "missing_skills": [],
+        "high_risk": false,
+        "routing": {
+          "priority": "P1",
+          "decision": "auto-load",
+          "reason": "Strong installed workflow match.",
+          "load_limit": 3,
+          "report_policy": "silent"
+        },
+        "task_intents": [
+          "verification-eval",
+          "agent-orchestration"
+        ],
+        "provider_filter": {
+          "agent": "any",
+          "active": false,
+          "filtered_count": 0,
+          "filtered_matches": []
+        },
+        "routing_trace": {
+          "task_intents": [
+            "verification-eval",
+            "agent-orchestration"
+          ],
+          "score_policies": [
+            "intent profiles can raise semantically aligned skills above raw TF-IDF",
+            "skill lifecycle skills are penalized unless the task asks to create, install, or find skills",
+            "provider-specific skills are hidden when --agent cannot reach that provider"
+          ]
+        },
+        "no_match_reason": null
+      },
+      {
+        "task": "inspect agent runtime, routing, or connector behavior",
+        "num_skills_discovered": 216,
+        "num_community_mappings": 35,
+        "num_community_only_mappings": 4,
+        "skills_dirs": [
+          "/home/valp-user/.task-skill-router/skills",
+          "/home/valp-user/.codex/skills",
+          "/home/valp-user/.claude/skills",
+          "/home/valp-user/.agents/skills",
+          "/home/valp-user/.hermes/skills"
+        ],
+        "config_path": "/home/valp-user/.config/task-skill-router/config.yaml",
+        "community_path": "/home/valp-user/.config/task-skill-router/community.yaml",
+        "confidence_threshold": 0.12,
+        "matches": [
+          {
+            "skill": "product-runtime-eval",
+            "installed": true,
+            "path": "/home/valp-user/.hermes/skills/product-runtime-eval/SKILL.md",
+            "confidence": 0.428,
+            "mode": "auto-load",
+            "reason": "TF-IDF match on skill metadata",
+            "commands": [],
+            "provider": "hermes",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "hermes",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.428,
+              "final_confidence": 0.428,
+              "matched_intents": [],
+              "preferred_skill": false,
+              "penalties": []
+            }
+          },
+          {
+            "skill": "product-operating-layer",
+            "installed": true,
+            "path": "/home/valp-user/.claude/skills/product-operating-layer/SKILL.md",
+            "confidence": 0.338,
+            "mode": "auto-load",
+            "reason": "TF-IDF match on skill metadata",
+            "commands": [],
+            "provider": "claude",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "claude",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.338,
+              "final_confidence": 0.338,
+              "matched_intents": [],
+              "preferred_skill": false,
+              "penalties": []
+            }
+          },
+          {
+            "skill": "hermes-agent",
+            "installed": true,
+            "path": "/home/valp-user/.hermes/skills/autonomous-ai-agents/hermes-agent/SKILL.md",
+            "confidence": 0.232,
+            "mode": "auto-load",
+            "reason": "TF-IDF match on skill metadata",
+            "commands": [],
+            "provider": "hermes",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "hermes",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.232,
+              "final_confidence": 0.232,
+              "matched_intents": [],
+              "preferred_skill": false,
+              "penalties": []
+            }
+          },
+          {
+            "skill": "node-inspect-debugger",
+            "installed": true,
+            "path": "/home/valp-user/.hermes/skills/software-development/node-inspect-debugger/SKILL.md",
+            "confidence": 0.223,
+            "mode": "auto-load",
+            "reason": "TF-IDF match on skill metadata",
+            "commands": [],
+            "provider": "hermes",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "hermes",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.223,
+              "final_confidence": 0.223,
+              "matched_intents": [],
+              "preferred_skill": false,
+              "penalties": []
+            }
+          },
+          {
+            "skill": "codebase-inspection",
+            "installed": true,
+            "path": "/home/valp-user/.hermes/skills/github/codebase-inspection/SKILL.md",
+            "confidence": 0.22,
+            "mode": "auto-load",
+            "reason": "TF-IDF match on skill metadata; intent boost: codebase-analysis",
+            "commands": [],
+            "provider": "hermes",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "hermes",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.127,
+              "final_confidence": 0.22,
+              "matched_intents": [
+                "codebase-analysis"
+              ],
+              "preferred_skill": false,
+              "penalties": []
+            },
+            "intent_boosts": [
+              "codebase-analysis"
+            ]
+          }
+        ],
+        "missing_skills": [],
+        "high_risk": false,
+        "routing": {
+          "priority": "P1",
+          "decision": "auto-load",
+          "reason": "Strong installed workflow match.",
+          "load_limit": 3,
+          "report_policy": "silent"
+        },
+        "task_intents": [
+          "codebase-analysis"
+        ],
+        "provider_filter": {
+          "agent": "any",
+          "active": false,
+          "filtered_count": 0,
+          "filtered_matches": []
+        },
+        "routing_trace": {
+          "task_intents": [
+            "codebase-analysis"
+          ],
+          "score_policies": [
+            "intent profiles can raise semantically aligned skills above raw TF-IDF",
+            "skill lifecycle skills are penalized unless the task asks to create, install, or find skills",
+            "provider-specific skills are hidden when --agent cannot reach that provider"
+          ]
+        },
+        "no_match_reason": null
+      },
+      {
+        "task": "verify runtime preflight, dispatch, receipts, and evidence",
+        "num_skills_discovered": 216,
+        "num_community_mappings": 35,
+        "num_community_only_mappings": 4,
+        "skills_dirs": [
+          "/home/valp-user/.task-skill-router/skills",
+          "/home/valp-user/.codex/skills",
+          "/home/valp-user/.claude/skills",
+          "/home/valp-user/.agents/skills",
+          "/home/valp-user/.hermes/skills"
+        ],
+        "config_path": "/home/valp-user/.config/task-skill-router/config.yaml",
+        "community_path": "/home/valp-user/.config/task-skill-router/community.yaml",
+        "confidence_threshold": 0.12,
+        "matches": [
+          {
+            "skill": "product-runtime-eval",
+            "installed": true,
+            "path": "/home/valp-user/.hermes/skills/product-runtime-eval/SKILL.md",
+            "confidence": 0.712,
+            "mode": "auto-load",
+            "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
+            "commands": [],
+            "provider": "hermes",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "hermes",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.352,
+              "final_confidence": 0.712,
+              "matched_intents": [
+                "verification-eval",
+                "agent-orchestration"
+              ],
+              "preferred_skill": false,
+              "penalties": []
+            },
+            "intent_boosts": [
+              "verification-eval",
+              "agent-orchestration"
+            ]
+          },
+          {
+            "skill": "product-operating-layer",
+            "installed": true,
+            "path": "/home/valp-user/.claude/skills/product-operating-layer/SKILL.md",
+            "confidence": 0.373,
+            "mode": "auto-load",
+            "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
+            "commands": [],
+            "provider": "claude",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "claude",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.184,
+              "final_confidence": 0.373,
+              "matched_intents": [
+                "verification-eval",
+                "agent-orchestration"
+              ],
+              "preferred_skill": false,
+              "penalties": []
+            },
+            "intent_boosts": [
+              "verification-eval",
+              "agent-orchestration"
+            ]
+          },
+          {
+            "skill": "dispatching-parallel-agents",
+            "installed": false,
+            "path": "",
+            "confidence": 0.28,
+            "mode": "recommend",
+            "reason": "community mapping; intent boost: agent-orchestration",
+            "commands": [],
+            "provider": "community",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "community",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.208,
+              "final_confidence": 0.28,
+              "matched_intents": [
+                "agent-orchestration"
+              ],
+              "preferred_skill": false,
+              "penalties": []
+            },
+            "intent_boosts": [
+              "agent-orchestration"
+            ],
+            "install_hint": "Install the 'dispatching-parallel-agents' skill into one of skills_dirs, then rerun task-skill-router."
+          },
+          {
+            "skill": "herdr-coordinator-self-review",
+            "installed": true,
+            "path": "/home/valp-user/.hermes/skills/devops/herdr-coordinator-self-review/SKILL.md",
+            "confidence": 0.269,
+            "mode": "auto-load",
+            "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
+            "commands": [],
+            "provider": "hermes",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "hermes",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.199,
+              "final_confidence": 0.269,
+              "matched_intents": [
+                "agent-orchestration"
+              ],
+              "preferred_skill": false,
+              "penalties": []
+            },
+            "intent_boosts": [
+              "agent-orchestration"
+            ]
+          },
+          {
+            "skill": "triage",
+            "installed": true,
+            "path": "/home/valp-user/.agents/skills/triage/SKILL.md",
+            "confidence": 0.22,
+            "mode": "auto-load",
+            "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
+            "commands": [],
+            "provider": "shared",
+            "provider_reachability": {
+              "agent": "any",
+              "provider": "shared",
+              "reachable": true
+            },
+            "score_trace": {
+              "base_confidence": 0.116,
+              "final_confidence": 0.22,
+              "matched_intents": [
+                "agent-orchestration"
+              ],
+              "preferred_skill": false,
+              "penalties": []
+            },
+            "intent_boosts": [
+              "agent-orchestration"
+            ]
+          }
+        ],
+        "missing_skills": [
+          {
+            "skill": "dispatching-parallel-agents",
+            "confidence": 0.28,
+            "install_hint": "Install the 'dispatching-parallel-agents' skill into one of skills_dirs, then rerun task-skill-router."
+          }
+        ],
+        "high_risk": false,
+        "routing": {
+          "priority": "P1",
+          "decision": "auto-load",
+          "reason": "Strong installed workflow match.",
+          "load_limit": 3,
+          "report_policy": "silent"
+        },
+        "task_intents": [
+          "verification-eval",
+          "agent-orchestration"
+        ],
+        "provider_filter": {
+          "agent": "any",
+          "active": false,
+          "filtered_count": 0,
+          "filtered_matches": []
+        },
+        "routing_trace": {
+          "task_intents": [
+            "verification-eval",
+            "agent-orchestration"
+          ],
+          "score_policies": [
+            "intent profiles can raise semantically aligned skills above raw TF-IDF",
+            "skill lifecycle skills are penalized unless the task asks to create, install, or find skills",
+            "provider-specific skills are hidden when --agent cannot reach that provider"
+          ]
+        },
+        "no_match_reason": null
+      }
+    ],
+    "num_without_matches": 0,
+    "routing": {
+      "priority": "P1",
+      "decision": "auto-load",
+      "reason": "Highest-priority routing decision across batch tasks.",
+      "report_policy": "silent"
+    },
+    "missing_skills": [
+      {
+        "skill": "dispatching-parallel-agents",
+        "confidence": 0.28,
+        "install_hint": "Install the 'dispatching-parallel-agents' skill into one of skills_dirs, then rerun task-skill-router."
+      }
+    ]
+  },
+  "per_agent": {
+    "langgraph_coordinator": {
+      "status": "failed",
+      "backend": "task-skill-router",
+      "agent": "langgraph_coordinator",
+      "command": [
+        "/home/valp-user/.local/bin/task-skill-router",
+        "--agent",
+        "langgraph_coordinator",
+        "--batch"
+      ],
+      "exit_code": 2,
+      "reason": "task-skill-router did not return parseable JSON for this agent.",
+      "stderr": "usage: task-skill-router [-h] [--audit-log AUDIT_LOG] [--record]\n                         [--pending-reviews] [--limit LIMIT]\n                         [--review EVENT_ID]\n                         [--judgment {hit,miss,partial,unknown}]\n                         [--evaluator EVALUATOR]\n                         [--correct-skill CORRECT_SKILL] [--notes NOTES]\n                         [--stats] [--batch]\n                         [--agent {agy,claude,codex,hermes}]\n                         [task ...]\ntask-skill-router: error: argument --agent: invalid choice: 'langgraph_coordinator' (choose from 'agy', 'claude', 'codex', 'hermes')\n",
+      "results": [],
+      "missing_skills": []
+    },
+    "langgraph_reviewer": {
+      "status": "failed",
+      "backend": "task-skill-router",
+      "agent": "langgraph_reviewer",
+      "command": [
+        "/home/valp-user/.local/bin/task-skill-router",
+        "--agent",
+        "langgraph_reviewer",
+        "--batch"
+      ],
+      "exit_code": 2,
+      "reason": "task-skill-router did not return parseable JSON for this agent.",
+      "stderr": "usage: task-skill-router [-h] [--audit-log AUDIT_LOG] [--record]\n                         [--pending-reviews] [--limit LIMIT]\n                         [--review EVENT_ID]\n                         [--judgment {hit,miss,partial,unknown}]\n                         [--evaluator EVALUATOR]\n                         [--correct-skill CORRECT_SKILL] [--notes NOTES]\n                         [--stats] [--batch]\n                         [--agent {agy,claude,codex,hermes}]\n                         [task ...]\ntask-skill-router: error: argument --agent: invalid choice: 'langgraph_reviewer' (choose from 'agy', 'claude', 'codex', 'hermes')\n",
+      "results": [],
+      "missing_skills": []
+    },
+    "langgraph_worker": {
+      "status": "failed",
+      "backend": "task-skill-router",
+      "agent": "langgraph_worker",
+      "command": [
+        "/home/valp-user/.local/bin/task-skill-router",
+        "--agent",
+        "langgraph_worker",
+        "--batch"
+      ],
+      "exit_code": 2,
+      "reason": "task-skill-router did not return parseable JSON for this agent.",
+      "stderr": "usage: task-skill-router [-h] [--audit-log AUDIT_LOG] [--record]\n                         [--pending-reviews] [--limit LIMIT]\n                         [--review EVENT_ID]\n                         [--judgment {hit,miss,partial,unknown}]\n                         [--evaluator EVALUATOR]\n                         [--correct-skill CORRECT_SKILL] [--notes NOTES]\n                         [--stats] [--batch]\n                         [--agent {agy,claude,codex,hermes}]\n                         [task ...]\ntask-skill-router: error: argument --agent: invalid choice: 'langgraph_worker' (choose from 'agy', 'claude', 'codex', 'hermes')\n",
+      "results": [],
+      "missing_skills": []
+    }
+  },
+  "agent_filtering": {
+    "status": "partial",
+    "backend": "task-skill-router",
+    "agents": [
+      "langgraph_coordinator",
+      "langgraph_reviewer",
+      "langgraph_worker"
+    ],
+    "note": "Per-agent recommendations are generated with task-skill-router --agent and should be preferred in dispatch prompts."
+  }
+}

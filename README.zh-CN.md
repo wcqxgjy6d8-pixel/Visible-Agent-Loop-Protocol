@@ -20,6 +20,32 @@ VALP 要求任务过程留下可审计的证据：
 
 所以 VALP 更像一个多 Agent 工作流的验收单，而不是聊天提示词集合。
 
+## 谁选 Agent
+
+这个权力边界是固定的：
+
+```text
+Doctor 扫描每个 Agent surface/session 的能力护照
+  -> 用户明确选择 Leader
+  -> Leader 拆解任务并声明分工
+  -> VALP 核对能力、模型、权限、上下文和证据边界
+  -> 通过后才能 dispatch
+```
+
+Doctor 把 `official_claim`、`local_presence`、`live_callable` 和
+`task_verified` 四层证据分开，并记录当前 Agent 实际接入的
+model、provider、reasoning mode、session identity、Skills、MCP、权限、
+上下文与限制。信息缺失就标记 `unknown`，不从 Agent 名称
+猜模型。
+
+VALP 可以拒绝一份不符合当前证据的 Leader 分工，但不能自己
+选 Agent，也不能偷偷换人。`selected_agents` 仅是旧格式兼容字段，
+表示“Leader 已声明的 Agents”，不表示“VALP 选出的 Agents”。
+
+通用 VALP 任务在严格审计后把结果交回用户就结束。代码托管、
+branch、push、pull request 或 merge 是用户与其 Agent 自己的后续工作，
+不是通用协议的内建步骤。
+
 ## v0.3 Draft Implementation
 
 当前稳定发布版本仍是 `0.2.0`。[RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)
@@ -80,6 +106,7 @@ VALP 不是：
 - 一个模型集成方法；
 - 一个固定绑定 HERDR 的私有工作流；
 - 一个能自动证明所有 Agent 可靠的魔法层；
+- 一个替用户选 Leader，或替 Leader 选 Agent 的调度器；
 - 一个替代测试、代码审查、审批流程的工具。
 
 HERDR 只是当前参考 Runtime。其他 Runtime 只要能导出同等的 receipts、

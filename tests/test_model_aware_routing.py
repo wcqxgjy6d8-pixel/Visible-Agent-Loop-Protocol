@@ -17,9 +17,8 @@ from valp_cli.workflow import (
     publish_task,
     provider_matrix_for,
     read_json,
-    role_assignments_for,
+    route_task,
     score_candidates,
-    select_agents,
     visible_model_metadata_for_agent,
 )
 
@@ -350,25 +349,15 @@ class ModelAwareRoutingTests(unittest.TestCase):
             enforce_model_role_gate=True,
             evaluated_at="2026-07-15T12:05:00Z",
         )
-        selected = select_agents("software-code", agents, scores)
-        assignments = role_assignments_for(
-            "software-code",
-            selected,
-            agents,
-            scores,
-            enforce_model_role_gate=True,
-        )
-
-        self.assertIn("codex", selected)
-        self.assertNotIn("implementer", assignments)
-        self.assertNotIn("reviewer", assignments)
         self.assertEqual(scores["codex"]["model_role_gate"]["status"], "blocked")
+        self.assertEqual(scores["codex"]["role_fit"]["implementer"], 0.0)
+        self.assertEqual(scores["codex"]["role_fit"]["reviewer"], 0.0)
         self.assertEqual(
             scores["codex"]["model_role_gate"]["fallback_roles"],
             ["discovery", "prototype", "manual"],
         )
 
-    def test_publish_blocks_high_risk_route_when_probe_is_unsupported(self) -> None:
+    def test_route_blocks_leader_declared_high_risk_assignment_when_probe_is_unsupported(self) -> None:
         capabilities = {
             "schema_version": "valp-agent-capabilities.v1",
             "updated_at": "2026-07-15T12:00:00Z",
@@ -387,28 +376,151 @@ class ModelAwareRoutingTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
-                with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = publish_task(
+            task_dir = publish_task(
+                root,
+                "TASK-UNKNOWN-MODEL-GATE",
+                "Implement and review a source change.",
+                profile="software-code",
+            )
+            declaration = {
+                "schema_version": "valp-assignment-declaration.v1",
+                "declaration_id": "decl-unknown-model-1",
+                "task_id": "TASK-UNKNOWN-MODEL-GATE",
+                "declared_at": "2026-07-15T12:00:00Z",
+                "leader": {
+                    "agent_id": "codex",
+                    "selected_by": "user",
+                    "selection_ref": "user-message:codex-leader",
+                },
+                "assignments": {
+                    "coordinator": "codex",
+                    "implementer": "codex",
+                    "reviewer": "codex",
+                },
+                "reasons": {
+                    "coordinator": "User-selected Leader.",
+                    "implementer": "Leader-declared implementer.",
+                    "reviewer": "Leader-declared reviewer.",
+                },
+            }
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities), \
+                    patch("valp_cli.workflow.skill_router_command", return_value=None):
+                with self.assertRaisesRegex(SystemExit, "Assignment validation blocked"):
+                    route_task(
                         root,
                         "TASK-UNKNOWN-MODEL-GATE",
-                        "Implement and review a source change.",
-                        profile="software-code",
                         runtime="queue",
+                        assignment_declaration=declaration,
                     )
 
-            routing = read_json(task_dir / "routing.json")
+            validation = read_json(task_dir / "assignment-validation.json")
             state = read_json(task_dir / "state.json")
 
-        self.assertEqual(routing["model_role_gate"]["status"], "blocked")
-        self.assertEqual(routing["model_role_gate"]["blocked_roles"], ["implementer", "reviewer"])
+        self.assertEqual(validation["status"], "blocked")
         self.assertEqual(
-            routing["capabilities_missing"],
-            ["active_model_identity:implementer", "active_model_identity:reviewer"],
+            validation["blockers"],
+            ["active_model_identity:implementer:codex", "active_model_identity:reviewer:codex"],
         )
-        self.assertNotIn("implementer", routing["role_assignments"])
-        self.assertNotIn("reviewer", routing["role_assignments"])
         self.assertEqual(state["status"], "blocked")
+        self.assertFalse((task_dir / "routing.json").exists())
+        self.assertFalse((task_dir / "dispatch-receipts.jsonl").exists())
+
+    def test_route_enforces_observed_models_without_static_model_identity(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-15T12:00:00Z",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["implementation", "verification"],
+                },
+                "claude": {
+                    "active": True,
+                    "role": ["reviewer", "code_review"],
+                },
+            },
+        }
+
+        def probe(model_id: str, provider: str, token: str) -> dict[str, object]:
+            return {
+                "schema_version": "valp-model-probe.v1",
+                "status": "observed",
+                "source": "HERDR pane adapter metadata",
+                "observed_at": "2026-07-15T12:00:00Z",
+                "ttl_seconds": 3600,
+                "model": {
+                    "model_id": model_id,
+                    "provider": provider,
+                    "reasoning_mode": "high",
+                    "confidence": "high",
+                },
+                "session_identity": {
+                    "status": "known",
+                    "token": token,
+                    "source": "HERDR pane session metadata",
+                    "generation": "3",
+                },
+            }
+
+        preflight = {
+            "status": "pass",
+            "runtime": "herdr",
+            "adapter_class": "herdr",
+            "checks": {},
+            "agents": {
+                "codex": {"status": "pass", "model_probe": probe("implementation-model", "relay-a", "sha256:codex-session")},
+                "claude": {"status": "pass", "model_probe": probe("review-model", "relay-b", "sha256:claude-session")},
+            },
+        }
+        declaration = {
+            "schema_version": "valp-assignment-declaration.v1",
+            "declaration_id": "decl-observed-models-1",
+            "task_id": "TASK-OBSERVED-MODEL-GATE",
+            "declared_at": "2026-07-15T12:00:00Z",
+            "leader": {
+                "agent_id": "codex-app",
+                "selected_by": "user",
+                "selection_ref": "user-message:codex-app-leader",
+            },
+            "assignments": {"implementer": "codex", "reviewer": "claude"},
+            "reasons": {
+                "implementer": "Leader-declared implementer.",
+                "reviewer": "Leader-declared reviewer.",
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_dir = publish_task(
+                root,
+                "TASK-OBSERVED-MODEL-GATE",
+                "Implement and independently review a source change.",
+                profile="software-code",
+            )
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities), \
+                    patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight), \
+                    patch("valp_cli.workflow.skill_router_command", return_value=None), \
+                    patch("valp_cli.workflow.now_iso", return_value="2026-07-15T12:05:00Z"):
+                routing = route_task(
+                    root,
+                    "TASK-OBSERVED-MODEL-GATE",
+                    runtime="herdr",
+                    assignment_declaration=declaration,
+                )
+
+            validation = read_json(task_dir / "assignment-validation.json")
+
+        self.assertEqual(validation["status"], "pass")
+        self.assertTrue(routing["model_role_gate"]["enforced"])
+        self.assertEqual(routing["provider_matrix"]["model_awareness"]["status"], "strong")
+        self.assertEqual(
+            routing["provider_matrix"]["providers"]["codex"]["model_identity"]["observed_model"]["model_id"],
+            "implementation-model",
+        )
+        self.assertEqual(
+            routing["provider_matrix"]["providers"]["claude"]["model_identity"]["observed_model"]["provider"],
+            "relay-b",
+        )
 
     def test_runtime_observation_freshness_expires_with_fake_clock(self) -> None:
         info = {
@@ -711,6 +823,146 @@ class ModelAwareRoutingTests(unittest.TestCase):
             schema_validator(ROOT / "schemas" / "provider-matrix-model-aware.schema.json").iter_errors(matrix)
         )
         self.assertEqual(errors, [])
+
+    def test_runtime_observation_is_authoritative_when_no_model_was_declared(self) -> None:
+        info = {
+            "active": True,
+            "role": ["reviewer"],
+            "model_identity": {"agent_surface": "review_cli"},
+        }
+        preflight = {
+            "status": "pass",
+            "agents": {
+                "reviewer": {
+                    "status": "pass",
+                    "model_probe": {
+                        "schema_version": "valp-model-probe.v1",
+                        "status": "observed",
+                        "source": "runtime adapter metadata",
+                        "observed_at": "2026-07-15T12:00:00Z",
+                        "ttl_seconds": 3600,
+                        "model": {
+                            "model_id": "non-native-review-model",
+                            "provider": "relay-provider",
+                            "reasoning_mode": "unknown",
+                            "confidence": "high",
+                        },
+                        "session_identity": {
+                            "status": "known",
+                            "token": "sha256:review-session",
+                            "source": "runtime session metadata",
+                            "generation": "unknown",
+                        },
+                    },
+                }
+            },
+        }
+
+        matrix = provider_matrix_for(
+            ["reviewer"],
+            {"reviewer": info},
+            {},
+            preflight,
+            evaluated_at="2026-07-15T12:05:00Z",
+        )
+        identity = matrix["providers"]["reviewer"]["model_identity"]
+
+        self.assertEqual(identity["declared_model"]["model_id"], "unknown")
+        self.assertEqual(identity["observed_model"]["model_id"], "non-native-review-model")
+        self.assertEqual(identity["mismatch"]["status"], "not_applicable")
+        self.assertEqual(identity["evidence_status"], "strong")
+        self.assertEqual(identity["role_eligibility"]["final_reviewer"], "eligible")
+        with patch("valp_cli.model_identity._now", return_value="2026-07-15T12:05:00Z"):
+            self.assertEqual(model_aware_provider_errors(matrix), [])
+        errors = list(
+            schema_validator(ROOT / "schemas" / "provider-matrix-model-aware.schema.json").iter_errors(matrix)
+        )
+        self.assertEqual(errors, [])
+
+    def test_provider_matrix_preserves_observed_probe_when_gate_is_advisory(self) -> None:
+        preflight = {
+            "status": "pass",
+            "agents": {
+                "reviewer": {
+                    "status": "pass",
+                    "model_probe": {
+                        "schema_version": "valp-model-probe.v1",
+                        "status": "observed",
+                        "source": "runtime adapter metadata",
+                        "observed_at": "2026-07-15T12:00:00Z",
+                        "ttl_seconds": 3600,
+                        "model": {
+                            "model_id": "relay-review-model",
+                            "provider": "relay-provider",
+                            "reasoning_mode": "high",
+                            "confidence": "high",
+                        },
+                        "session_identity": {
+                            "status": "known",
+                            "token": "sha256:review-session",
+                            "source": "runtime session metadata",
+                            "generation": "4",
+                        },
+                    },
+                }
+            },
+        }
+
+        matrix = provider_matrix_for(
+            ["reviewer"],
+            {"reviewer": {"active": True, "role": ["reviewer"]}},
+            {},
+            preflight,
+            evaluated_at="2026-07-15T12:05:00Z",
+            dynamic_discovery_required=False,
+        )
+        identity = matrix["providers"]["reviewer"]["model_identity"]
+
+        self.assertFalse(matrix["model_awareness"]["dynamic_discovery_required"])
+        self.assertEqual(identity["observed_model"]["model_id"], "relay-review-model")
+        self.assertEqual(identity["observed_model"]["provider"], "relay-provider")
+        self.assertEqual(identity["observed_model"]["reasoning_mode"], "high")
+        self.assertEqual(identity["model_probe"]["session_identity"]["token"], "sha256:review-session")
+
+    def test_candidate_scoring_preserves_runtime_probe_without_enforcing_gate(self) -> None:
+        preflight = {
+            "agents": {
+                "codex": {
+                    "model_probe": {
+                        "schema_version": "valp-model-probe.v1",
+                        "status": "observed",
+                        "source": "runtime adapter metadata",
+                        "observed_at": "2026-07-15T12:00:00Z",
+                        "ttl_seconds": 3600,
+                        "model": {
+                            "model_id": "implementation-model",
+                            "provider": "relay-provider",
+                            "reasoning_mode": "xhigh",
+                            "confidence": "high",
+                        },
+                        "session_identity": {
+                            "status": "known",
+                            "token": "sha256:implementation-session",
+                            "source": "runtime session metadata",
+                            "generation": "8",
+                        },
+                    }
+                }
+            }
+        }
+
+        scores = score_candidates(
+            "software-code",
+            {"codex": {"active": True, "role": ["implementation"]}},
+            runtime_preflight=preflight,
+            enforce_model_role_gate=False,
+            evaluated_at="2026-07-15T12:05:00Z",
+        )
+
+        self.assertFalse(scores["codex"]["model_role_gate"]["enforced"])
+        self.assertEqual(scores["codex"]["model_evidence"]["observed_model"], "implementation-model")
+        self.assertEqual(scores["codex"]["model_evidence"]["probe_status"], "observed")
+        self.assertEqual(scores["codex"]["model_evidence"]["session_status"], "known")
 
     def test_provider_matrix_fails_closed_for_unsupported_runtime_probe(self) -> None:
         info = {

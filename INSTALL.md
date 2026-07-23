@@ -39,21 +39,31 @@ Recommended first-run order:
 
 ```text
 1. Resolve the actual VALP install root and `valp` executable path.
-2. Run `valp doctor --workspace <install-root>`.
-3. If the user wants Full Mode, run `valp preflight --runtime <runtime>`.
-4. Run a publish/dispatch dry run to prove routing and visible dispatch output.
-5. Show the report to the user before enabling real `--submit`.
-6. Enable Auto Visible Mode, watcher mode, or policy_auto only after opt-in.
+2. Run `valp doctor --workspace <install-root> --json` to commission
+   capability passports for every discovered Agent surface/session.
+3. Show the passports, including observed model/provider/session, Skills, MCP,
+   permissions, context, and limitations, and let the user choose the Leader.
+4. If the user wants Full Mode, run `valp preflight --runtime <runtime>`.
+5. Publish a dry-run task; let the Leader author the assignment declaration.
+6. Run `valp route --assignments`, then print dispatch output without submit.
+7. Show the validation and dry-run result before enabling real `--submit`.
+8. Enable Auto Visible Mode, watcher mode, or policy_auto only after opt-in.
 ```
 
 An installer or App must not hard-code a Desktop checkout path. It should store
 the actual install root it created and verify that `valp doctor` can find the
 protocol checkout, Python runtime, examples, schemas, and reference adapters.
 
-A dry run may create a task folder and print submit commands. It must not
-actually send work to agents and must not be reported as a completed task.
-Newly published dry-run tasks normally fail `valp audit` because expected
-evidence and final synthesis do not exist yet.
+A dry run may create a task folder. It prints submit commands only after a
+user-selected Leader declaration passes validation. It must not actually send
+work to Agents and must not be reported as a completed task. Newly published
+dry-run tasks normally fail `valp audit` because receipts, expected evidence,
+and final synthesis do not exist yet.
+
+Doctor does not choose the Leader or task Agents. Missing evidence stays
+`unknown`; installers must not infer a model from the Agent product name. The
+Leader declares task roles, and VALP may validate or block that declaration but
+cannot replace an Agent.
 
 For HERDR, preflight probes command help rather than assuming capabilities from
 a version number. It accepts atomic `herdr agent prompt` when advertised, or the
@@ -246,7 +256,7 @@ store evidence manually
 Manual Mode is not Full Mode. It cannot claim automatic dispatch submission,
 agent status proof, or runtime receipt equivalence.
 
-Use Manual Mode for learning, documentation, PR review, or temporary audit
+Use Manual Mode for learning, documentation, external review, or temporary audit
 trails. Do not present it as the normal automated multi-agent experience.
 
 ## Quick Decision Tree

@@ -49,7 +49,7 @@ dispatch_completed
 `dispatch_submitted` is not enough when evidence is expected.
 
 For Full Mode and Remote Mode, `dispatch_completed` also needs runtime
-submission provenance. Each selected agent must have a prior
+submission provenance. Each Leader-declared Agent must have a prior
 `dispatch_submitted` receipt with concrete adapter proof, for example a
 submission id, queue id, hosted run id, pane/session submit proof, or equivalent
 runtime record. A dry-run dispatch, a local sub-agent result, a simulated
@@ -63,7 +63,7 @@ guard. Proof identity/ref values must be non-empty strings, directly or inside
 a typed adapter record; booleans and counters are not delivery identities.
 
 Because the ledger is append-only, legacy validators evaluate the latest
-receipt for each selected agent. Deterministic wait validators evaluate the
+receipt for each Leader-declared Agent. Deterministic wait validators evaluate the
 latest accepted receipt for the exact task, work item, role, dispatch id, and
 dispatch generation. A different role or retry generation cannot supersede or
 satisfy that gate. If late evidence appears after a timeout, the runtime must

@@ -53,20 +53,13 @@ notes:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    publish = sub.add_parser("publish", help="Create a VALP task and auto-route by default")
+    publish = sub.add_parser("publish", help="Create a VALP task and wait for Leader-declared assignments")
     publish.add_argument("task_id", help="Task id")
     publish.add_argument("--workspace", default=".", help="Workspace root")
     publish.add_argument("--prompt", help="Task request")
     publish.add_argument("--prompt-file", help="Read task request from a file")
     publish.add_argument("--profile", help="Override auto profile classification")
-    publish.add_argument(
-        "--include-agent",
-        action="append",
-        default=[],
-        help="Explicitly include an available agent as a supplemental routed role",
-    )
     publish.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Runtime adapter to record and preflight")
-    publish.add_argument("--no-route", action="store_true", help="Only create task.md/state.json")
     publish.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     scan = sub.add_parser("scan", help="Scan local capabilities and overlay into a workspace")
@@ -75,16 +68,11 @@ notes:
     scan.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Runtime adapter to preflight")
     scan.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
-    route = sub.add_parser("route", help="Route an existing VALP task")
+    route = sub.add_parser("route", help="Validate and record Leader-declared assignments")
     route.add_argument("task_id", help="Task id")
     route.add_argument("--workspace", default=".", help="Workspace root")
     route.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Runtime adapter to record and preflight")
-    route.add_argument(
-        "--include-agent",
-        action="append",
-        default=None,
-        help="Add an available agent to the existing task's requested supplemental roles",
-    )
+    route.add_argument("--assignments", required=True, help="Leader-authored assignment declaration JSON")
     route.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     dispatch = sub.add_parser("dispatch", help="Print dispatch instructions or submit through the selected reference adapter")
@@ -441,17 +429,15 @@ def main(argv: list[str] | None = None) -> int:
             args.task_id,
             prompt_from_args(args),
             profile=args.profile,
-            route=not args.no_route,
             runtime=args.runtime,
-            include_agents=args.include_agent,
         )
-        result = {"task_id": args.task_id, "task_dir": str(directory), "routed": not args.no_route}
+        result = {"task_id": args.task_id, "task_dir": str(directory), "routed": False}
         if args.json:
             print(json.dumps(result, indent=2, ensure_ascii=False))
         else:
             print(f"Published VALP task: {args.task_id}")
             print(f"Task dir: {directory}")
-            print("Routed: " + ("yes" if not args.no_route else "no"))
+            print("Routed: no (awaiting Leader-declared assignments)")
             visible = directory / "visible-routing.md"
             if visible.exists():
                 print()
@@ -467,18 +453,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "route":
-        if args.include_agent:
-            task_state_path = Path(args.workspace).resolve() / ".herdr-loop" / "tasks" / args.task_id / "state.json"
-            task_state = read_json(task_state_path) or {}
-            current = list(task_state.get("requested_agents") or [])
-            task_state["requested_agents"] = list(dict.fromkeys(current + args.include_agent))
-            task_state_path.write_text(json.dumps(task_state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        routing = route_task(Path(args.workspace), args.task_id, runtime=args.runtime)
+        declaration = read_json(Path(args.assignments))
+        if not declaration:
+            raise SystemExit(f"Assignment declaration is missing or invalid JSON: {args.assignments}")
+        routing = route_task(
+            Path(args.workspace),
+            args.task_id,
+            runtime=args.runtime,
+            assignment_declaration=declaration,
+        )
         if args.json:
             print(json.dumps(routing, indent=2, ensure_ascii=False))
         else:
-            print(f"Routed VALP task: {args.task_id}")
-            print("Selected agents: " + ", ".join(routing.get("selected_agents") or []))
+            print(f"Validated Leader assignments for VALP task: {args.task_id}")
+            print("Declared agents: " + ", ".join(routing.get("selected_agents") or []))
             visible_ref = ((routing.get("visible_attention") or {}).get("visible_routing")) or "visible-routing.md"
             visible = Path(args.workspace).resolve() / ".herdr-loop" / "tasks" / args.task_id / visible_ref
             if visible.exists():

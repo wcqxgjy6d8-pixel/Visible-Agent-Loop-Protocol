@@ -38,6 +38,11 @@ provider, reasoning_mode, source, timestamp, confidence, and freshness.
 Runtime-observed identity wins for the current route; a declaration is not
 runtime proof.
 
+`declared_model` may be explicitly unknown. A current, high-confidence runtime
+observation bound to a known session may be strong without a configured
+default. If a declaration exists, any model, provider, or reasoning mismatch
+invalidates the bound history and blocks high-risk roles.
+
 If the identities differ, model-bound capability history is invalidated.
 Dynamic stale, unsupported, session-unbound, or unknown observations invalidate
 model-bound history; legacy low-confidence records remain downgraded. Unknown
@@ -45,7 +50,7 @@ stays explicit and cannot qualify as strong evidence for high-risk
 implementation or final review.
 
 New dynamic matrices set `model_awareness.dynamic_discovery_required` to true.
-Each selected provider then records a closed `valp-model-probe.v1` result from
+Each Leader-declared provider then records a closed `valp-model-probe.v1` result from
 adapter-visible metadata:
 
 ```json

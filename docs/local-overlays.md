@@ -12,9 +12,11 @@ and context limits.
 ```text
 VALP spec
   -> runtime adapter
-  -> local overlay
-  -> workspace/project instructions
-  -> task evidence
+  -> local overlay hints
+  -> Doctor capability passports
+  -> user-selected Leader
+  -> Leader assignment declaration
+  -> VALP validation and task evidence
 ```
 
 The more specific layer can add detail, but it cannot weaken protocol gates.
@@ -45,13 +47,16 @@ unverified claims of completion
 rules that bypass approval gates
 rules that treat dispatch insertion as delivery
 rules that make agent roles fixed forever
+rules that select a Leader or Agent without the user/Leader authority chain
 rules that turn automatic trigger into silent high-risk execution
 ```
 
 ## Capability Profiles Are Hints
 
-A local overlay may say that an agent is often good at implementation, review,
-research, design, or coordination. That is a prior, not an assignment.
+A local overlay may say that an Agent is often good at implementation, review,
+research, design, or coordination. That is a prior shown in Doctor's passport,
+not an assignment. The user still selects the Leader, and the Leader still
+declares every task role.
 
 Every task still needs a fresh scan of:
 
@@ -94,7 +99,7 @@ recent routing feedback
     "default_mode": "manual",
     "auto_visible_mode": "policy_auto",
     "signals": ["task mentions VALP", "task asks for multi-agent collaboration"],
-    "default_action": "publish_and_route",
+    "default_action": "publish_only",
     "high_risk_action": "block_for_approval"
   },
   "agent_capability_profiles": {
@@ -119,6 +124,7 @@ recent routing feedback
 ## Implementation Rule
 
 The routing record should say whether a local overlay was used and where it
-came from. If the overlay affects a decision, the routing record must explain
-that it was used as a hint and name the current evidence that made the route
-valid.
+came from. If the overlay informed the Leader's declaration or VALP validation,
+the routing record must explain that it was a hint and name the current evidence
+that made the declared assignment valid. An overlay cannot select or replace an
+Agent.

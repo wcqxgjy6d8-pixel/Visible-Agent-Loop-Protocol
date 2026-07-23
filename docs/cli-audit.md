@@ -3,7 +3,8 @@
 The reference CLI provides the first local VALP coordinator workflow:
 
 ```text
-publish -> scan -> route -> dispatch -> audit
+doctor -> user selects Leader -> publish -> Leader declares assignments
+  -> route validates -> dispatch -> audit
 ```
 
 It is intentionally small. It creates task evidence, reads local capability
@@ -23,30 +24,45 @@ Print the reference CLI version:
 bin/valp --version
 ```
 
-## Publish / Scan / Route
+## Doctor / Publish / Scan / Route
 
-Publish a task and auto-route it:
+Commission current capability passports:
+
+```bash
+bin/valp doctor --workspace /path/to/workspace --json
+```
+
+Doctor produces one passport per addressable Agent surface/session. The JSON
+includes four capability evidence layers, declared and observed model/provider,
+reasoning mode, session identity and TTL, Skills, MCP, permissions, context,
+limitations, and role eligibility. Unknown evidence remains explicit.
+
+The user selects the Leader from those facts. Publish then creates the task and
+waits for that Leader's declaration:
 
 ```bash
 bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it" --runtime auto
 ```
 
-`--runtime auto` selects a runtime adapter. It is not the same as Auto Visible
-Mode. Auto Visible Mode is a trigger policy that decides whether a user request
-or runtime signal should publish a VALP task before routing starts.
+`--runtime auto` selects a runtime adapter, not an Agent. It is not the same as
+Auto Visible Mode. Auto Visible Mode is a trigger policy that may publish a
+task, but cannot choose the Leader or task Agents.
 
-Publish without routing:
-
-```bash
-bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "..." --no-route
-```
-
-Run scan and route explicitly:
+The Leader writes a declaration following
+`schemas/assignment-declaration.schema.json`, then VALP validates it:
 
 ```bash
 bin/valp scan --workspace /path/to/workspace --task TASK-001
-bin/valp route TASK-001 --workspace /path/to/workspace --runtime auto
+bin/valp route TASK-001 --workspace /path/to/workspace --runtime auto \
+  --assignments /path/to/assignment-declaration.json
 ```
+
+The declaration must bind the task, explicit user-selected Leader evidence,
+every runtime role assignment, and a reason for each assignment. A runtime
+`coordinator` assignment is optional; when present, it must name the Leader.
+VALP checks current capability, role, active model/session, permission, context,
+and independence boundaries. It may pass or block the declaration; it cannot
+choose a missing role or substitute another Agent.
 
 The local scan reads:
 
@@ -75,6 +91,8 @@ and writes:
 Routing writes:
 
 ```text
+<workspace>/.herdr-loop/tasks/<task-id>/assignment-declaration.json
+<workspace>/.herdr-loop/tasks/<task-id>/assignment-validation.json
 <workspace>/.herdr-loop/tasks/<task-id>/routing.json
 <workspace>/.herdr-loop/tasks/<task-id>/trigger-policy.json, when Auto Visible Mode is used
 <workspace>/.herdr-loop/tasks/<task-id>/automation-policy.json
@@ -85,6 +103,9 @@ Routing writes:
 ```
 
 At this point the receipt state is `dispatch_written`; the work is not complete.
+`selected_agents` in these artifacts is the compatibility projection of unique
+Leader-assigned runtime Agents, not a VALP selection result. The Leader is not
+included unless it also has an explicit runtime role assignment.
 
 ## Preflight
 
@@ -111,7 +132,7 @@ worker id, session status, output refs, and expected refs. They should not fake
 pane or terminal-size fields.
 
 `valp dispatch --submit` writes `runtime-preflight.json` and stops when a
-selected agent has a failing preflight check.
+Leader-declared Agent has a failing preflight check.
 
 ## Dispatch
 
@@ -178,6 +199,8 @@ folder are not completion evidence.
 ```text
 task.md
 state.json
+assignment-declaration.json
+assignment-validation.json
 routing.json
 automation-policy.json
 attention-map.json
@@ -256,8 +279,9 @@ bin/valp doctor --workspace . --report desktop
 
 Doctor checks local git tracking status and cleanliness, ignored residue, the
 `bin/valp` entrypoint, Python availability, JSON/JSONL syntax, bundled example
-audits, and reference adapter probes. `--task <task-id>` also runs an audit for
-one task folder.
+audits, and reference adapter probes. It also commissions capability passports;
+the full records are returned by `--json` and included in Markdown reports.
+`--task <task-id>` also runs an audit for one task folder.
 
 Doctor is diagnostic. It does not submit dispatches, rewrite receipts, delete
 task evidence, fetch from the network, or replace `valp audit`. Markdown reports
@@ -283,12 +307,13 @@ The command maps the Done Criteria into these audit items:
 | Audit item | Done criteria covered |
 |---|---|
 | `profile_routing` | profile and routing are recorded |
+| `assignment_authority` | the user-selected Leader declaration, VALP validation, routing, and state agree |
 | `runtime_adapter` | runtime adapter and task state mapping are recorded |
 | `deterministic_wake` | a v2 suspension or wait-event evidence is replayable; an authored-only wait policy is not a claim |
 | `local_overlay` | local overlay inputs are recorded when used |
-| `selected_agents_context` | selected agents and context policies are recorded |
+| `selected_agents_context` | Leader-declared Agents and context policies are recorded |
 | `provider_matrix` | provider matrix fields needed for the task are recorded |
-| `runtime_preflight` | Full Mode runtime preflight is recorded and selected agents have no failing checks |
+| `runtime_preflight` | Full Mode runtime preflight is recorded and Leader-declared Agents have no failing checks |
 | `routing_confidence` | routing confidence, missing capabilities, and relevant rejected candidates are recorded |
 | `automation_policy` | automation policy records allowed automatic phases, stop conditions, approval behavior, and audit grade |
 | `context_pack` | context pack records compact visible worker context with safe evidence refs |
@@ -298,7 +323,7 @@ The command maps the Done Criteria into these audit items:
 | `submission_dependencies` | prerequisite completion physically precedes dependent submission; a later correction generation qualifies only through fixed, identity-bound, valid replacement evidence |
 | `expected_evidence` | expected evidence refs exist, are task-relative safe paths, and are not invalid/superseded/rejected/blocked |
 | `correction_cycle` | correction cycle evidence is recorded and fixed when work was rejected, retried, blocked, invalid, or superseded |
-| `agent_recommendations` | selected-agent recommendations and next-step suggestions are resolved with coordinator scope control |
+| `agent_recommendations` | recommendations from Leader-declared Agents are resolved with coordinator scope control |
 | `claim_evidence` | runtime/build/test/lint/UI claims, including final synthesis claims, cite command logs, screenshots, receipts, or evidence paths |
 | `verification` | verification passed or has a scoped blocker with concrete verification evidence unless verification is explicitly not required |
 | `review_findings` | review findings have no unresolved critical/high blockers |
@@ -327,6 +352,7 @@ It intentionally does not:
 - install HERDR;
 - submit dispatches;
 - infer hidden agent decisions;
+- select a Leader or task Agent;
 - call external services;
 - validate every JSON schema field deeply.
 

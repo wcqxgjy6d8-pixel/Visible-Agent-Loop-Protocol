@@ -25,6 +25,22 @@
   "role_assignments": {
     "reviewer": "manual-reviewer"
   },
+  "assignment_authority": "leader_declared",
+  "assignment_declaration": {
+    "status": "recorded",
+    "ref": "assignment-declaration.json",
+    "leader_agent": "manual-leader",
+    "selected_by": "user",
+    "selection_ref": "example:user-selected-manual-leader"
+  },
+  "assignment_validation": {
+    "status": "pass",
+    "ref": "assignment-validation.json"
+  },
+  "coordinator_selection": {
+    "selected_agent": "manual-leader",
+    "selection_rule": "The user selected the Manual Mode Leader; VALP validated the declared review assignment."
+  },
   "selected_agents": [
     "manual-reviewer"
   ],

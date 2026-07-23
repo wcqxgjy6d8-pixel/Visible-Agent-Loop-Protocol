@@ -1,0 +1,17 @@
+{
+  "schema_version": "valp-assignment-declaration.v1",
+  "declaration_id": "decl-MINIMAL-MANUAL-001-1",
+  "task_id": "MINIMAL-MANUAL-001",
+  "declared_at": "2026-07-23T10:00:00Z",
+  "leader": {
+    "agent_id": "manual-leader",
+    "selected_by": "user",
+    "selection_ref": "example:user-selected-manual-leader"
+  },
+  "assignments": {
+    "reviewer": "manual-reviewer"
+  },
+  "reasons": {
+    "reviewer": "Leader-declared manual review assignment."
+  }
+}

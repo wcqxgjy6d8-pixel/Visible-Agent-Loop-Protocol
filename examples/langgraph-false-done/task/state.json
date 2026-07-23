@@ -30,11 +30,6 @@
   },
   "approval_required": [],
     "updated_at": "2026-07-20T06:46:00Z",
-  "requested_agents": [
-    "langgraph_coordinator",
-    "langgraph_worker",
-    "langgraph_reviewer"
-  ],
   "loop_layer": "developer_feedback_loop",
   "runtime_adapter": {
     "class": "hosted_local_platform",
@@ -115,15 +110,22 @@
   "squad_routing": {
     "used": false
   },
-  "requested_agent_roles": {
-    "langgraph_coordinator": "coordinator",
-    "langgraph_worker": "implementer",
-    "langgraph_reviewer": "reviewer"
-  },
   "role_assignments": {
     "coordinator": "langgraph_coordinator",
     "implementer": "langgraph_worker",
     "reviewer": "langgraph_reviewer"
+  },
+  "assignment_authority": "leader_declared",
+  "assignment_declaration": {
+    "status": "recorded",
+    "ref": "assignment-declaration.json",
+    "leader_agent": "langgraph_coordinator",
+    "selected_by": "user",
+    "selection_ref": "example:user-selected-langgraph-leader"
+  },
+  "assignment_validation": {
+    "status": "pass",
+    "ref": "assignment-validation.json"
   },
   "submission_dependencies": {
     "status": "recorded",

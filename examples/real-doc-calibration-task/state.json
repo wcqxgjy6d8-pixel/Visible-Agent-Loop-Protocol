@@ -17,6 +17,21 @@
   "selected_agents": [
     "codex"
   ],
+  "role_assignments": {
+    "documentation_calibrator": "codex"
+  },
+  "assignment_authority": "leader_declared",
+  "assignment_declaration": {
+    "status": "recorded",
+    "ref": "assignment-declaration.json",
+    "leader_agent": "documentation-leader",
+    "selected_by": "user",
+    "selection_ref": "example:user-selected-documentation-leader"
+  },
+  "assignment_validation": {
+    "status": "pass",
+    "ref": "assignment-validation.json"
+  },
   "context_policies": {
     "codex": {
       "soft_warning_pct": 60,

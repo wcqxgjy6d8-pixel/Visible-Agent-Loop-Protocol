@@ -3,9 +3,10 @@
 VALP should improve from task outcomes, but it must not mistake old memory for
 current capability.
 
-Routing feedback records what actually happened after a task. Future routing can
-use that record as a prior, while still running fresh scans for runtime status,
-tools, skills, permissions, and context.
+Routing feedback records what actually happened after a task. A future Leader
+can use that record as a prior, while still running fresh scans for runtime
+status, tools, skills, permissions, model identity, and context. Feedback may
+inform a Leader; it cannot assign an Agent.
 
 ## When To Write Feedback
 
@@ -23,6 +24,11 @@ high-risk tasks with approval gates
 Small single-agent tasks may skip feedback if the runtime would add noise.
 
 ## Required Fields
+
+`selected_agents` is retained as a compatibility field. In new records it is
+the unique projection of Agents named in the Leader's validated role
+assignments, not a VALP-authored selection. Leader status alone does not put an
+Agent in this field.
 
 ```json
 {

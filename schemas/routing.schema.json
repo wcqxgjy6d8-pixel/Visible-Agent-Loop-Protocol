@@ -2,7 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "VALP Routing",
   "type": "object",
-  "required": ["schema_version", "task_id", "profile", "selected_agents"],
+  "required": [
+    "schema_version",
+    "task_id",
+    "profile",
+    "role_assignments",
+    "assignment_authority",
+    "assignment_declaration",
+    "assignment_validation",
+    "selected_agents"
+  ],
   "properties": {
     "schema_version": {
       "const": "valp-capability-routing.v1"
@@ -20,7 +29,33 @@
       "type": "array",
       "items": {"type": "string"}
     },
-    "role_assignments": {"type": "object"},
+    "role_assignments": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "assignment_authority": {"const": "leader_declared"},
+    "assignment_declaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "ref", "leader_agent", "selected_by", "selection_ref"],
+      "properties": {
+        "status": {"const": "recorded"},
+        "ref": {"const": "assignment-declaration.json"},
+        "leader_agent": {"type": "string", "minLength": 1},
+        "selected_by": {"const": "user"},
+        "selection_ref": {"type": "string", "minLength": 1}
+      }
+    },
+    "assignment_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "ref"],
+      "properties": {
+        "status": {"const": "pass"},
+        "ref": {"const": "assignment-validation.json"}
+      }
+    },
     "model_role_gate": {
       "type": "object",
       "required": ["enforced", "status", "blocked_roles", "fallback_modes", "reason"],
@@ -51,7 +86,24 @@
       },
       "additionalProperties": false
     },
-    "coordinator_selection": {"type": "object"},
+    "team_selection": {
+      "type": "object",
+      "properties": {
+        "strategy": {"const": "leader_declared_valp_validated"},
+        "required_roles": {"type": "array", "items": {"type": "string"}},
+        "selected_agents": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "coordinator_selection": {
+      "type": "object",
+      "required": ["selected_agent", "selection_rule"],
+      "properties": {
+        "selected_agent": {"type": "string", "minLength": 1},
+        "selection_rule": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "selected_agents": {
       "type": "array",
       "items": {"type": "string"}

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/assignment-declaration.v1.json",
+  "title": "VALP Leader Assignment Declaration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "declaration_id",
+    "task_id",
+    "declared_at",
+    "leader",
+    "assignments",
+    "reasons"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-assignment-declaration.v1"},
+    "declaration_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "declared_at": {"type": "string", "format": "date-time"},
+    "leader": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "selected_by", "selection_ref"],
+      "properties": {
+        "agent_id": {"type": "string", "minLength": 1},
+        "selected_by": {"const": "user"},
+        "selection_ref": {"type": "string", "minLength": 1}
+      }
+    },
+    "assignments": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"type": "string", "minLength": 1},
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "reasons": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"type": "string", "minLength": 1},
+      "additionalProperties": {"type": "string", "minLength": 1}
+    }
+  }
+}

@@ -29,15 +29,41 @@ CAPABILITIES = {
 
 class WorkerControlContractTests(unittest.TestCase):
     def publish(self, root: Path, task_id: str) -> Path:
+        declaration = {
+            "schema_version": "valp-assignment-declaration.v1",
+            "declaration_id": f"test-declaration-{task_id}",
+            "task_id": task_id,
+            "declared_at": "2026-07-23T10:00:00Z",
+            "leader": {
+                "agent_id": "test-leader",
+                "selected_by": "user",
+                "selection_ref": f"test-user-selection:{task_id}",
+            },
+            "assignments": {
+                "implementer": "generic-provider",
+                "reviewer": "generic-provider",
+            },
+            "reasons": {
+                "implementer": "Test Leader declared the control-contract implementer.",
+                "reviewer": "Test Leader declared the control-contract reviewer.",
+            },
+        }
         with patch("valp_cli.workflow.load_local_capabilities", return_value=CAPABILITIES):
             with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                return publish_task(
+                directory = publish_task(
                     root,
                     task_id,
                     "Verify a generic worker control contract.",
                     profile="agent-runtime",
                     runtime="manual",
                 )
+                route_task(
+                    root,
+                    task_id,
+                    runtime="manual",
+                    assignment_declaration=declaration,
+                )
+                return directory
 
     def test_publish_generates_digest_bound_slice_and_loads_it_first(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

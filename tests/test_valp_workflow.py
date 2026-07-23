@@ -40,10 +40,8 @@ from valp_cli.workflow import (
     publish_task,
     read_json,
     route_task,
-    role_assignments_for,
     scan_workspace,
     score_candidates,
-    select_agents,
     resume_suspended_task,
     suspend_task,
     translate_legacy_herdr_receipts,
@@ -53,6 +51,123 @@ from valp_cli.workflow import (
 
 
 class ValpWorkflowTests(unittest.TestCase):
+    def model_aware_test_preflight(self, preflight: dict) -> dict:
+        if preflight.get("adapter_class") == "manual":
+            return preflight
+        observed_at = datetime.now().astimezone().isoformat()
+        for agent, record in (preflight.get("agents") or {}).items():
+            if not isinstance(record, dict):
+                continue
+            probe = record.get("model_probe") or {}
+            if probe.get("status") == "observed":
+                continue
+            session_digest = hashlib.sha256(f"test-session:{agent}".encode("utf-8")).hexdigest()
+            record["model_probe"] = {
+                "schema_version": "valp-model-probe.v1",
+                "status": "observed",
+                "source": "explicit workflow test fixture",
+                "observed_at": observed_at,
+                "ttl_seconds": 3600,
+                "model": {
+                    "model_id": f"test-model-{agent}",
+                    "provider": "test-provider",
+                    "reasoning_mode": "high",
+                    "confidence": "high",
+                },
+                "session_identity": {
+                    "status": "known",
+                    "token": f"sha256:{session_digest}",
+                    "source": "explicit workflow test fixture",
+                    "generation": "1",
+                },
+            }
+        return preflight
+
+    def routed_test_preflight(self, task_dir: Path) -> dict:
+        return read_json(task_dir / "routing.json")["provider_matrix"]["runtime_preflight"]
+
+    def assignment_declaration(
+        self,
+        root: Path,
+        task_id: str,
+        profile: str,
+        include_agents: list[str] | None = None,
+    ) -> dict:
+        capabilities = workflow_module.load_local_capabilities(root)
+        agents = capabilities.get("agents") or {}
+        roles = list(
+            workflow_module.PROFILE_ROLE_REQUIREMENTS.get(
+                profile,
+                workflow_module.PROFILE_ROLE_REQUIREMENTS["generic-analysis"],
+            )
+        )
+        assignments: dict[str, str] = {}
+        active_agents = [name for name, info in agents.items() if bool(info.get("active", True))]
+        for role in roles:
+            assignments[role] = max(
+                active_agents,
+                key=lambda name: workflow_module.role_fit_score(agents[name], role),
+            )
+        for agent in include_agents or []:
+            role = workflow_module.inferred_primary_role(agents.get(agent) or {})
+            if role in {"coordinator", "implementer", "reviewer", "prototype", "researcher"}:
+                assignments[role] = agent
+        leader = assignments.get("coordinator") or active_agents[0]
+        assignments.setdefault("coordinator", leader)
+        return {
+            "schema_version": "valp-assignment-declaration.v1",
+            "declaration_id": f"test-declaration-{task_id}",
+            "task_id": task_id,
+            "declared_at": "2026-07-23T10:00:00Z",
+            "leader": {
+                "agent_id": leader,
+                "selected_by": "user",
+                "selection_ref": f"test-user-selection:{task_id}",
+            },
+            "assignments": assignments,
+            "reasons": {
+                role: "Explicit test Leader assignment from fixture capability evidence."
+                for role in assignments
+            },
+        }
+
+    def publish_routed_task(
+        self,
+        root: Path,
+        task_id: str,
+        prompt: str,
+        profile: str | None = None,
+        runtime: str | None = None,
+        include_agents: list[str] | None = None,
+        **_ignored: object,
+    ) -> Path:
+        selected_profile = profile or classify_profile(prompt)
+        directory = publish_task(
+            root,
+            task_id,
+            prompt,
+            profile=selected_profile,
+            runtime=runtime,
+        )
+        collect_preflight = workflow_module.collect_runtime_preflight
+
+        def collect_model_aware_preflight(agent_names=None, runtime=None):
+            return self.model_aware_test_preflight(collect_preflight(agent_names, runtime=runtime))
+
+        with patch("valp_cli.workflow.collect_runtime_preflight", side_effect=collect_model_aware_preflight):
+            route_task(
+                root,
+                task_id,
+                runtime=runtime,
+                assignment_declaration=self.assignment_declaration(
+                    root,
+                    task_id,
+                    selected_profile,
+                    include_agents,
+                ),
+            )
+        return directory
+
     def test_read_only_agent_is_never_scored_as_implementer(self) -> None:
         self.assertEqual(
             workflow_module.role_fit_score(
@@ -76,7 +191,7 @@ class ValpWorkflowTests(unittest.TestCase):
             0.0,
         )
 
-    def test_agent_selection_uses_the_smallest_role_covering_team(self) -> None:
+    def test_candidate_scores_are_advisory_capability_facts(self) -> None:
         agents = {
             "coordinator-reviewer": {"active": True, "role": ["coordination", "review"]},
             "implementer-reviewer": {"active": True, "role": ["implementation", "review"]},
@@ -97,35 +212,11 @@ class ValpWorkflowTests(unittest.TestCase):
             },
         }
 
-        selected = select_agents("agent-runtime", agents, scores)
-
-        self.assertEqual(
-            set(selected),
-            {"coordinator-reviewer", "implementer-reviewer"},
+        self.assertGreater(
+            scores["specialist-reviewer"]["role_fit"]["reviewer"],
+            scores["coordinator-reviewer"]["role_fit"]["reviewer"],
         )
-
-    def test_explicit_requested_agent_is_added_as_a_supplemental_role(self) -> None:
-        agents = {
-            "hermes": {"active": True, "role": ["coordination"], "strengths": ["state", "gates"], "mcp_servers": []},
-            "codex": {"active": True, "role": ["implementation"], "strengths": ["verification", "tests"], "mcp_servers": []},
-            "claude": {"active": True, "role": ["reviewer"], "strengths": ["read-only review"], "mcp_servers": []},
-            "agy": {"active": True, "role": ["prototype"], "strengths": ["isolated prototype"], "mcp_servers": []},
-        }
-        scores = score_candidates("agent-runtime", agents)
-        selected = select_agents("agent-runtime", agents, scores, requested_agents=["agy"])
-        assignments = role_assignments_for(
-            "agent-runtime",
-            selected,
-            agents,
-            scores,
-            requested_agents=["agy"],
-        )
-
-        self.assertEqual(set(selected), {"hermes", "codex", "claude", "agy"})
-        self.assertEqual(assignments["prototype"], "agy")
-        dependencies = build_submission_dependencies("TASK-REQUESTED-AGENT", assignments)
-        self.assertIn("coordinator-before-prototype", [item["id"] for item in dependencies["dependencies"]])
-        self.assertIn("prototype-before-reviewer", [item["id"] for item in dependencies["dependencies"]])
+        self.assertTrue(all("selected_agent" not in score for score in scores.values()))
 
     def test_legacy_herdr_receipts_translate_to_v2_work_item_identity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -251,7 +342,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         "TASK-LEGACY-DEPENDENCY-TRANSLATION",
                         "Fix a bug, verify it, and review the result.",
@@ -286,13 +377,17 @@ class ValpWorkflowTests(unittest.TestCase):
                             + "\n"
                         )
 
-            commands = dispatch_task(
-                root,
-                "TASK-LEGACY-DEPENDENCY-TRANSLATION",
-                agent="claude",
-                submit=True,
-                runtime="queue",
-            )
+            with patch(
+                "valp_cli.workflow.collect_runtime_preflight",
+                return_value=self.routed_test_preflight(task_dir),
+            ):
+                commands = dispatch_task(
+                    root,
+                    "TASK-LEGACY-DEPENDENCY-TRANSLATION",
+                    agent="claude",
+                    submit=True,
+                    runtime="queue",
+                )
 
         self.assertEqual(len(commands), 1)
         self.assertIn("phase=reviewer", commands[0])
@@ -636,7 +731,7 @@ class ValpWorkflowTests(unittest.TestCase):
         with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
             with patch("valp_cli.workflow.skill_router_command", return_value=None):
                 with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         task_id,
                         "Coordinate and review a bounded runtime repair.",
@@ -713,7 +808,6 @@ class ValpWorkflowTests(unittest.TestCase):
                 root,
                 "TASK-RISK",
                 "Deploy the release to production and rotate secrets.",
-                route=False,
             )
 
             state = read_json(task_dir / "state.json")
@@ -1125,7 +1219,7 @@ class ValpWorkflowTests(unittest.TestCase):
             with patch("valp_cli.workflow.local_capabilities_path", return_value=root / "missing-capabilities.json"):
                 with patch("valp_cli.workflow.local_overlay_path", return_value=root / "missing-overlay.json"):
                     with patch("valp_cli.workflow.shutil.which", return_value=None):
-                        task_dir = publish_task(root, "TASK-MANUAL", "Review the task evidence")
+                        task_dir = self.publish_routed_task(root, "TASK-MANUAL", "Review the task evidence")
                         commands = dispatch_task(root, "TASK-MANUAL")
                         with self.assertRaises(SystemExit):
                             dispatch_task(root, "TASK-MANUAL", submit=True)
@@ -1140,7 +1234,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.local_capabilities_path", return_value=root / "missing-capabilities.json"):
                 with patch("valp_cli.workflow.local_overlay_path", return_value=root / "missing-overlay.json"):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         "TASK-WAIT-TIMEOUT",
                         "Review the task evidence",
@@ -1273,7 +1367,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.local_capabilities_path", return_value=root / "missing-capabilities.json"):
                 with patch("valp_cli.workflow.local_overlay_path", return_value=root / "missing-overlay.json"):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         "TASK-WAIT-EXECUTION-DEADLINE",
                         "Review the task evidence",
@@ -1322,7 +1416,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.local_capabilities_path", return_value=root / "missing-capabilities.json"):
                 with patch("valp_cli.workflow.local_overlay_path", return_value=root / "missing-overlay.json"):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         "TASK-WAIT-OVERWRITE",
                         "Review the task evidence",
@@ -2821,7 +2915,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.local_capabilities_path", return_value=root / "missing-capabilities.json"):
                 with patch("valp_cli.workflow.local_overlay_path", return_value=root / "missing-overlay.json"):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         "TASK-WAIT-RECEIPT",
                         "Review the task evidence",
@@ -2859,7 +2953,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.local_capabilities_path", return_value=root / "missing-capabilities.json"):
                 with patch("valp_cli.workflow.local_overlay_path", return_value=root / "missing-overlay.json"):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         "TASK-WAIT-USER",
                         "Review the task evidence",
@@ -2908,7 +3002,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.local_capabilities_path", return_value=root / "missing-capabilities.json"):
                 with patch("valp_cli.workflow.local_overlay_path", return_value=root / "missing-overlay.json"):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         "TASK-WAIT-FAILURE",
                         "Review the task evidence",
@@ -3268,7 +3362,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         "TASK-DISPATCH-BUDGET",
                         "Fix the runtime state machine, run focused tests, and review receipt semantics.",
@@ -3338,7 +3432,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         "TASK-DELEGATION-REROUTE",
                         "Implement and independently review a runtime correction.",
@@ -3355,7 +3449,11 @@ class ValpWorkflowTests(unittest.TestCase):
                     state["gates"]["expected_evidence"] = "blocked"
                     (task_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
-                    route_task(root, "TASK-DELEGATION-REROUTE", runtime="queue")
+                    with patch(
+                        "valp_cli.workflow.collect_runtime_preflight",
+                        return_value=self.routed_test_preflight(task_dir),
+                    ):
+                        route_task(root, "TASK-DELEGATION-REROUTE", runtime="queue")
 
             rerouted_policy = read_json(task_dir / "delegation-policy.json")
             rerouted_state = read_json(task_dir / "state.json")
@@ -3448,7 +3546,7 @@ class ValpWorkflowTests(unittest.TestCase):
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=["task-skill-router"]):
                     with patch("valp_cli.workflow.run_command", side_effect=fake_run_command):
-                        task_dir = publish_task(
+                        task_dir = self.publish_routed_task(
                             root,
                             "TASK-REVIEWER-BUDGET",
                             "Implement and independently review a runtime correction.",
@@ -3500,7 +3598,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         "TASK-STAGED-DISPATCH",
                         "Fix agent runtime code and review it",
@@ -3659,14 +3757,18 @@ class ValpWorkflowTests(unittest.TestCase):
                     )
                     + "\n"
                 )
-            dispatch_task(
-                root,
-                "TASK-STAGED-DISPATCH",
-                agent="codex",
-                role="implementer",
-                submit=True,
-                runtime="queue",
-            )
+            with patch(
+                "valp_cli.workflow.collect_runtime_preflight",
+                return_value=self.routed_test_preflight(task_dir),
+            ):
+                dispatch_task(
+                    root,
+                    "TASK-STAGED-DISPATCH",
+                    agent="codex",
+                    role="implementer",
+                    submit=True,
+                    runtime="queue",
+                )
 
             (task_dir / "agents" / "codex" / "evidence.md").write_text("implemented\n", encoding="utf-8")
             (task_dir / "evidence").mkdir(exist_ok=True)
@@ -3713,14 +3815,18 @@ class ValpWorkflowTests(unittest.TestCase):
             evidence_status = read_json(task_dir / "evidence-status.json")
             evidence_status["evidence"]["agents/codex/evidence.md"]["status"] = "valid"
             (task_dir / "evidence-status.json").write_text(json.dumps(evidence_status), encoding="utf-8")
-            dispatch_task(
-                root,
-                "TASK-STAGED-DISPATCH",
-                agent="claude",
-                role="reviewer",
-                submit=True,
-                runtime="queue",
-            )
+            with patch(
+                "valp_cli.workflow.collect_runtime_preflight",
+                return_value=self.routed_test_preflight(task_dir),
+            ):
+                dispatch_task(
+                    root,
+                    "TASK-STAGED-DISPATCH",
+                    agent="claude",
+                    role="reviewer",
+                    submit=True,
+                    runtime="queue",
+                )
             self.assertTrue((task_dir / "queue" / "claude-reviewer.json").is_file())
 
     def test_dependency_order_uses_receipt_line_order_not_timestamps(self) -> None:
@@ -3907,7 +4013,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         "TASK-COLOCATED-ROLES",
                         "Fix runtime code, verify it, and review the result.",
@@ -3995,25 +4101,29 @@ class ValpWorkflowTests(unittest.TestCase):
                     + "\n"
                 )
             output = io.StringIO()
-            with contextlib.redirect_stdout(output):
-                self.assertEqual(
-                    main(
-                        [
-                            "dispatch",
-                            "TASK-COLOCATED-ROLES",
-                            "--workspace",
-                            str(root),
-                            "--agent",
-                            "codex",
-                            "--role",
-                            "reviewer",
-                            "--runtime",
-                            "queue",
-                            "--submit",
-                        ]
-                    ),
-                    0,
-                )
+            with patch(
+                "valp_cli.workflow.collect_runtime_preflight",
+                return_value=self.routed_test_preflight(task_dir),
+            ):
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(
+                        main(
+                            [
+                                "dispatch",
+                                "TASK-COLOCATED-ROLES",
+                                "--workspace",
+                                str(root),
+                                "--agent",
+                                "codex",
+                                "--role",
+                                "reviewer",
+                                "--runtime",
+                                "queue",
+                                "--submit",
+                            ]
+                        ),
+                        0,
+                    )
             self.assertIn("Submitted dispatch", output.getvalue())
             queue_path = task_dir / "queue" / "codex-reviewer.json"
             self.assertTrue(queue_path.is_file())
@@ -4326,6 +4436,7 @@ class ValpWorkflowTests(unittest.TestCase):
                 self.assertIn("was not satisfied before receipt line", errors[0])
 
     def test_dispatch_uses_queue_adapter_without_herdr_command(self) -> None:
+        observed_at = datetime.now().astimezone().isoformat()
         capabilities = {
             "schema_version": "valp-agent-capabilities.v1",
             "updated_at": "2026-07-05T00:00:00Z",
@@ -4363,7 +4474,45 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = publish_task(root, "TASK-QUEUE", "Fix a bug and run tests", runtime="queue")
+                    with patch(
+                        "valp_cli.workflow.collect_runtime_preflight",
+                        return_value={
+                            "generated_at": observed_at,
+                            "runtime": "test queue",
+                            "adapter_class": "daemon_queue",
+                            "status": "pass",
+                            "agents": {
+                                "codex": {
+                                    "status": "pass",
+                                    "model_probe": {
+                                        "schema_version": "valp-model-probe.v1",
+                                        "status": "observed",
+                                        "source": "test queue metadata",
+                                        "observed_at": observed_at,
+                                        "ttl_seconds": 86400,
+                                        "model": {
+                                            "model_id": "test-model",
+                                            "provider": "test-provider",
+                                            "reasoning_mode": "unknown",
+                                            "confidence": "high",
+                                        },
+                                        "session_identity": {
+                                            "status": "known",
+                                            "token": "sha256:test-session",
+                                            "source": "test queue generation",
+                                            "generation": "1",
+                                        },
+                                    },
+                                }
+                            },
+                        },
+                    ):
+                        task_dir = self.publish_routed_task(
+                            root,
+                            "TASK-QUEUE",
+                            "Fix a bug and run tests",
+                            runtime="queue",
+                        )
             commands = dispatch_task(root, "TASK-QUEUE")
 
             routing = read_json(task_dir / "routing.json")
@@ -4395,7 +4544,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         "TASK-PHASE-WAIT-POLICY",
                         "Fix a bug and run tests",
@@ -4451,7 +4600,7 @@ class ValpWorkflowTests(unittest.TestCase):
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
                     with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
-                        task_dir = publish_task(
+                        task_dir = self.publish_routed_task(
                             root,
                             "TASK-HERDR-SUBMISSION-ONLY",
                             "Fix a bug and run tests",
@@ -4524,7 +4673,7 @@ class ValpWorkflowTests(unittest.TestCase):
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
                     with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
-                        task_dir = publish_task(
+                        task_dir = self.publish_routed_task(
                             root,
                             "TASK-HERDR-TRANSIENT-RETRY",
                             "Coordinate and verify an agent runtime change",
@@ -4600,7 +4749,7 @@ class ValpWorkflowTests(unittest.TestCase):
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
                     with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
-                        task_dir = publish_task(
+                        task_dir = self.publish_routed_task(
                             root,
                             "TASK-HERDR-RETRY-EXHAUSTED",
                             "Coordinate and verify an agent runtime change",
@@ -4673,7 +4822,7 @@ class ValpWorkflowTests(unittest.TestCase):
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
                     with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
-                        publish_task(
+                        self.publish_routed_task(
                             root,
                             "TASK-HERDR-NEGATIVE-WAIT",
                             "Fix a bug and run tests",
@@ -4713,7 +4862,7 @@ class ValpWorkflowTests(unittest.TestCase):
             task_id = "TASK-UNPROVEN-FRONTIER"
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         task_id,
                         "Fix a bug and review it",
@@ -4787,7 +4936,7 @@ class ValpWorkflowTests(unittest.TestCase):
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
                     with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
-                        task_dir = publish_task(
+                        task_dir = self.publish_routed_task(
                             root,
                             task_id,
                             "Coordinate and review a bounded runtime repair.",
@@ -5272,7 +5421,7 @@ class ValpWorkflowTests(unittest.TestCase):
             task_id = "TASK-MULTI-READY-FRONTIER"
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         task_id,
                         "Fix agent runtime code, prototype an alternative, and review both.",
@@ -5307,7 +5456,11 @@ class ValpWorkflowTests(unittest.TestCase):
                     + "\n"
                 )
 
-            second = dispatch_task(root, task_id, submit=True, runtime="queue")
+            with patch(
+                "valp_cli.workflow.collect_runtime_preflight",
+                return_value=self.routed_test_preflight(task_dir),
+            ):
+                second = dispatch_task(root, task_id, submit=True, runtime="queue")
 
             self.assertEqual(len(second), 2)
             self.assertEqual(
@@ -5392,46 +5545,40 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertEqual(len(receipts), 1)
             self.assertEqual(receipts[0]["event_sequence"], 1)
 
-    def test_publish_auto_scans_routes_and_writes_dispatches(self) -> None:
+    def test_publish_stops_before_routing_until_leader_declares_assignments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             task_dir = publish_task(root, "TASK-SMOKE", "Fix a bug and run tests")
 
             self.assertTrue((task_dir / "task.md").exists())
             self.assertTrue((task_dir / "state.json").exists())
-            self.assertTrue((task_dir / "routing.json").exists())
-            self.assertTrue((task_dir / "automation-policy.json").exists())
-            self.assertTrue((task_dir / "attention-map.json").exists())
-            self.assertTrue((task_dir / "context-selection.json").exists())
-            self.assertTrue((task_dir / "context-pack.json").exists())
-            self.assertTrue((task_dir / "mask-list.json").exists())
-            self.assertTrue((task_dir / "evidence-board.json").exists())
-            self.assertTrue((task_dir / "visible-routing.md").exists())
-            self.assertTrue((task_dir / "dispatch-receipts.jsonl").exists())
-            self.assertTrue((root / ".herdr-loop" / "agents" / "capabilities.json").exists())
+            self.assertFalse((task_dir / "routing.json").exists())
+            self.assertFalse((task_dir / "dispatch-receipts.jsonl").exists())
+            state = read_json(task_dir / "state.json")
+            self.assertEqual(state["status"], "published")
+            self.assertEqual(state["selected_agents"], [])
+            self.assertIn("Mode: Awaiting Leader assignment", (task_dir / "task.md").read_text(encoding="utf-8"))
 
-            routing = read_json(task_dir / "routing.json")
-            self.assertEqual(routing["profile"], "software-code")
-            self.assertIn("selected_agents", routing)
-            self.assertEqual(routing["automation_policy"]["status"], "recorded")
-            self.assertEqual(routing["context_pack"]["status"], "recorded")
-            self.assertEqual(routing["visible_attention"]["status"], "recorded")
-            self.assertTrue(routing["selected_agents"])
-            self.assertIn("Mode: Selected during routing", (task_dir / "task.md").read_text(encoding="utf-8"))
+    def test_cli_publish_does_not_route_without_a_leader_declaration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = main(
+                    [
+                        "publish",
+                        "TASK-CLI-PUBLISH",
+                        "--workspace",
+                        tmp,
+                        "--prompt",
+                        "Fix a bug and run tests",
+                        "--json",
+                    ]
+                )
 
-            for agent in routing["selected_agents"]:
-                dispatch_path = task_dir / "agents" / agent / "dispatch.md"
-                self.assertTrue(dispatch_path.exists())
-                dispatch = dispatch_path.read_text(encoding="utf-8")
-                self.assertIn("## Project Root", dispatch)
-                self.assertIn(f'cd "{root.resolve()}"', dispatch)
-                expected_refs = []
-                for role in roles_for_agent(routing["role_assignments"], agent):
-                    expected_refs.extend(role_expected_refs(agent, role))
-                for expected_ref in dict.fromkeys(expected_refs):
-                    self.assertIn(f".herdr-loop/tasks/TASK-SMOKE/{expected_ref}", dispatch)
-                self.assertIn("## Visible Attention Slice", dispatch)
-                self.assertIn("context-pack.json", dispatch)
+            self.assertEqual(code, 0)
+            payload = json.loads(output.getvalue())
+            self.assertFalse(payload["routed"])
+            self.assertFalse(Path(payload["task_dir"]).joinpath("routing.json").exists())
 
     def test_dispatch_payload_uses_concise_brief_and_task_refs(self) -> None:
         capabilities = {
@@ -5456,7 +5603,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = publish_task(root, "TASK-BRIEF", long_prompt)
+                    task_dir = self.publish_routed_task(root, "TASK-BRIEF", long_prompt)
 
             task_text = (task_dir / "task.md").read_text(encoding="utf-8")
             dispatch = (task_dir / "agents" / "codex" / "dispatch.md").read_text(encoding="utf-8")
@@ -5509,8 +5656,9 @@ class ValpWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.write_done_feedback_history(root)
+            observed_at = datetime.now().astimezone().isoformat()
             live_preflight = {
-                "generated_at": "2026-07-15T12:05:00Z",
+                "generated_at": observed_at,
                 "runtime": "test queue",
                 "adapter_class": "daemon_queue",
                 "status": "pass",
@@ -5521,7 +5669,7 @@ class ValpWorkflowTests(unittest.TestCase):
                             "schema_version": "valp-model-probe.v1",
                             "status": "observed",
                             "source": "test queue metadata",
-                            "observed_at": "2026-07-15T12:05:00Z",
+                            "observed_at": observed_at,
                             "ttl_seconds": 86400,
                             "model": {
                                 "model_id": "test-model",
@@ -5542,7 +5690,7 @@ class ValpWorkflowTests(unittest.TestCase):
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
                     with patch("valp_cli.workflow.collect_runtime_preflight", return_value=live_preflight):
-                        task_dir = publish_task(root, "TASK-PRIOR", "Fix a bug and run tests", runtime="queue")
+                        task_dir = self.publish_routed_task(root, "TASK-PRIOR", "Fix a bug and run tests", runtime="queue")
 
             routing = read_json(task_dir / "routing.json")
             score = routing["candidate_scores"]["codex"]
@@ -5624,13 +5772,344 @@ class ValpWorkflowTests(unittest.TestCase):
     def test_scan_and_route_existing_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            task_dir = publish_task(root, "TASK-ROUTE", "Research a source", route=False)
+            task_dir = publish_task(root, "TASK-ROUTE", "Research a source")
             scan_workspace(root, "TASK-ROUTE")
-            routing = route_task(root, "TASK-ROUTE")
+            routing = route_task(
+                root,
+                "TASK-ROUTE",
+                assignment_declaration=self.assignment_declaration(
+                    root,
+                    "TASK-ROUTE",
+                    "research",
+                ),
+            )
 
             self.assertEqual(task_dir.resolve(), (root / ".herdr-loop" / "tasks" / "TASK-ROUTE").resolve())
             self.assertEqual(routing["profile"], "research")
             self.assertTrue((task_dir / "routing.json").exists())
+
+    def test_route_validates_and_records_leader_declared_assignments_without_selecting_agents(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-23T10:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "engineer": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "review"],
+                    "strengths": ["state", "code", "tests", "review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                }
+            },
+        }
+        declaration = {
+            "schema_version": "valp-assignment-declaration.v1",
+            "declaration_id": "decl-TASK-LEADER-ASSIGNMENT-1",
+            "task_id": "TASK-LEADER-ASSIGNMENT",
+            "declared_at": "2026-07-23T10:00:00Z",
+            "leader": {
+                "agent_id": "engineer",
+                "selected_by": "user",
+                "selection_ref": "user-message:approved-leader",
+            },
+            "assignments": {
+                "coordinator": "engineer",
+                "implementer": "engineer",
+                "reviewer": "engineer",
+            },
+            "reasons": {
+                "coordinator": "User-selected Leader owns visible state.",
+                "implementer": "Observed implementation capability.",
+                "reviewer": "Manual-mode fixture review assignment.",
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_dir = publish_task(
+                root,
+                "TASK-LEADER-ASSIGNMENT",
+                "Verify a runtime protocol change.",
+                profile="agent-runtime",
+            )
+            self.assertFalse(hasattr(workflow_module, "select_agents"))
+            self.assertFalse(hasattr(workflow_module, "role_assignments_for"))
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities), \
+                    patch("valp_cli.workflow.skill_router_command", return_value=None):
+                routing = route_task(
+                    root,
+                    "TASK-LEADER-ASSIGNMENT",
+                    runtime="manual",
+                    assignment_declaration=declaration,
+                )
+
+            self.assertEqual(routing["selected_agents"], ["engineer"])
+            self.assertEqual(routing["role_assignments"], declaration["assignments"])
+            self.assertEqual(routing["assignment_authority"], "leader_declared")
+            self.assertEqual(read_json(task_dir / "assignment-declaration.json"), declaration)
+
+    def test_user_selected_leader_is_not_forced_into_worker_assignments(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-23T10:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "implementer": {
+                    "active": True,
+                    "role": ["implementation", "verification"],
+                    "skills": [],
+                    "mcp_servers": [],
+                },
+                "reviewer": {
+                    "active": True,
+                    "role": ["review", "risk_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                },
+            },
+        }
+        declaration = {
+            "schema_version": "valp-assignment-declaration.v1",
+            "declaration_id": "decl-TASK-SEPARATE-LEADER-1",
+            "task_id": "TASK-SEPARATE-LEADER",
+            "declared_at": "2026-07-23T10:00:00Z",
+            "leader": {
+                "agent_id": "codex-app",
+                "selected_by": "user",
+                "selection_ref": "user-message:selected-codex-app",
+            },
+            "assignments": {
+                "implementer": "implementer",
+                "reviewer": "reviewer",
+            },
+            "reasons": {
+                "implementer": "Leader-declared implementation worker.",
+                "reviewer": "Leader-declared independent reviewer.",
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_dir = publish_task(
+                root,
+                "TASK-SEPARATE-LEADER",
+                "Implement and independently review a source change.",
+                profile="software-code",
+            )
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities), \
+                    patch("valp_cli.workflow.skill_router_command", return_value=None):
+                routing = route_task(
+                    root,
+                    "TASK-SEPARATE-LEADER",
+                    runtime="manual",
+                    assignment_declaration=declaration,
+                )
+
+            self.assertEqual(routing["coordinator_selection"]["selected_agent"], "codex-app")
+            self.assertEqual(routing["selected_agents"], ["implementer", "reviewer"])
+            self.assertEqual(routing["role_requirements"], ["implementer", "reviewer"])
+            self.assertNotIn("codex-app", routing["selected_agents"])
+            attention_map = read_json(task_dir / "attention-map.json")
+            self.assertEqual(attention_map["leader_agent"], "codex-app")
+            self.assertEqual(attention_map["heads"]["state_gate"]["selected"], "codex-app")
+            self.assertEqual(attention_map["heads"]["state_gate"]["status"], "user_selected_leader")
+            self.assertNotIn("coordinator", attention_map["role_assignments"])
+            self.assertNotIn("codex-app", routing["selected_agents"])
+            self.assertFalse((task_dir / "agents" / "codex-app" / "dispatch.md").exists())
+            attention = read_json(task_dir / "attention-map.json")
+            self.assertEqual(attention["leader_agent"], "codex-app")
+            self.assertEqual(attention["heads"]["state_gate"]["status"], "user_selected_leader")
+            declaration_errors = list(
+                schema_validator(
+                    Path(__file__).resolve().parents[1] / "schemas" / "assignment-declaration.schema.json"
+                ).iter_errors(declaration)
+            )
+            self.assertEqual(declaration_errors, [])
+            self.assertEqual(TaskAudit(task_dir).check_assignment_authority().status, "pass")
+
+    def test_route_blocks_before_scan_or_dispatch_when_assignment_declaration_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_dir = publish_task(root, "TASK-NO-ASSIGNMENT", "Research a source")
+
+            with patch("valp_cli.workflow.scan_workspace", side_effect=AssertionError("scan ran before declaration")):
+                with self.assertRaisesRegex(SystemExit, "Leader-authored assignment declaration"):
+                    route_task(root, "TASK-NO-ASSIGNMENT")
+
+            self.assertFalse((task_dir / "routing.json").exists())
+            self.assertFalse((task_dir / "dispatch-receipts.jsonl").exists())
+
+    def test_route_rejects_incomplete_leader_declaration_before_capability_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_id = "TASK-INCOMPLETE-ASSIGNMENT"
+            task_dir = publish_task(root, task_id, "Research a source", profile="research")
+            declaration = self.assignment_declaration(root, task_id, "research")
+            declaration["reasons"].pop("reviewer")
+
+            with patch(
+                "valp_cli.workflow.scan_workspace",
+                side_effect=AssertionError("scan ran before declaration validation"),
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit,
+                    "missing_assignment_reason:reviewer",
+                ):
+                    route_task(root, task_id, assignment_declaration=declaration)
+
+            self.assertFalse((task_dir / "assignment-declaration.json").exists())
+            self.assertFalse((task_dir / "routing.json").exists())
+            self.assertFalse((task_dir / "dispatch-receipts.jsonl").exists())
+
+    def test_route_rejects_fields_outside_closed_assignment_declaration_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_id = "TASK-EXTRA-ASSIGNMENT-FIELD"
+            task_dir = publish_task(root, task_id, "Research a source", profile="research")
+            declaration = self.assignment_declaration(root, task_id, "research")
+            declaration["valp_selected_fallback"] = "reviewer"
+
+            with patch(
+                "valp_cli.workflow.scan_workspace",
+                side_effect=AssertionError("scan ran before declaration validation"),
+            ):
+                with self.assertRaisesRegex(SystemExit, "unexpected_fields"):
+                    route_task(root, task_id, assignment_declaration=declaration)
+
+            self.assertFalse((task_dir / "assignment-declaration.json").exists())
+            self.assertFalse((task_dir / "routing.json").exists())
+            self.assertFalse((task_dir / "dispatch-receipts.jsonl").exists())
+
+    def test_cli_route_requires_and_records_assignment_declaration_file(self) -> None:
+        declaration = {
+            "schema_version": "valp-assignment-declaration.v1",
+            "declaration_id": "decl-TASK-CLI-ROUTE-1",
+            "task_id": "TASK-CLI-ROUTE",
+            "declared_at": "2026-07-23T10:00:00Z",
+            "leader": {
+                "agent_id": "manual-operator",
+                "selected_by": "user",
+                "selection_ref": "user-message:manual-leader",
+            },
+            "assignments": {
+                "coordinator": "manual-operator",
+                "researcher": "manual-operator",
+                "reviewer": "manual-operator",
+            },
+            "reasons": {
+                "coordinator": "User selected the manual operator as Leader.",
+                "researcher": "Manual research assignment.",
+                "reviewer": "Manual review assignment.",
+            },
+        }
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-23T10:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "manual-operator": {
+                    "active": True,
+                    "role": ["coordination", "research", "review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            publish_task(root, "TASK-CLI-ROUTE", "Research a source", profile="research")
+            declaration_path = root / "leader-assignments.json"
+            declaration_path.write_text(json.dumps(declaration), encoding="utf-8")
+            output = io.StringIO()
+
+            with contextlib.redirect_stdout(output), \
+                    patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities), \
+                    patch("valp_cli.workflow.skill_router_command", return_value=None):
+                code = main(
+                    [
+                        "route",
+                        "TASK-CLI-ROUTE",
+                        "--workspace",
+                        str(root),
+                        "--runtime",
+                        "manual",
+                        "--assignments",
+                        str(declaration_path),
+                        "--json",
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            routing = json.loads(output.getvalue())
+            self.assertEqual(routing["assignment_authority"], "leader_declared")
+            self.assertEqual(routing["role_assignments"], declaration["assignments"])
+
+    def test_route_blocks_leader_assignment_that_violates_agent_role_boundary(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-23T10:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "leader": {
+                    "active": True,
+                    "role": ["coordination", "review"],
+                    "strengths": ["state", "review"],
+                },
+                "readonly": {
+                    "active": True,
+                    "role": ["review", "code_review"],
+                    "strengths": ["read-only review"],
+                    "must_not_do": ["must not edit source"],
+                },
+            },
+        }
+        declaration = {
+            "schema_version": "valp-assignment-declaration.v1",
+            "declaration_id": "decl-role-boundary-1",
+            "task_id": "TASK-ROLE-BOUNDARY",
+            "declared_at": "2026-07-23T10:00:00Z",
+            "leader": {
+                "agent_id": "leader",
+                "selected_by": "user",
+                "selection_ref": "user-message:leader",
+            },
+            "assignments": {
+                "coordinator": "leader",
+                "implementer": "readonly",
+                "reviewer": "leader",
+            },
+            "reasons": {
+                "coordinator": "User-selected Leader.",
+                "implementer": "Leader declaration under validation.",
+                "reviewer": "Review assignment.",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_dir = publish_task(
+                root,
+                "TASK-ROLE-BOUNDARY",
+                "Implement and review a source change.",
+                profile="software-code",
+            )
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities), \
+                    patch("valp_cli.workflow.skill_router_command", return_value=None):
+                with self.assertRaisesRegex(SystemExit, "role_ineligible:implementer:readonly"):
+                    route_task(
+                        root,
+                        "TASK-ROLE-BOUNDARY",
+                        runtime="manual",
+                        assignment_declaration=declaration,
+                    )
+
+            validation = read_json(task_dir / "assignment-validation.json")
+            blocked_state = read_json(task_dir / "state.json")
+            self.assertIn("role_ineligible:implementer:readonly", validation["blockers"])
+            self.assertEqual(blocked_state["assignment_authority"], "leader_declared")
+            self.assertEqual(blocked_state["assignment_declaration"]["leader_agent"], "leader")
+            self.assertEqual(blocked_state["assignment_validation"]["status"], "blocked")
+            self.assertFalse((task_dir / "dispatch-receipts.jsonl").exists())
 
     def test_reroute_reclassifies_and_clears_stale_approval_risk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5639,7 +6118,6 @@ class ValpWorkflowTests(unittest.TestCase):
                 root,
                 "TASK-RISK-REROUTE",
                 "Do not publish a release, deploy, or delete files.",
-                route=False,
             )
             state = read_json(task_dir / "state.json")
             stale_risk = [{"kind": "release", "matched": "release"}]
@@ -5649,7 +6127,16 @@ class ValpWorkflowTests(unittest.TestCase):
             (task_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
             with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                route_task(root, "TASK-RISK-REROUTE", runtime="manual")
+                route_task(
+                    root,
+                    "TASK-RISK-REROUTE",
+                    runtime="manual",
+                    assignment_declaration=self.assignment_declaration(
+                        root,
+                        "TASK-RISK-REROUTE",
+                        classify_profile("Do not publish a release, deploy, or delete files."),
+                    ),
+                )
 
             rerouted = read_json(task_dir / "state.json")
             self.assertEqual(rerouted["risk"], {"approval_required": False, "matches": []})
@@ -5778,7 +6265,7 @@ class ValpWorkflowTests(unittest.TestCase):
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=["task-skill-router"]):
                     with patch("valp_cli.workflow.run_command", side_effect=fake_run_command):
-                        task_dir = publish_task(root, "TASK-SKILL", "Fix a bug and run tests")
+                        task_dir = self.publish_routed_task(root, "TASK-SKILL", "Fix a bug and run tests")
 
             recommendations = read_json(task_dir / "skill-recommendations.json")
             self.assertEqual(recommendations["status"], "complete")
@@ -5834,7 +6321,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = publish_task(root, "TASK-ADAPTIVE-BUDGET", "Fix a bug and run tests", runtime="manual")
+                    task_dir = self.publish_routed_task(root, "TASK-ADAPTIVE-BUDGET", "Fix a bug and run tests", runtime="manual")
 
             routing = read_json(task_dir / "routing.json")
             budget = read_json(task_dir / "iteration-budget.json")
@@ -5846,7 +6333,7 @@ class ValpWorkflowTests(unittest.TestCase):
                 [],
             )
             self.assertEqual(budget["schema_version"], "valp-iteration-budget.v1")
-            self.assertEqual(budget["strategy"], "minimum_capable_team")
+            self.assertEqual(budget["strategy"], "leader_declared_bounded_team")
             self.assertEqual(budget["usage"]["dispatches"], 0)
             self.assertEqual(routing["iteration_budget"], {"status": "recorded", "ref": "iteration-budget.json"})
             self.assertEqual(set(routing["skill_recommendation_slices"]), set(routing["selected_agents"]))
@@ -5858,7 +6345,8 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertNotIn("- `.herdr-loop/tasks/TASK-ADAPTIVE-BUDGET/skill-recommendations.json`", codex_dispatch)
             self.assertIn("iteration-budget.json", codex_dispatch)
 
-            route_task(root, "TASK-ADAPTIVE-BUDGET", runtime="manual")
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                route_task(root, "TASK-ADAPTIVE-BUDGET", runtime="manual")
             history = (task_dir / "routing-history.jsonl").read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(history), 1)
             self.assertEqual(read_json(task_dir / "iteration-budget.json")["usage"]["reroutes"], 1)
@@ -5910,7 +6398,7 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = publish_task(
+                    task_dir = self.publish_routed_task(
                         root,
                         "TASK-REROUTE-RECOVERY",
                         "Fix a bug and run tests",
@@ -5945,7 +6433,11 @@ class ValpWorkflowTests(unittest.TestCase):
                         encoding="utf-8",
                     )
 
-                    route_task(root, "TASK-REROUTE-RECOVERY", runtime="queue")
+                    with patch(
+                        "valp_cli.workflow.collect_runtime_preflight",
+                        return_value=self.routed_test_preflight(task_dir),
+                    ):
+                        route_task(root, "TASK-REROUTE-RECOVERY", runtime="queue")
 
             resumed_budget = read_json(task_dir / "iteration-budget.json")
             history = [

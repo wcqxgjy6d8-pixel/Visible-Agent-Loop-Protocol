@@ -43,8 +43,8 @@
       "enum": [
         "no_valp",
         "publish_only",
-        "publish_and_route",
-        "publish_route_and_dispatch",
+        "validate_declared_route",
+        "validate_declared_route_and_dispatch",
         "block_for_approval"
       ]
     },

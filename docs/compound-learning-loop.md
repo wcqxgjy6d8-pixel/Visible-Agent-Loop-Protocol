@@ -48,7 +48,7 @@ classification, approval behavior, stop conditions, and audit grade.
 transcripts or stale memory.
 
 `routing-feedback.json`
-: Records the route outcome: selected agents, expected evidence, actual
+: Records the validated assignment outcome: Leader-declared Agents, expected evidence, actual
 evidence, blockers, result, lessons, and next routing hints.
 
 `learning-feedback.json`

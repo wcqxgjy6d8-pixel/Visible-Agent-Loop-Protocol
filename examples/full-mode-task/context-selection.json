@@ -10,7 +10,7 @@
     },
     {
       "path": "routing.json",
-      "reason": "candidate scores and selected agents"
+      "reason": "advisory candidate scores and Leader-declared Agents"
     },
     {
       "path": "skill-recommendations.json",

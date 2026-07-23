@@ -1,7 +1,7 @@
 # Runtime Preflight
 
-Runtime preflight checks whether a selected agent can actually receive work
-before VALP sends a dispatch.
+Runtime preflight checks whether a Leader-declared Agent can actually receive
+work before VALP sends a dispatch.
 
 It exists because pane-based agents can be technically running while their UI is
 too small, detached, stale, or unable to render useful output. Headless agents
@@ -77,7 +77,8 @@ bin/valp preflight --runtime queue --agent codex --agent claude --json
 <task>/runtime-preflight.json
 ```
 
-and refuses to submit when a selected agent has a failing preflight check.
+and refuses to submit when a Leader-declared Agent has a failing preflight
+check. It reports the blocker to the Leader; it does not choose a replacement.
 For HERDR, an installed CLI is insufficient by itself: preflight also requires
 atomic `agent prompt` or the complete `pane send-text` + `pane send-keys` +
 `agent wait` fallback. Capability is detected from command help, not assumed

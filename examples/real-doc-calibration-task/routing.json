@@ -30,9 +30,21 @@
   "role_assignments": {
     "documentation_calibrator": "codex"
   },
+  "assignment_authority": "leader_declared",
+  "assignment_declaration": {
+    "status": "recorded",
+    "ref": "assignment-declaration.json",
+    "leader_agent": "documentation-leader",
+    "selected_by": "user",
+    "selection_ref": "example:user-selected-documentation-leader"
+  },
+  "assignment_validation": {
+    "status": "pass",
+    "ref": "assignment-validation.json"
+  },
   "coordinator_selection": {
-    "coordinator": "codex",
-    "reason": "Codex can inspect the repository, edit documentation, run local verification, and record the evidence boundary."
+    "selected_agent": "documentation-leader",
+    "selection_rule": "The user selected Codex as Leader; VALP validated the documentation assignment."
   },
   "selected_agents": [
     "codex"

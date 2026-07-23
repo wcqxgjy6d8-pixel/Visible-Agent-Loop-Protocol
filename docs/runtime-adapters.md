@@ -108,7 +108,7 @@ Examples:
 | queue job | daemon queue adapter |
 | hosted thread/run | hosted platform adapter |
 | SSH-hosted pane or queue | remote adapter |
-| copied prompt / PR comment | manual adapter |
+| copied prompt or review artifact | manual adapter |
 
 A terminal pane is only one session type. Non-pane runtimes should export
 equivalent job/session identifiers instead of fake pane fields.
@@ -133,7 +133,9 @@ visible refs for routing, skills, receipts, report, and audit
 ```
 
 If the trigger selects a high-risk action, the adapter may publish and route the
-task, but it must stop before execution and record `block_for_approval`.
+task only when a valid Leader declaration already exists. Otherwise it may only
+publish or refresh non-mutating capability facts. It must stop before execution
+and record `block_for_approval`.
 
 Trigger adapters should write:
 
@@ -152,9 +154,13 @@ A Full Mode adapter must export:
 ```text
 agent list
 agent metadata/status
+capability passport inputs per addressable Agent session
 provider matrix
 context policy
 runtime preflight
+user-selected Leader evidence
+Leader assignment declaration
+VALP assignment validation
 dispatch submission proof
 runtime task state mapping
 expected evidence refs
@@ -216,20 +222,23 @@ otherwise redefine the active epoch.
 
 ## Coordinator Patterns
 
-VALP does not choose a universal leader.
+VALP does not choose a universal or task Leader. The user does.
 
 Common patterns:
 
 | Runtime shape | Coordinator pattern |
 |---|---|
-| pane controller | select a coordinator agent or human from current capability evidence |
-| daemon queue | the daemon writes routing, dispatch receipts, gates, and final synthesis |
-| hosted platform | the platform task controller writes state and evidence refs |
-| manual | a human coordinator writes attestations and synthesis |
-| squad | a selected leader writes visible member routing and handoffs |
+| pane controller | the user-selected Leader declares worker sessions and may optionally declare itself as a runtime coordinator |
+| daemon queue | the user-selected Leader declares assignments; the daemon validates and records execution evidence |
+| hosted platform | the user-selected Leader declares assignments; the platform controller writes validation, state, and evidence refs |
+| manual | the user selects a human or Agent Leader, who writes declarations, attestations, and synthesis |
+| squad | the user-selected Leader writes visible member assignments and handoffs |
 
-The selected coordinator must be recorded in routing evidence with the reason
-for selection. Local defaults are hints, not protocol semantics.
+The Leader selection reference and every assigned role reason must be recorded.
+The Leader is not automatically a routed worker. If a runtime coordinator is
+declared, it must match the user-selected Leader. Local defaults, Doctor scores,
+and runtime availability are hints or validation evidence, not selection
+authority.
 
 ## Pane Controller Adapter
 
@@ -252,8 +261,9 @@ prove delivery.
 
 Pane controllers should also export pane dimensions when available. A visible
 agent can fail at the UI layer when the pane is too small for its TUI. If a
-selected agent's pane is below the adapter's minimum size, the adapter must stop
-dispatch or record the dispatch as blocked until the pane is repaired.
+Leader-declared Agent's pane is below the adapter's minimum size, the adapter
+must stop dispatch or record the dispatch as blocked until the pane is repaired.
+It must not select a substitute Agent.
 
 Pane-specific checks are not required for non-pane adapters.
 
@@ -334,6 +344,8 @@ Reference CLI smoke path:
 
 ```bash
 bin/valp publish TASK-QUEUE --workspace /path/to/workspace --prompt "..." --runtime queue
+bin/valp route TASK-QUEUE --workspace /path/to/workspace \
+  --assignments /path/to/assignment-declaration.json --runtime queue
 bin/valp preflight --runtime queue --agent codex --json
 bin/valp dispatch TASK-QUEUE --workspace /path/to/workspace --runtime queue
 ```
@@ -413,6 +425,10 @@ delivery.
 
 An adapter must never upgrade an internal "completed" state into VALP
 completion unless the VALP expected evidence gate is satisfied.
+
+An adapter also must not select the Leader, author task assignments, or replace
+a blocked Agent. It transports and records the user/Leader authority chain and
+the VALP validation result.
 
 ## Coordinator Continuation
 

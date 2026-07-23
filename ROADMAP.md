@@ -27,10 +27,11 @@
 
 ## 0.2 Reference CLI
 
-- [shipped] `valp publish` for local task creation and default auto-route.
+- [shipped] `valp publish` for local task creation without Agent assignment.
 - [shipped] `valp scan` for local capability and overlay snapshots.
-- [shipped] `valp route` for candidate scoring, selected agents, dispatch
-  files, and `dispatch_written` receipts.
+- [shipped] `valp route --assignments` for validating a user-selected Leader's
+  declaration, recording advisory candidate scores, writing dispatch files,
+  and recording `dispatch_written` receipts.
 - [shipped] `valp dispatch` for HERDR reference-adapter submit command
   generation and optional `--submit`.
 - [shipped] `valp preflight` for runtime pane/CLI readiness checks before
@@ -46,8 +47,8 @@
 - [shipped] Validate correction-cycle evidence when repair signals are present.
 - [shipped] Validate runtime/build/test claims have concrete evidence.
 - [shipped] Produce text and JSON task audit reports.
-- [shipped] `valp doctor` workspace health diagnostics and optional Markdown
-  reports.
+- [shipped] `valp doctor` workspace health diagnostics, installation-wide
+  Agent surface/session capability passports, and optional Markdown reports.
 - [planned] CLI helper for writing task-local `trigger-policy.json` from
   project/local overlay policy.
 - [planned] `valp init` workspace scaffold.

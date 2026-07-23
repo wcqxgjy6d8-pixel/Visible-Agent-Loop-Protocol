@@ -104,6 +104,8 @@ class TaskAudit:
         self.jsonl_errors: dict[str, list[str]] = {}
         self.state = self._load_json("state.json")
         self.routing = self._load_json("routing.json")
+        self.assignment_declaration = self._load_json("assignment-declaration.json")
+        self.assignment_validation = self._load_json("assignment-validation.json")
         self.feedback = self._load_json("routing-feedback.json")
         self.automation_policy = self._load_json("automation-policy.json")
         self.context_pack = self._load_json("context-pack.json")
@@ -135,6 +137,7 @@ class TaskAudit:
     def run(self) -> AuditReport:
         items = [
             self.check_profile_and_routing(),
+            self.check_assignment_authority(),
             self.check_runtime_adapter_and_state_mapping(),
             self.check_state_status_vocabulary(),
             self.check_deterministic_wake(),
@@ -373,6 +376,136 @@ class TaskAudit:
         if not profile:
             return self._fail("profile_routing", "Profile and routing are recorded", "routing.json/state.json has no profile", evidence)
         return self._pass("profile_routing", "Profile and routing are recorded", f"Profile recorded: {profile}", evidence)
+
+    def check_assignment_authority(self) -> AuditItem:
+        evidence = self._existing(
+            [
+                "assignment-declaration.json",
+                "assignment-validation.json",
+                "routing.json",
+                "state.json",
+            ]
+        )
+        claimed = bool(
+            self.assignment_declaration
+            or self.assignment_validation
+            or self.routing.get("assignment_authority")
+            or self.routing.get("assignment_declaration")
+            or self.routing.get("assignment_validation")
+            or self.state.get("assignment_authority")
+            or self.state.get("assignment_declaration")
+            or self.state.get("assignment_validation")
+        )
+        if not claimed:
+            return self._skip(
+                "assignment_authority",
+                "User-selected Leader authority and declared assignments are consistent",
+                "Legacy task does not claim the Leader-declared assignment contract",
+                evidence,
+            )
+
+        declaration = self.assignment_declaration
+        validation = self.assignment_validation
+        errors: list[str] = []
+        if not declaration:
+            errors.append("assignment-declaration.json is missing or invalid")
+        if not validation:
+            errors.append("assignment-validation.json is missing or invalid")
+        if errors:
+            return self._fail(
+                "assignment_authority",
+                "User-selected Leader authority and declared assignments are consistent",
+                "; ".join(errors),
+                evidence,
+            )
+
+        task_id = str(self.state.get("task_id") or self.routing.get("task_id") or "")
+        leader = declaration.get("leader") if isinstance(declaration.get("leader"), dict) else {}
+        assignments = declaration.get("assignments") if isinstance(declaration.get("assignments"), dict) else {}
+        reasons = declaration.get("reasons") if isinstance(declaration.get("reasons"), dict) else {}
+        leader_agent = str(leader.get("agent_id") or "")
+
+        if declaration.get("schema_version") != "valp-assignment-declaration.v1":
+            errors.append("assignment declaration schema_version is invalid")
+        allowed_declaration_fields = {
+            "schema_version",
+            "declaration_id",
+            "task_id",
+            "declared_at",
+            "leader",
+            "assignments",
+            "reasons",
+        }
+        if set(declaration) != allowed_declaration_fields:
+            errors.append("assignment declaration fields do not match the closed contract")
+        if set(leader) != {"agent_id", "selected_by", "selection_ref"}:
+            errors.append("Leader fields do not match the closed contract")
+        if not declaration.get("declaration_id") or not declaration.get("declared_at"):
+            errors.append("assignment declaration identity or timestamp is missing")
+        if not task_id or declaration.get("task_id") != task_id:
+            errors.append("assignment declaration task_id does not match task state")
+        if leader.get("selected_by") != "user" or not leader_agent or not leader.get("selection_ref"):
+            errors.append("Leader is not bound to explicit user-selection evidence")
+        if not assignments:
+            errors.append("Leader declaration has no assignments")
+        if assignments.get("coordinator") and assignments.get("coordinator") != leader_agent:
+            errors.append("declared coordinator does not match the user-selected Leader")
+        missing_reasons = [role for role in assignments if not str(reasons.get(role) or "").strip()]
+        if missing_reasons:
+            errors.append("assignment reasons are missing for: " + ", ".join(sorted(missing_reasons)))
+        if set(reasons) != set(assignments):
+            errors.append("assignment reason roles differ from declared roles")
+
+        if validation.get("schema_version") != "valp-assignment-validation.v1":
+            errors.append("assignment validation schema_version is invalid")
+        if validation.get("task_id") != task_id:
+            errors.append("assignment validation task_id does not match task state")
+        if validation.get("declaration_ref") != "assignment-declaration.json":
+            errors.append("assignment validation declaration_ref is invalid")
+        if validation.get("authority") != "leader_declared":
+            errors.append("assignment validation authority is not leader_declared")
+        if validation.get("status") != "pass" or validation.get("blockers"):
+            errors.append("assignment validation did not pass cleanly")
+        if validation.get("validated_assignments") != assignments:
+            errors.append("validated assignments differ from the Leader declaration")
+
+        declared_agents = {str(agent) for agent in assignments.values() if str(agent)}
+        for source_name, source in (("routing", self.routing), ("state", self.state)):
+            if source.get("assignment_authority") != "leader_declared":
+                errors.append(f"{source_name} assignment_authority is not leader_declared")
+            marker = source.get("assignment_declaration") if isinstance(source.get("assignment_declaration"), dict) else {}
+            if marker.get("status") != "recorded" or marker.get("ref") != "assignment-declaration.json":
+                errors.append(f"{source_name} assignment declaration marker is invalid")
+            if marker.get("leader_agent") != leader_agent or marker.get("selected_by") != "user":
+                errors.append(f"{source_name} Leader marker differs from the declaration")
+            if marker.get("selection_ref") != leader.get("selection_ref"):
+                errors.append(f"{source_name} Leader selection_ref differs from the declaration")
+            validation_marker = source.get("assignment_validation") if isinstance(source.get("assignment_validation"), dict) else {}
+            if validation_marker != {"status": "pass", "ref": "assignment-validation.json"}:
+                errors.append(f"{source_name} assignment validation marker is invalid")
+            if source.get("role_assignments") != assignments:
+                errors.append(f"{source_name} role assignments differ from the declaration")
+            selected_agents = [str(agent) for agent in source.get("selected_agents") or []]
+            if len(selected_agents) != len(set(selected_agents)) or set(selected_agents) != declared_agents:
+                errors.append(f"{source_name} selected_agents is not the Leader-declared Agent projection")
+
+        coordinator = self.routing.get("coordinator_selection")
+        if not isinstance(coordinator, dict) or coordinator.get("selected_agent") != leader_agent:
+            errors.append("routing coordinator selection does not match the user-selected Leader")
+
+        if errors:
+            return self._fail(
+                "assignment_authority",
+                "User-selected Leader authority and declared assignments are consistent",
+                "; ".join(errors[:8]),
+                evidence,
+            )
+        return self._pass(
+            "assignment_authority",
+            "User-selected Leader authority and declared assignments are consistent",
+            f"Validated user-selected Leader {leader_agent} and {len(assignments)} declared role assignment(s)",
+            evidence,
+        )
 
     def check_runtime_adapter_and_state_mapping(self) -> AuditItem:
         evidence = self._existing(["routing.json", "state.json"])
@@ -954,13 +1087,13 @@ class TaskAudit:
         agents = self._selected_agents()
         policies = self.routing.get("selected_agent_context_policies") or self.state.get("context_policies") or {}
         if not agents:
-            return self._fail("selected_agents_context", "Selected agents and context policies are recorded", "No selected_agents recorded", evidence)
+            return self._fail("selected_agents_context", "Leader-declared Agents and context policies are recorded", "No selected_agents compatibility projection recorded", evidence)
         missing = [agent for agent in agents if agent not in policies]
         if missing:
             return self._fail(
                 "selected_agents_context",
-                "Selected agents and context policies are recorded",
-                f"Selected agents recorded, but context policy missing for: {', '.join(missing)}",
+                "Leader-declared Agents and context policies are recorded",
+                f"Leader-declared Agents recorded, but context policy missing for: {', '.join(missing)}",
                 evidence,
             )
         required = {"soft_warning_pct", "hard_compression_pct", "emergency_stop_pct"}
@@ -972,7 +1105,7 @@ class TaskAudit:
         if incomplete:
             return self._fail(
                 "selected_agents_context",
-                "Selected agents and context policies are recorded",
+                "Leader-declared Agents and context policies are recorded",
                 "Context policy missing threshold fields for: " + ", ".join(incomplete),
                 evidence,
             )
@@ -989,11 +1122,11 @@ class TaskAudit:
         if compressed_needed:
             return self._fail(
                 "selected_agents_context",
-                "Selected agents and context policies are recorded",
+                "Leader-declared Agents and context policies are recorded",
                 "Compression required before dispatch: " + ", ".join(compressed_needed),
                 evidence,
             )
-        return self._pass("selected_agents_context", "Selected agents and context policies are recorded", "Selected agents and context policies found", evidence)
+        return self._pass("selected_agents_context", "Leader-declared Agents and context policies are recorded", "Leader-declared Agents and context policies found", evidence)
 
     def check_provider_matrix(self) -> AuditItem:
         evidence = self._existing(["routing.json", "state.json"])
@@ -1340,7 +1473,7 @@ class TaskAudit:
         if routing_marker != expected_marker or state_marker != expected_marker:
             failures.append("routing/state control contract markers are missing or mismatched")
         if not isinstance(slice_refs, dict) or set(slice_refs) != set(selected_agents):
-            failures.append("control slice refs do not cover exactly the selected agents")
+            failures.append("control slice refs do not cover exactly the Leader-declared Agents")
 
         work_items_by_agent: dict[str, list[str]] = {}
         for item in self.submission_dependencies.get("work_items") or []:
@@ -1715,8 +1848,8 @@ class TaskAudit:
         if failed:
             return self._fail("dispatch_receipts", "Dispatch receipts satisfy the required gates", "; ".join(failed), evidence)
         if manual_mode:
-            return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is manual_result_attested or dispatch_completed for selected agents", evidence)
-        return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is dispatch_completed for selected agents and runtime submission proof exists", evidence)
+            return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is manual_result_attested or dispatch_completed for Leader-declared Agents", evidence)
+        return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is dispatch_completed for Leader-declared Agents and runtime submission proof exists", evidence)
 
     def check_submission_dependencies(self) -> AuditItem:
         evidence = self._existing(["submission-dependencies.json", "dispatch-receipts.jsonl", "routing.json", "state.json"])

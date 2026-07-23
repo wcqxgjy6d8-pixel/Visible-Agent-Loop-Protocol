@@ -5,7 +5,7 @@
   "matched_signal": "task mentions VALP, HERDR, multi-agent collaboration, or visible agent work",
   "rule_ref": "AGENTS.md#visible-agent-loop",
   "risk_classification": "low",
-  "selected_action": "publish_route_and_dispatch",
+  "selected_action": "publish_only",
   "approval_required": false,
   "visible_refs": {
     "task": ".herdr-loop/tasks/TASK-001/task.md",

@@ -12,6 +12,19 @@ system claims a task is done, what evidence makes that claim trustworthy?
 VALP answers by making intent, routing, execution, evidence, correction,
 approval, and learning visible.
 
+VALP is a protocol for commissioning capability facts and controlling an
+evidence-backed task loop. It does not choose an Agent on the user's behalf.
+The user selects the installation Leader; that Leader decomposes tasks and
+declares worker and reviewer assignments. VALP validates those declarations,
+records the decision and evidence, controls dispatch gates, audits the result,
+and returns control to the user.
+
+Repository hosting and contribution operations, including branch creation,
+push, pull request, review service, and merge, are outside the general task
+lifecycle. A repository-specific profile or maintainer workflow may use those
+operations after VALP returns the audited result, but the protocol must not
+assume that a user's work is hosted on GitHub or any other forge.
+
 The protocol is generic. It can be used for software engineering, research,
 frontend work, Apple apps, documents, operations, prototypes, and future task
 profiles.
@@ -64,19 +77,39 @@ but it cannot override non-negotiable gates.
 boundaries, tools, and context policy. It is a routing hint, not a fixed role or
 assignment.
 
+`capability passport`
+: An installation-wide Doctor record for one Agent surface and addressable
+session. It separates official claims, local presence, live callability, and
+task-verified history; records declared and observed model identity; and lists
+reachable Skills, MCP/tools, permissions, context, limitations, and role
+eligibility. A passport is evidence for a Leader's decision, not an assignment.
+
+`Leader`
+: The Agent or human explicitly selected by the user to own task decomposition,
+assignment declarations, visible decisions, gates, and final synthesis. VALP
+MUST record and validate the user's selection, but MUST NOT select, replace, or
+rotate the Leader on its own.
+
 `coordinator`
-: The selected agent or human responsible for visible state, receipts, gates,
-handoffs, and final synthesis for one task. The open protocol does not name a
-universal coordinator; the runtime or local overlay must select one from current
-capability evidence.
+: The control surface that maintains visible state, receipts, gates, handoffs,
+and final synthesis for one task. It may be the user-selected Leader or a
+runtime service acting under that Leader's declared assignments. A coordinator
+is not a second authority that may select Agents independently.
+
+`assignment declaration`
+: The Leader-authored, task-local mapping from runtime work items and roles to
+specific Agent surfaces or humans, including the reason, expected evidence,
+and any accepted capability limitations. VALP validates and records the mapping
+but does not author it.
 
 `routing confidence`
-: A recorded estimate of how strong the routing evidence is for each selected
-agent and each rejected candidate. It helps decide whether to proceed, ask for
-review, use a squad, or route a discovery task first.
+: A recorded estimate of how strongly current capability evidence supports a
+Leader-declared assignment and how serious any rejected or accepted alternative
+risk is. It can block or downgrade an assignment, but cannot choose a different
+Agent.
 
 `feedback record`
-: A post-task record of what actually happened: selected agents, evidence
+: A post-task record of what actually happened: Leader-declared Agents, evidence
 quality, review outcomes, blockers, completion result, and lessons for future
 routing. Feedback records improve future routing but do not replace current
 capability scans.
@@ -232,8 +265,9 @@ or approval gates.
 `Auto Visible Mode`
 : An opt-in intake behavior where a coordinator or runtime automatically decides
 that a request should enter VALP, publishes the task, and immediately surfaces
-the trigger reason, routing, skill recommendations, dispatches, evidence gates,
-and final report path. It is automatic entry, not silent execution.
+the trigger reason and evidence gates. It may surface routing, skill
+recommendations, and dispatches only after a user-selected Leader supplies a
+valid assignment declaration. It is automatic entry, not silent execution.
 
 ## 3. Lifecycle
 
@@ -244,34 +278,46 @@ enough evidence to satisfy the Done Criteria.
 High-level phases:
 
 ```text
+COMMISSION INSTALLATION
+  -> USER SELECTS LEADER
 INTAKE
-  -> SCAN
-  -> ROUTE
+  -> REFRESH
+  -> LEADER ASSIGNS
+  -> VALIDATE
   -> DISPATCH
   -> EXECUTE
   -> REVIEW
   -> RECORD
-  -> DONE / BLOCKED / FAILED / CANCELLED
+  -> AUDIT
+  -> RETURN TO USER AS DONE / BLOCKED / FAILED / CANCELLED
 ```
 
 Expanded sub-steps:
 
 ```text
+COMMISSION INSTALLATION
+  -> RUN DOCTOR ACROSS KNOWN AGENT SURFACES AND SESSIONS
+  -> WRITE CAPABILITY PASSPORTS
+  -> USER SELECTS LEADER
 INTAKE
   -> PUBLISH
   -> SELECT AUTOMATION POLICY
-SCAN
-  -> SCAN CAPABILITIES, CONTEXT POLICIES, AND LOCAL OVERLAY
+REFRESH
+  -> REFRESH VOLATILE MODEL, SESSION, RUNTIME, PERMISSION, AND CONTEXT FACTS
+  -> LOAD CAPABILITY PASSPORTS AND LOCAL OVERLAY
   -> SELECT RUNTIME ADAPTER
-ROUTE
+LEADER ASSIGNS
   -> CLASSIFY TASK
   -> SELECT PROFILE
   -> DECOMPOSE INTO RUNTIME WORK ITEMS
+  -> DECLARE WORKER AND REVIEWER ASSIGNMENTS
+VALIDATE
   -> RECOMMEND SKILLS, IF BACKEND EXISTS
   -> BUILD PROVIDER MATRIX
-  -> PREFLIGHT RUNTIME AND AGENT SESSIONS
-  -> SCORE AND ROUTE AGENTS
-  -> ROUTE SQUAD, IF USED
+  -> PREFLIGHT DECLARED RUNTIME AND AGENT SESSIONS
+  -> VALIDATE ASSIGNMENTS AGAINST CAPABILITY PASSPORTS AND HARD GATES
+  -> RECORD ADVISORY SCORES, RISKS, AND ALTERNATIVES
+  -> VALIDATE SQUAD DECLARATION, IF USED
   -> BUILD CONTEXT PACK
 DISPATCH
   -> WRITE VISIBLE DISPATCH
@@ -292,16 +338,19 @@ REVIEW
 RECORD
   -> RECORD
   -> WRITE LEARNING FEEDBACK
-  -> DONE / BLOCKED / FAILED / CANCELLED
+  -> STRICT AUDIT
+  -> RETURN RESULT TO USER AS DONE / BLOCKED / FAILED / CANCELLED
 ```
 
 ## 4. State Machine
 
-The state machine below is the full reference vocabulary. Implementations may
-collapse adjacent sub-states into phase-level records if they preserve the
-required evidence and state mapping. For example, a small CLI may record
-`dispatching` while separately writing routing, provider, preflight, and visible
-attention evidence.
+Doctor commissioning and user Leader selection are installation authority
+preconditions, not task-state transitions. The task state begins when the task
+is published. Implementations may collapse adjacent sub-states into phase-level
+records if they preserve the required evidence and state mapping. For example,
+a small CLI may keep `published` while waiting for the Leader's declaration or
+record `dispatching` while separately writing validation, provider, preflight,
+and visible-attention evidence.
 
 ```text
 new
@@ -314,12 +363,13 @@ new
   -> classifying_task
   -> selecting_profile
   -> decomposing_tasks
+  -> Leader authors assignment-declaration.json
   -> recommending_skills
   -> building_provider_matrix
   -> preflighting_runtime
-  -> scoring_routes
-  -> routing_capabilities
-  -> routing_squad
+  -> scoring_routes (advisory evidence only)
+  -> routing_capabilities (validate declared assignments)
+  -> routing_squad (validate declared squad, if used)
   -> building_context_pack
   -> dispatching
   -> suspended
@@ -333,8 +383,14 @@ new
   -> approval_required
   -> recording
   -> writing_learning_feedback
+  -> strict audit and return to user
   -> done | blocked | failed | cancelled
 ```
+
+The compatibility state names `scoring_routes`, `routing_capabilities`, and
+`routing_squad` do not grant Agent-selection authority. Scores are advisory;
+the latter states validate the Leader's declaration and either preserve it or
+block it. VALP cannot fill, remove, or replace an assignment.
 
 ### 4.1 Runtime Work Item State Mapping
 
@@ -631,16 +687,18 @@ Allowed selected actions:
 ```text
 no_valp
 publish_only
-publish_and_route
-publish_route_and_dispatch
+validate_declared_route
+validate_declared_route_and_dispatch
 continue_until_gate
 block_for_approval
 ```
 
-Auto Visible Mode may automatically continue through low-risk publish, scan,
-route, skill recommendation, preflight, visible dispatch, verification, review,
-and report generation when the configured runtime can prove each step. It must
-stop at `block_for_approval` before high-risk work.
+Auto Visible Mode may automatically publish a low-risk task and refresh Doctor
+facts. It cannot select a Leader or author assignments. After a user-selected
+Leader has written a valid declaration, it may automatically continue through
+validation, skill recommendation, preflight, visible dispatch, verification,
+review, audit, and report generation when the configured runtime can prove each
+step. It must stop at `block_for_approval` before high-risk work.
 
 High-risk trigger signals include destructive changes, release or upload,
 auth/secrets, memory or agent configuration, migrations, signing, privacy, and
@@ -690,9 +748,10 @@ The `audit_grade` states the proof level being claimed:
 
 Automation policy must be conservative:
 
-- low-risk work may continue through publish, scan, route, dispatch, evidence
-  collection, verification, review, synthesis, audit, and learning when each
-  step writes evidence;
+- low-risk work may continue through publish and capability refresh without an
+  assignment; validation, dispatch, evidence collection, verification, review,
+  synthesis, audit, and learning may continue only after a user-selected Leader
+  has written a valid assignment declaration and each step writes evidence;
 - high-risk work must stop before side effects and record approval evidence;
 - runtime completion without expected evidence is a stop condition, not Done;
 - missing context, stale memory, failed preflight, unresolved review findings,
@@ -749,18 +808,53 @@ mutation.
 
 ### 4.5 First-Install Health Gate
 
-A first install, including an App-managed install, must prove environment health
-before real dispatch. The installer or App should run an explicit health gate in
-this order:
+A first install, including an App-managed install, must commission the available
+Agent surfaces before real dispatch. The installer or App should run an explicit
+health and capability gate in this order:
 
 ```text
 install check
   -> valp doctor
+  -> enumerate known Agent surfaces and addressable sessions
+  -> write installation capability passports
+  -> user selects the Leader
   -> runtime preflight, when Full Mode is requested
-  -> publish/dispatch dry run
+  -> Leader-declared assignment validation and dispatch dry run
   -> visible user decision before any submit or Auto Visible policy
   -> optional live smoke test
 ```
+
+Doctor commissioning MUST record, for every discovered Agent surface and
+addressable session:
+
+```text
+surface and runtime identity
+official capability claims and provenance
+local installation and version
+live callability
+declared model
+observed model, provider or relay, and reasoning mode
+session fingerprint and model-observation TTL/freshness
+reachable Skills
+reachable MCP servers and tools
+filesystem, network, shell, and mutation permissions
+context policy and current context state
+known limitations
+Leader, implementer, reviewer, and researcher role eligibility
+task-verified history bound to the exact model and session identity
+```
+
+Doctor MUST preserve unknown, unsupported, stale, unavailable, and mismatched
+facts explicitly. It MUST NOT infer an observed model from a configured default,
+provider label, product name, or another Agent surface. Unknown, stale, or
+mismatched model identity cannot qualify an Agent for high-risk implementation
+or final review.
+
+A configured or declared model is optional. When no model was declared, a
+current, high-confidence runtime observation bound to a known session is the
+authoritative current identity and may qualify the Agent. When a declaration
+does exist, any model, provider, or reasoning mismatch invalidates bound history
+and blocks high-risk roles.
 
 The first install gate must not assume a fixed checkout path such as a Desktop
 folder. It should record the actual install root, CLI path, runtime path, and
@@ -768,7 +862,8 @@ doctor/preflight report refs. A symlink or App bundle wrapper is valid only when
 `valp doctor` can still identify the protocol checkout and `bin/valp` entrypoint.
 
 The dry run may create a task folder and write routing, dispatch files, visible
-attention evidence, and `dispatch_written` receipts. It must not append
+attention evidence, assignment validation, and `dispatch_written` receipts. It
+must not append
 `dispatch_submitted` or `dispatch_completed` receipts unless a runtime actually
 submitted work and the expected evidence appeared. A new dry-run task is allowed
 to fail `valp audit`; that means work has not completed, not that installation
@@ -776,8 +871,8 @@ failed.
 
 New installs must default to Manual trigger mode. `policy_auto`, `watcher`, and
 real `--submit` behavior are opt-in after the user can inspect doctor,
-preflight, dry-run routing, selected agents, expected evidence, and approval
-risks.
+preflight, the user-selected Leader, Leader-declared assignments, validation
+findings, expected evidence, and approval risks.
 
 ## 5. Runtime Adapters
 
@@ -956,8 +1051,20 @@ agent strength. A protocol hard gate beats every local preference.
 
 ## 7. Capability Evidence
 
-No agent is assumed to be fully known from memory. Capability routing combines
-several evidence layers:
+No Agent is assumed to be fully known from memory, product branding, or a
+configured default model. Doctor commissions installation-wide capability
+passports before task routing. Task intake refreshes volatile facts for every
+declared Agent surface and session. Capability evidence keeps four layers
+separate:
+
+```text
+official_claim -> local_presence -> live_callable -> task_verified
+```
+
+The layers are cumulative evidence, not four names for one boolean. A strong
+official claim does not prove local presence; installation does not prove live
+callability; a successful ping does not prove task performance. Capability
+passports combine these layers with:
 
 ```text
 official or declared agent capability
@@ -973,12 +1080,19 @@ local overlay capability profile
 recent feedback records
 ```
 
+Doctor SHOULD discover every Agent surface and addressable session available to
+the installation, including multiple surfaces backed by the same vendor or
+model family. It MUST keep those surfaces separate. Discovery adapters publish
+their provenance and unsupported fields; Doctor must not invent facts that an
+adapter cannot observe safely.
+
 Only command output, receipts, expected evidence, and review records prove that
-work is done.
+work is done. The Leader uses capability passports to decide assignments. VALP
+uses them to validate those assignments and block hard-gate violations.
 
 Capability profiles are not assignments. They answer "what is this agent often
-good at?" Routing answers "what should this task use now, given current tools,
-context, permissions, evidence, and risk?"
+good at?" The Leader answers "which Agent should do this work?" VALP answers
+"is that declared assignment supported by current evidence and protocol gates?"
 
 ### 7.1 Model-Aware Routing Identity
 
@@ -993,7 +1107,8 @@ permissions
 context policy and current context
 task evidence
 
-Provider matrix records MUST carry declared_model and observed_model separately.
+Provider matrix records MUST carry declared_model and observed_model separately;
+declared_model may explicitly be unknown.
 Each model record MUST include a model identifier (or the explicit value
 unknown), source, timestamp, confidence, and freshness. observed_model is
 runtime evidence; a declaration, configured default, or provider label cannot
@@ -1096,67 +1211,105 @@ mismatch occurs, or when a current binding cannot be compared with the binding
 that qualified the history. Invalidated history contributes no positive routing
 score until fresh task evidence requalifies the new binding.
 
-For implementation and final-review roles, a candidate is eligible only when the
+For implementation and final-review roles, a declared Agent is eligible only when the
 active model is known, the probe status is `observed`, computed freshness is
-`current`, and the session identity is known. An ineligible candidate MUST NOT be
-silently selected even when it is the only candidate. Routing MUST instead record
-the missing capability and choose an explicit discovery, prototype, or Manual
-Mode fallback, or stop for operator action. Coordinator-only state work may
+`current`, and the session identity is known. An ineligible Agent MUST NOT be
+dispatched even when it is the only available Agent. VALP MUST record the missing
+capability and block. It may offer discovery, prototype, or Manual Mode as
+advisory alternatives, but the Leader or user chooses the next declaration.
+Coordinator-only state work may
 continue when its own permission and evidence gates allow it.
 
 Immediately before a high-risk dispatch is submitted, the adapter MUST probe
 again and compare the fresh history-binding fingerprint with the binding used by
-routing. A model, provider, reasoning-mode, freshness-state, or session change,
+assignment validation. A model, provider, reasoning-mode, freshness-state, or session change,
 or a newly ineligible identity, MUST block before delivery and write visible
 task-local block evidence. Dispatch-time preflight cannot reuse the route-time
 `current` label without reevaluation.
 
-## 8. Intelligent Routing
+## 8. Leader Assignment And VALP Validation
 
-VALP routing should be explainable and adaptive. A routing decision must record
-both selected and meaningfully rejected candidates when the choice affects risk
-or quality.
+The user-selected Leader is the assignment authority. VALP provides capability
+facts, advisory fit scores, hard-gate validation, visible dispatch records, and
+audit evidence. It MUST NOT authoritatively select the Leader, worker, reviewer,
+researcher, or squad members.
 
-Minimum routing decision steps:
+Minimum assignment and validation steps:
 
 ```text
-decompose the task into runtime work items
-identify required capabilities and evidence gates
-load local overlay profiles, if present
-scan current runtime/tool/skill/context state
-run runtime preflight for selected or high-relevance agents
-rank candidate agents for each runtime work item
-select a coordinator from current capability evidence
-write precise, concise dispatch payloads with refs for long context
-record confidence and risk for selected agents
-record missing capability or uncertainty
-route discovery/review before implementation when confidence is low
+user selects the Leader
+Leader reads installation capability passports
+Leader decomposes the task into runtime work items
+Leader identifies required capabilities and evidence gates
+Leader declares Agent and role assignments
+VALP refreshes current model/session/runtime/permission/context facts
+VALP validates every declared assignment against hard gates
+VALP records advisory scores, risks, alternatives, and missing capabilities
+Leader accepts, changes, narrows, or blocks the declaration
+VALP writes precise visible dispatch payloads and receipts
 ```
 
-Coordinator or leader selection is a routing output, not a protocol constant.
-VALP must not hard-code one vendor, product, local agent name, or runtime
-session type as the universal leader. A local overlay may express preferences,
-but the final
-selection must be justified by current capability, tool, context, permission,
-availability, profile, and evidence scans. If a user has a stronger coordinator
-agent, the open protocol should let that agent own state and gates.
+The task-local authority records are:
 
-Whoever is selected as coordinator or leader owns dispatch precision. The
-coordinator must break work into short, role-specific assignments and cite
+```text
+<task>/assignment-declaration.json
+<task>/assignment-validation.json
+```
+
+`assignment-declaration.json` MUST use `valp-assignment-declaration.v1` and
+record a declaration ID, task ID, declaration time, the user-selected Leader and
+selection evidence, role-to-Agent assignments, and a reason for every assigned
+role. The Leader is the coordinator authority and does not have to be routed as
+a worker. If the declaration includes a runtime `coordinator` assignment, it
+MUST match the user-selected Leader. VALP MUST reject an incomplete or
+mismatched declaration before capability scan or dispatch.
+
+The compatibility field `selected_agents` MUST be the unique projection of the
+Leader's role assignments. The Leader is not included merely for being Leader;
+it appears only when explicitly assigned a runtime role. VALP MUST NOT add an
+Agent to this projection.
+
+`assignment-validation.json` MUST use `valp-assignment-validation.v1` and record
+the declaration ref, `leader_declared` authority, validation time, exact
+validated assignments, status, and visible blockers. `pass` requires an empty
+blocker list; `blocked` requires at least one concrete blocker. A blocked
+validation MUST NOT write dispatch receipts.
+
+Each Doctor passport MUST use `valp-capability-passport.v1`. A Doctor report may
+carry passports inline or an installation may store them separately, but every
+passport remains bound to one Agent surface and addressable session. The schema
+does not grant assignment authority.
+
+Leader selection is explicit user input, not a routing output. VALP must not
+hard-code one vendor, product, local Agent name, model, or runtime session type
+as the universal Leader. A local overlay may record preferences and Doctor may
+report eligibility, but neither can select a Leader. Rotation requires a new
+explicit user selection and a recorded epoch change.
+
+VALP may reject or block a declared assignment when a protocol hard gate fails,
+for example missing permission, unavailable runtime, unknown or stale model
+identity for a high-risk role, missing reviewer independence, or insufficient
+expected evidence. A validation failure MUST identify the exact missing fact or
+gate. VALP may present alternatives as advisory facts, but it MUST NOT silently
+substitute another Agent. The Leader or user owns the revised declaration.
+
+The user-selected Leader and any explicitly declared runtime coordinator
+surface own dispatch precision. They must break work into short, role-specific assignments and cite
 task-local files for detail. It must not shift context-management work onto
 workers by pasting the full conversation, full task history, or broad skill
 router output into every dispatch.
 
-Coordinator selection patterns:
+Coordinator patterns:
 
-- Pane-controller runtime: choose a coordinator agent or human from current
-  capability evidence, then record that choice and reason in routing evidence.
-- Daemon or hosted runtime: the runtime process may act as coordinator if it
-  writes visible dispatches, receipts, gates, and final synthesis evidence.
+- Pane-controller runtime: the user-selected Leader may act through a visible
+  coordinator surface; the runtime records the selection and session identity.
+- Daemon or hosted runtime: the runtime process may maintain coordinator state
+  only under the Leader's recorded assignment declaration and only if it writes
+  visible dispatches, receipts, gates, and final synthesis evidence.
 - Manual Mode: a human coordinator may copy dispatches and write attestations,
   but must not label those attestations as Full Mode submission proof.
-- Squad routing: a selected squad leader may coordinate sub-agents only when the
-  leader decision, member list, and handoffs are visible evidence.
+- Squad routing: the Leader may declare a squad leader and members only when the
+  declaration, member list, and handoffs are visible evidence.
 
 Recommended scoring factors:
 
@@ -1171,22 +1324,23 @@ Recommended scoring factors:
 | availability | runtime status, queue pressure, or pane readiness |
 | risk_fit | whether the agent should handle high-risk or read-only work |
 
-Scores are advisory. The routing output must still explain the decision in
-plain language and list hard blockers separately.
+Scores are advisory and MUST NOT become hidden assignment authority. The
+validation output must explain why the Leader's declaration is supported,
+degraded, or blocked in plain language and list hard blockers separately.
 
 Low confidence rules:
 
-- If no agent has the needed tools, mark `capabilities_missing` and stop or ask
-  for setup.
-- If only one agent can act but confidence is low, route a small discovery task
-  first.
-- If implementation confidence is medium but risk is high, require review before
-  mutation.
+- If no declared Agent has the needed tools, mark `capabilities_missing` and
+  return the block to the Leader or user.
+- If only one Agent appears viable but confidence is low, recommend a small
+  discovery task; the Leader decides whether to declare it.
+- If implementation confidence is medium but risk is high, require independent
+  review before mutation.
 - If context policy is near the hard threshold, compress before dispatch.
-- If pane or CLI preflight fails, repair the runtime before dispatch or route a
-  different adapter.
+- If pane or CLI preflight fails, block dispatch until the Leader changes the
+  declaration, chooses Manual Mode, or the runtime is repaired.
 - If a prior feedback record says an agent failed this task type recently,
-  require fresh evidence before routing similar work again.
+  require fresh evidence before validating a similar assignment again.
 
 ## 9. Runtime Modes
 
@@ -1285,7 +1439,7 @@ If expected evidence is declared, gates require `dispatch_completed`.
 
 For Full Mode and Remote Mode, `dispatch_completed` is not valid by itself. The
 receipt ledger must also contain a prior `dispatch_submitted` receipt for that
-selected agent with concrete runtime submission proof, such as a runtime
+Leader-declared Agent with concrete runtime submission proof, such as a runtime
 submission id, queue id, hosted run id, pane/session submission proof, or
 equivalent adapter proof. A dry-run command, local sub-agent result,
 simulation, manually fabricated completion receipt, or copied review file cannot
@@ -1306,7 +1460,7 @@ submission proof. Controller-local evidence must not be described as HERDR live
 agent dispatch.
 
 Receipt ledgers are append-only. Legacy gates evaluate the latest receipt for
-each selected agent. Deterministic gates MUST evaluate the latest accepted
+each Leader-declared Agent. Deterministic gates MUST evaluate the latest accepted
 receipt for the exact task, work item, role, dispatch id, and dispatch
 generation. A later matching `dispatch_blocked` supersedes an earlier
 `dispatch_completed` until a newer matching `dispatch_completed` records the
@@ -1519,7 +1673,7 @@ compression_target_pct_max: 25
 
 User or project policy may override defaults.
 
-Routing must treat these thresholds as a pre-dispatch gate. If current context
+Assignment validation must treat these thresholds as a pre-dispatch gate. If current context
 is at or above `hard_compression_pct`, or if the runtime marks
 `compression_required`, no new implementation/review/prototype dispatch should
 be sent until the agent writes a compression handoff and the task state is
@@ -1556,11 +1710,13 @@ detail with task-local refs. It must not truncate a permission boundary,
 expected evidence path, receipt requirement, or approval rule. A dispatch that
 still exceeds either ceiling is not submitted and must be recorded as blocked.
 
-### 11.2 Adaptive Routing And Iteration Budget
+### 11.2 Leader-Declared Team And Iteration Budget
 
-After the current MCP/tool scan and task-relevant skill recommendation, routing
-selects the minimum capable team that covers the required roles. A task records
-`iteration-budget.json` with these ceilings and observed counters:
+After reading current MCP/tool scans and task-relevant skill recommendations,
+the Leader declares the smallest team they judge sufficient for the required
+roles. VALP validates the declaration and bounds its execution; it does not add,
+remove, or substitute Agents. A task records `iteration-budget.json` with these
+ceilings and observed counters:
 
 ```text
 max_dispatch_reference_tokens
@@ -1578,8 +1734,8 @@ dispatch files, and derives reference-token usage from the recorded dispatch
 payload measurement. Before a new submitted phase it projects the additional
 usage and stops when a ceiling would be exceeded. Approval, runtime preflight,
 missing-evidence, critical review, and context-compression gates stop the loop
-even when budget remains. A reroute preserves the previous route evidence and
-consumes one reroute budget unit.
+even when budget remains. A revised Leader declaration preserves the previous
+validation evidence and consumes one reroute budget unit.
 
 When a runtime preserves a legacy receipt and appends an identity-bound v2
 translation for the same accepted delivery, the pair counts as one logical
@@ -1700,9 +1856,9 @@ context
 task_evidence
 
 model_evidence_status: strong is valid only when the observed model is
-identified with current, high-confidence evidence and the declaration matches
-the observation. A provider record using only runtime_default MUST be unknown
-or rejected, never strong.
+identified with current, high-confidence, session-bound evidence and either the
+declaration matches the observation or no model was declared. A provider record
+using only runtime_default MUST be unknown or rejected, never strong.
 
 Dynamic model-aware records also add:
 
@@ -1797,16 +1953,17 @@ role and materially improves the runtime work item. If a useful skill is
 missing, the task should record the gap instead of silently proceeding as if the
 skill were available.
 
-## 14. Visible Attention Routing
+## 14. Visible Attention For Declared Assignments
 
-Visible attention routing makes the routing decision inspectable. It borrows the
-useful systems idea from attention mechanisms: select the relevant agents,
-skills, context, and evidence for this task instead of making every participant
-read everything. Unlike a hidden optimizer, VALP must surface the selection and
-masking decisions before dispatch.
+Visible attention makes the Leader's declaration and VALP's context selection
+inspectable. It borrows the useful systems idea from attention mechanisms:
+focus each Leader-declared Agent on the relevant skills, context, and evidence
+instead of making every participant read everything. Unlike a hidden optimizer,
+VALP must surface the assignment, validation, context selection, and masking
+decisions before dispatch.
 
-Visible attention happens after capability/skill scans and before agent
-dispatch.
+Visible attention happens after capability/skill scans and assignment
+validation, before Agent dispatch.
 
 Required task evidence:
 
@@ -1820,8 +1977,10 @@ Required task evidence:
 ```
 
 The five JSON artifacts must all carry `schema_version`, `profile`, and
-`loop_layer`. `attention-map.json` additionally carries `task_id` and attention
-heads. `context-selection.json` carries selected and not-selected context.
+`loop_layer`. `attention-map.json` additionally carries `task_id`, the
+user-selected `leader_agent`, and attention heads. The Leader identity is
+recorded independently of routed worker assignments. `context-selection.json`
+carries selected and not-selected context.
 `context-pack.json` carries the compact context given to workers. `mask-list.json`
 carries excluded inputs and reasons. `evidence-board.json` carries claims and
 required evidence.
@@ -1831,8 +1990,9 @@ The attention map records:
 ```text
 loop_layer
 attention heads such as implementation, ux_review, prototype, state_gate
-selected agent or source for each head
-score or status for the selection
+user-selected Leader for state_gate, without implying a worker assignment
+Leader-declared Agent or source for each worker head
+advisory score or validation status for the declaration
 references to selected context, masks, and evidence board
 ```
 
@@ -1885,22 +2045,23 @@ Audit should fail non-trivial routed tasks when visible attention evidence is
 missing or malformed. This keeps automation visible without forcing the user to
 inspect every low-level command.
 
-A non-trivial routed task is any task with more than one selected agent, or any
-task in a profile that normally needs external evidence, source review,
+A non-trivial routed task is any task with more than one Leader-declared Agent,
+or any task in a profile that normally needs external evidence, source review,
 artifact review, release gates, runtime repair, implementation, verification, or
 prototype evidence. Current examples include `software-code`, `apple-app`,
 `web-frontend`, `research`, `document-artifact`, `agent-runtime`, `ops-release`,
 and `prototype`. A single-agent, no-runtime learning task may skip visible
 attention when it records that it is simple Manual Mode.
 
-## 15. Squad Routing
+## 15. Leader-Declared Squads
 
-Squads are optional. A squad may be used when the task should be routed by a
-leader agent instead of assigned directly to one worker.
+Squads are optional. The user-selected Leader may declare a squad when one
+coordinating Agent should delegate to visible members instead of assigning one
+worker directly.
 
 Rules:
 
-- squad existence, leader, members, and routing reason must be visible;
+- squad existence, squad leader, members, and assignment reason must be visible;
 - leader dispatch is a dispatch, not hidden reasoning;
 - leader output must include either a concrete delegation, `no_action`, or
   escalation;
@@ -1909,7 +2070,7 @@ Rules:
   or expected evidence;
 - agent-to-agent mentions or delegations must avoid accidental loops.
 
-Squad routing is routing evidence. It is not completion evidence.
+Squad validation is assignment evidence. It is not completion evidence.
 
 ## 16. Feedback And Learning
 
@@ -1921,9 +2082,9 @@ it. The record should include:
 ```text
 task id
 profile
-selected agents
-candidate agents considered, if meaningful
-routing confidence
+Leader-declared Agents
+advisory candidate facts considered by the Leader, if meaningful
+assignment validation confidence
 expected evidence
 actual evidence
 verification result
@@ -1936,8 +2097,8 @@ what should change next time
 Feedback may update future capability profiles, context-pack generation,
 automation policy defaults, adapter warnings, docs, schemas, or audit checks,
 but future tasks must still run a fresh capability, provider, context, and
-permission scan. Historical success is a useful prior, not proof that the agent
-can do the current task.
+permission scan. Historical success is a useful prior, not proof that an Agent
+can do the current task and never authority for VALP to assign that Agent.
 
 Feedback should be stored in a task-local evidence file and optionally copied to
 a workspace-level routing memory:
@@ -2025,9 +2186,9 @@ indefinitely.
 The coordinator or leader agent must not silently ignore meaningful suggestions
 from dispatched agents. Every meaningful recommendation must be adopted into the
 visible decision process, but the coordinator controls how far it is executed in
-the current task. When a selected agent produces next steps, follow-up risks,
-implementation suggestions, review suggestions, or explicit "no further action"
-guidance, the task should write:
+the current task. When a Leader-declared Agent produces next steps, follow-up
+risks, implementation suggestions, review suggestions, or explicit "no further
+action" guidance, the task should write:
 
 ```text
 <task>/agent-recommendations.json
@@ -2083,7 +2244,8 @@ ask for user approval rather than keep looping.
 
 For non-trivial routed tasks, Done Criteria require either a resolved
 `agent-recommendations.json` record or an explicit `not_required` record that
-explains why no selected agent produced meaningful follow-up recommendations.
+explains why no Leader-declared Agent produced meaningful follow-up
+recommendations.
 This keeps the loop from collapsing into "leader dispatches once, then ignores
 everyone and finishes alone."
 
@@ -2209,19 +2371,20 @@ approved, and which scope the approval covered.
 
 A task is done only when:
 
-- profile and routing are recorded;
+- the user-selected Leader and selection evidence are recorded;
+- profile, Leader-declared assignments, and VALP validation are recorded;
 - automation policy is recorded when automation or a runtime adapter is used;
 - runtime adapter and task state mapping are recorded;
 - local overlay inputs are recorded when used;
-- selected agents and context policies are recorded;
+- declared Agents and context policies are recorded;
 - provider matrix fields needed for the task are recorded;
 - dynamic model probes, computed freshness, session identity, history binding,
   and high-risk role eligibility are recorded when model-aware routing is
   required;
 - runtime preflight is recorded for Full Mode adapters and has no failing
-  selected agent checks;
-- routing confidence, missing capabilities, and rejected high-relevance
-  candidates are recorded when they affect the decision;
+  Leader-declared Agent checks;
+- assignment confidence, missing capabilities, validation blockers, and
+  high-relevance alternatives are recorded when they affect the decision;
 - context pack is recorded for non-trivial routed tasks and uses visible refs;
 - skill recommendation backend result is recorded when a backend is available,
   and relevant recommendations are surfaced in dispatch prompts;
@@ -2235,7 +2398,7 @@ A task is done only when:
   blocked;
 - correction cycle evidence is recorded and fixed when work was rejected,
   retried, blocked, invalid, or superseded;
-- agent recommendations and next-step suggestions from selected agents are
+- recommendations and next-step suggestions from Leader-declared Agents are
   recorded and resolved for non-trivial routed tasks;
 - runtime/build/test/lint/UI claims cite concrete evidence;
 - verification passed or has a scoped blocker with concrete verification
@@ -2243,9 +2406,13 @@ A task is done only when:
 - review findings have no unresolved critical/high blockers;
 - approvals are resolved, including any task-local approval request and user
   decision ledger;
-- final synthesis records decisions, disagreements, evidence gaps, and result.
+- final synthesis records decisions, disagreements, evidence gaps, and result;
 - feedback and learning records are written for non-trivial tasks when the
-  runtime supports them.
+  runtime supports them;
+- strict audit passes for the claimed grade, or a scoped blocker is returned;
+- the audited result is returned to the user. Repository hosting, push, pull
+  request, and merge are separate user-controlled workflows outside this Done
+  claim.
 
 The reference CLI command `valp audit` maps these bullets into executable audit
 items. The CLI is not required by the protocol, but it is the reference quality

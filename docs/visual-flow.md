@@ -7,16 +7,23 @@ the task is not done until the expected evidence and review gates exist.
 ```mermaid
 sequenceDiagram
     participant User
-    participant VALP as VALP CLI / Coordinator
+    participant Doctor
+    participant Leader
+    participant VALP as VALP CLI / Validator
     participant Runtime as Runtime Adapter
     participant Agent
     participant Evidence as Task Evidence Folder
     participant Audit as valp audit
 
+    User->>Doctor: inspect installation
+    Doctor-->>User: capability passports per Agent session
+    User->>Leader: explicit Leader selection
     User->>VALP: publish task
     VALP->>Evidence: task.md, state.json
-    VALP->>VALP: scan capabilities, context, skills
-    VALP->>Runtime: preflight selected agents
+    Leader->>Evidence: assignment-declaration.json
+    VALP->>VALP: validate declared Agents against current evidence
+    VALP->>Evidence: assignment-validation.json
+    VALP->>Runtime: preflight Leader-declared Agents
     Runtime-->>VALP: pane/job/session readiness
     VALP->>Evidence: routing.json, visible-routing.md
     VALP->>Agent: visible dispatch
@@ -37,6 +44,8 @@ sequenceDiagram
 .herdr-loop/tasks/<task-id>/
   task.md
   state.json
+  assignment-declaration.json
+  assignment-validation.json
   routing.json
   visible-routing.md
   dispatch-receipts.jsonl

@@ -12,8 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 EXAMPLE_SCHEMA_BY_NAME = {
     "attention-map.json": "attention-map.schema.json",
+    "assignment-declaration.json": "assignment-declaration.schema.json",
+    "assignment-validation.json": "assignment-validation.schema.json",
     "automation-policy.json": "automation-policy.schema.json",
     "agent-recommendations.json": "agent-recommendations.schema.json",
+    "capabilities.json": "capabilities.schema.json",
+    "capability-passport.json": "capability-passport.schema.json",
     "context-pack.json": "context-pack.schema.json",
     "context-selection.json": "context-selection.schema.json",
     "correction-cycle.json": "correction-cycle.schema.json",
@@ -44,6 +48,39 @@ EXAMPLE_SCHEMA_BY_NAME = {
 
 
 class SchemaExampleTests(unittest.TestCase):
+    def test_assignment_declaration_requires_user_selected_leader_evidence(self) -> None:
+        declaration = json.loads(
+            (ROOT / "examples" / "assignment-declaration.json").read_text(encoding="utf-8")
+        )
+        validator = schema_validator(ROOT / "schemas" / "assignment-declaration.schema.json")
+
+        self.assertEqual(list(validator.iter_errors(declaration)), [])
+        declaration["leader"]["selected_by"] = "valp"
+        self.assertTrue(list(validator.iter_errors(declaration)))
+        declaration["leader"]["selected_by"] = "user"
+        declaration["leader"].pop("selection_ref")
+        self.assertTrue(list(validator.iter_errors(declaration)))
+
+    def test_blocked_assignment_validation_requires_visible_blockers(self) -> None:
+        validation = json.loads(
+            (ROOT / "examples" / "assignment-validation.json").read_text(encoding="utf-8")
+        )
+        validator = schema_validator(ROOT / "schemas" / "assignment-validation.schema.json")
+
+        self.assertEqual(list(validator.iter_errors(validation)), [])
+        validation["status"] = "blocked"
+        self.assertTrue(list(validator.iter_errors(validation)))
+
+    def test_capability_passport_rejects_unbound_strong_model_evidence(self) -> None:
+        passport = json.loads(
+            (ROOT / "examples" / "capability-passport.json").read_text(encoding="utf-8")
+        )
+        validator = schema_validator(ROOT / "schemas" / "capability-passport.schema.json")
+
+        self.assertEqual(list(validator.iter_errors(passport)), [])
+        passport["model_identity"]["model_probe"]["session_identity"]["status"] = "unknown"
+        self.assertTrue(list(validator.iter_errors(passport)))
+
     def test_model_aware_provider_matrix_matches_schema(self) -> None:
         data = json.loads(
             (ROOT / "examples" / "model-aware-provider-matrix.json").read_text(encoding="utf-8")

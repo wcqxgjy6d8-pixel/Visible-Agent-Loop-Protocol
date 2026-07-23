@@ -45,6 +45,70 @@ class ValpAuditTests(unittest.TestCase):
         self.assertEqual(report.status, PASS)
         self.assertEqual(report.fail_count, 0)
 
+    def test_assignment_authority_passes_for_user_selected_leader_declaration(self) -> None:
+        item = TaskAudit(EXAMPLE).check_assignment_authority()
+
+        self.assertEqual(item.status, PASS)
+        self.assertIn("user-selected Leader leader-surface", item.message)
+        state = json.loads((EXAMPLE / "state.json").read_text(encoding="utf-8"))
+        self.assertNotIn("leader-surface", state["selected_agents"])
+
+    def test_assignment_authority_rejects_valp_authored_or_drifted_assignment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            declaration_path = task / "assignment-declaration.json"
+            declaration = json.loads(declaration_path.read_text(encoding="utf-8"))
+            declaration["leader"]["selected_by"] = "valp"
+            declaration["assignments"]["reviewer"] = "codex"
+            declaration_path.write_text(json.dumps(declaration), encoding="utf-8")
+
+            item = TaskAudit(task).check_assignment_authority()
+
+            self.assertEqual(item.status, FAIL)
+            self.assertIn("user-selection evidence", item.message)
+            self.assertIn("differ", item.message)
+
+    def test_assignment_authority_rejects_missing_validation_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE, task)
+            (task / "assignment-validation.json").unlink()
+
+            item = TaskAudit(task).check_assignment_authority()
+
+            self.assertEqual(item.status, FAIL)
+            self.assertIn("assignment-validation.json", item.message)
+
+    def test_assignment_authority_skips_legacy_task_without_new_contract_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            (task / "state.json").write_text(
+                json.dumps({
+                    "schema_version": "valp-visible-loop-state.v1",
+                    "task_id": "LEGACY-TASK",
+                    "profile": "generic-analysis",
+                    "status": "done",
+                    "selected_agents": ["manual-operator"],
+                }),
+                encoding="utf-8",
+            )
+            (task / "routing.json").write_text(
+                json.dumps({
+                    "schema_version": "legacy-routing.v0",
+                    "task_id": "LEGACY-TASK",
+                    "profile": "generic-analysis",
+                    "selected_agents": ["manual-operator"],
+                }),
+                encoding="utf-8",
+            )
+
+            item = TaskAudit(task).check_assignment_authority()
+
+            self.assertEqual(item.status, SKIP)
+            self.assertIn("Legacy task", item.message)
+
     def test_headless_queue_preflight_without_terminal_size_passes_audit(self) -> None:
         report = TaskAudit(QUEUE_EXAMPLE).run()
         self.assertEqual(report.status, PASS)
@@ -782,6 +846,12 @@ class ValpAuditTests(unittest.TestCase):
             routing["dispatch_payload_budgets"] = {"codex": recorded_budget}
             state["task_id"] = task_id
             state["status"] = "done"
+            declaration = json.loads((task / "assignment-declaration.json").read_text(encoding="utf-8"))
+            declaration["task_id"] = task_id
+            validation = json.loads((task / "assignment-validation.json").read_text(encoding="utf-8"))
+            validation["task_id"] = task_id
+            (task / "assignment-declaration.json").write_text(json.dumps(declaration), encoding="utf-8")
+            (task / "assignment-validation.json").write_text(json.dumps(validation), encoding="utf-8")
             iteration_budget = json.loads((task / "iteration-budget.json").read_text(encoding="utf-8"))
             iteration_budget["task_id"] = task_id
             (task / "iteration-budget.json").write_text(json.dumps(iteration_budget), encoding="utf-8")

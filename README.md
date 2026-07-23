@@ -125,9 +125,10 @@ It is closer to a control system than a chat convention.
 VALP is not a model ensemble or hidden consensus method. A model-level system
 such as Hermes Mixture of Agents (MoA) can improve one acting model's reasoning
 by collecting reference-model advice before the acting model responds. VALP
-governs multi-agent task execution: which runtime or agent was routed, what was
-dispatched, what evidence was expected, what actually completed, and whether
-the work passed review and audit.
+governs multi-agent task execution: which Leader the user selected, which
+Agents that Leader declared, what was dispatched, what evidence was expected,
+what actually completed, and whether the work passed review and audit. VALP
+does not choose or replace Agents.
 
 ## Entry Paths
 
@@ -229,17 +230,29 @@ valp audit examples/minimal-task
 Reference-runtime trial:
 
 ```bash
+bin/valp doctor --workspace /path/to/workspace --json
 bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it"
+bin/valp route TASK-001 --workspace /path/to/workspace \
+  --assignments /path/to/assignment-declaration.json
 bin/valp dispatch TASK-001 --workspace /path/to/workspace
 ```
 
-`publish` only creates and routes the task. It is not a completion signal. A
-new task will not pass `valp audit` until dispatch receipts, expected evidence,
-verification/review status, final synthesis, and required feedback records are
-recorded.
+Doctor commissions one capability passport per addressable Agent
+surface/session. Each passport separates official claims, local presence, live
+callability, and task-verified history, and records the observed model,
+provider, reasoning mode, session identity, skills, MCP, permissions, context,
+and limitations. The user chooses the Leader from those facts. `publish` only
+creates the task. The Leader then writes `assignment-declaration.json`, and
+`route --assignments` validates the declaration without choosing or replacing
+any Agent. See [examples/assignment-declaration.json](examples/assignment-declaration.json).
+
+A new task will not pass `valp audit` until the Leader declaration and VALP
+validation agree, dispatch receipts and expected evidence exist,
+verification/review status is resolved, and final synthesis and required
+feedback records are recorded.
 
 For Full Mode claims, completed receipts must be backed by actual runtime
-submission proof for each selected agent. Dry-run dispatch output, local
+submission proof for each Leader-declared Agent. Dry-run dispatch output, local
 sub-agent analysis, or a manually appended `dispatch_completed` receipt is not
 HERDR/live agent proof.
 
@@ -253,15 +266,21 @@ task-local files such as `task.md`, `context-pack.json`, and
 Auto Visible Mode is the opt-in version of this entry path: a local policy or
 runtime watcher can decide that a user request should publish a VALP task
 without requiring the user to type the exact command. It must still show the
-trigger reason, task id, routing, skill recommendations, dispatches, evidence
-gates, and final report. Automatic trigger is not permission for silent
-high-risk execution.
+trigger reason, task id, Leader declaration status, validation, skill
+recommendations, dispatches, evidence gates, and final report. Without a valid
+user-selected Leader declaration, it stops after publish or capability refresh.
+Automatic trigger is not permission to select an Agent or execute high-risk
+work silently.
 
 ## Architecture
 
 ```text
-user request
+Doctor capability passports
+  -> user-selected Leader
+  -> user request
   -> VALP task folder
+  -> Leader assignment declaration
+  -> VALP declaration validation
   -> reference CLI or compatible runtime adapter
   -> agent sessions, queues, hosted runs, or manual handoffs
   -> dispatch receipts
@@ -308,13 +327,13 @@ Recommended first path:
 
 ```text
 1. Install VALP and resolve the actual install root.
-2. Run `valp doctor` before any real dispatch.
-3. Install HERDR, the reference VALP runtime, when Full Mode is desired.
-4. Run runtime preflight for the selected agents.
-5. Create or choose a workspace.
-6. Publish and dispatch a dry-run task first.
-7. Let the runtime scan agents, dispatch visibly, wait for status, and write
-   receipts/evidence.
+2. Run `valp doctor --json` to commission current capability passports.
+3. Let the user explicitly choose the Leader.
+4. Install HERDR, the reference VALP runtime, when Full Mode is desired.
+5. Create or choose a workspace and publish a dry-run task.
+6. Let the Leader decompose the task and write an assignment declaration.
+7. Validate it with `valp route --assignments`, then preflight and dispatch.
+8. Let the runtime wait for status and write receipts/evidence.
 ```
 
 Linux/macOS recommended HERDR install:
@@ -340,19 +359,25 @@ VALP 0.2 starts with a local coordinator workflow plus an executable quality
 gate:
 
 ```bash
-bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it"
 bin/valp doctor --workspace /path/to/Visible-Agent-Loop-Protocol
+bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it"
+bin/valp route TASK-001 --workspace /path/to/workspace --assignments /path/to/assignment-declaration.json
 bin/valp preflight --runtime herdr --agent agy
 bin/valp dispatch TASK-001 --workspace /path/to/workspace
 bin/valp audit examples/full-mode-task
 ```
 
-`valp publish` creates the task, scans local capabilities when available, routes
-selected agents, writes dispatch files, and records `dispatch_written` receipts.
-The current reference scan reads VALP-local capability files first, then
-HERDR-compatible files as a compatibility fallback. If no local capability file
-is available, it falls back to a generic Manual Mode operator record rather than
-assuming a specific AI agent is installed.
+`valp doctor` reads VALP-local capability files first, then HERDR-compatible
+files as a compatibility fallback, and commissions capability passports. If
+evidence is missing, the corresponding passport layer stays `unknown`; Doctor
+does not invent a capability or infer the model from the Agent product name.
+
+`valp publish` creates the task and waits for the Leader. It does not select
+Agents, write dispatches, or record `dispatch_written` receipts. `valp route`
+requires a Leader-authored declaration bound to an explicit user-selection
+reference. It verifies current capability, role, model/session, context, and
+permission gates before writing routing and dispatch evidence. A failed check
+blocks the declaration and suggests no replacement Agent.
 
 `valp preflight` checks adapter-specific runtime readiness such as agent
 sessions, terminal size for pane adapters, queue/worker facts for headless
@@ -372,14 +397,15 @@ path is available.
 
 `valp audit` scans a task evidence folder and checks the Done Criteria from
 `SPEC.md`, including runtime preflight, skill recommendation evidence,
-correction-cycle evidence, invalid evidence status, and unsupported
-runtime/build/test claims.
+Leader declaration/validation consistency, correction-cycle evidence, invalid
+evidence status, and unsupported runtime/build/test claims.
 
 `valp doctor` diagnoses a VALP protocol checkout without mutating by default. It
 checks local git tracking status, working tree cleanliness, ignored local
 residue, JSON/JSONL syntax, bundled example audits, and reference adapter
-probes. Use
-`--report <path>` or `--report desktop` to write a Markdown report.
+probes. It also commissions installation capability passports; use `--json` for
+their full machine-readable form. Use `--report <path>` or `--report desktop`
+to write a Markdown report.
 
 See [docs/cli-audit.md](docs/cli-audit.md).
 
@@ -389,11 +415,11 @@ The repository includes five self-verifying task examples:
 
 | Example | What it proves | Expected audit |
 |---|---|---|
-| `examples/minimal-task/` | Manual Mode evidence can be audited without a runtime | `PASS`, `pass=13 warn=0 fail=0` |
-| `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, correction-cycle, recommendation, review, and final synthesis audit gates | `PASS`, `pass=23 warn=0 fail=0` |
-| `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=21 warn=0 fail=0` |
-| `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=14 warn=0 fail=0` |
-| `examples/langgraph-false-done/` | Real non-HERDR LangGraph false-done, repair, and independent review case | `PASS`, `pass=27 warn=0 fail=0` |
+| `examples/minimal-task/` | Manual Mode evidence can be audited without a runtime | `PASS`, `pass=14 warn=0 fail=0` |
+| `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, correction-cycle, recommendation, review, and final synthesis audit gates | `PASS`, `pass=24 warn=0 fail=0` |
+| `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=22 warn=0 fail=0` |
+| `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=15 warn=0 fail=0` |
+| `examples/langgraph-false-done/` | Real non-HERDR LangGraph false-done, repair, and independent review case | `PASS`, `pass=28 warn=0 fail=0` |
 | `docs/case-studies/visible-dispatch-process-proof.md` | Short public video of a real VALP/HERDR publish-and-dispatch process; not a standalone Full Mode completion case study | Process proof only |
 
 Run the complete smoke check:
@@ -427,7 +453,9 @@ notes.
 
 Full Mode is the intended VALP experience for automated multi-agent work:
 
-- automatic agent and runtime scan;
+- Doctor-commissioned Agent capability passports;
+- explicit user-selected Leader;
+- Leader-declared assignments validated by VALP;
 - provider matrix and context policy scan;
 - visible dispatch;
 - submission proof;
@@ -435,7 +463,7 @@ Full Mode is the intended VALP experience for automated multi-agent work:
 - receipt ledger;
 - evidence gates;
 - review/fix/review loop;
-- selected-agent recommendation resolution;
+- Leader-declared Agent recommendation resolution;
 - approval gates for high-risk actions;
 - final synthesis record.
 
@@ -449,32 +477,35 @@ runtime-backed receipt guarantees.
 Visible Agent Loop is a control system, not a chat convention:
 
 ```text
-publish task
-  -> scan runtime, tools, skills, context budgets
+Doctor commissions one passport per Agent surface/session
+  -> user selects Leader
+  -> publish task
+  -> Leader decomposes work and declares assignments
+  -> VALP validates current runtime, tools, skills, models, and context budgets
   -> load local overlay, if present
   -> select runtime adapter
   -> classify task profile
   -> build provider matrix
-  -> preflight runtime and agent sessions
-  -> score and route agents by evidence
+  -> score declared assignments as advisory evidence
+  -> block invalid declarations without choosing replacements
+  -> preflight runtime and declared Agent sessions
   -> run skill recommendation, if available
-  -> route squad if needed
   -> dispatch visibly
   -> require receipts
   -> map runtime task states
   -> verify with real artifacts
   -> review/fix/review
-  -> resolve selected-agent recommendations with scope control
+  -> resolve Leader-declared Agent recommendations with scope control
   -> record final synthesis
 ```
 
-No agent is assumed to be known from memory. Agent selection is based on current
-runtime evidence: declared role, installed skills, available MCP/tools, runtime
-status, adapter preflight, permission boundary, context policy, optional skill
-recommendation evidence, local overlay hints, prior verification records, and
-routing feedback.
-Local capability profiles are hints, not fixed assignments. Every task reruns
-capability routing.
+No Agent is assumed to be known from memory or from its product name. Doctor
+records current evidence; the user chooses the Leader; the Leader assigns task
+roles. VALP scores and validates those declarations against declared role,
+installed skills, available MCP/tools, observed model/provider/session,
+runtime status, permission boundary, context policy, local overlay hints, and
+bound verification history. Scores are advice and audit evidence, never Agent
+selection authority.
 
 Managed-agent platforms, daemon queues, and terminal-pane systems can all be
 VALP-compatible if they export the required runtime adapter evidence. A runtime
@@ -608,7 +639,7 @@ Visible-Agent-Loop-Protocol/
 - Dispatch completion requires receipts and expected evidence.
 - Full/Remote Mode completion also requires prior runtime submission proof; dry
   runs and local sub-agent simulations do not count as live dispatch.
-- Selected-agent recommendations must be visibly resolved; adoption means
+- Leader-declared Agent recommendations must be visibly resolved; adoption means
   explicit disposition and scope control, not unlimited task expansion.
 - Dispatch payloads must be concise; long context and full recommendation
   records are cited by file reference, not pasted into every worker prompt.
@@ -617,7 +648,11 @@ Visible-Agent-Loop-Protocol/
 - Long context is a reliability risk and must be scanned before dispatch.
 - Skill recommendation is evidence, not authority.
 - Local overlays are hints, not protocol overrides.
-- Agent profiles are routing hints, not fixed assignments.
+- Agent profiles and scores are assignment hints for the Leader, not VALP
+  selection authority.
+- The user selects the Leader; only that Leader declares task Agents.
+- VALP validates declarations and may block them, but cannot choose or replace
+  an Agent.
 - Provider capability is scanned, not assumed.
 - Routing feedback improves future routing but never replaces current scans.
 - Runtime queue completion is not VALP completion unless evidence gates pass.

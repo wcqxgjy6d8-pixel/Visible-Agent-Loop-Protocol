@@ -4,30 +4,31 @@
   "profile": "software-code",
   "loop_layer": "agentic_coding_loop",
   "generated_at": "2026-07-03T00:00:00Z",
+  "leader_agent": "queue-leader",
   "heads": {
     "state_gate": {
-      "selected": "codex",
+      "selected": "queue-leader",
       "candidate": "role:coordinator",
-      "score": 0.89,
-      "status": "selected"
+      "score": null,
+      "status": "user_selected_leader"
     },
     "implementation": {
       "selected": "codex",
       "candidate": "role:implementer",
       "score": 0.89,
-      "status": "selected"
+      "status": "leader_declared"
     },
     "ux_review": {
       "selected": "claude",
       "candidate": "role:reviewer",
       "score": 0.84,
-      "status": "selected"
+      "status": "leader_declared"
     },
     "prototype": {
       "selected": null,
       "candidate": "role:prototype",
       "score": null,
-      "status": "not_selected"
+      "status": "not_declared"
     }
   },
   "selected_agents": [
@@ -35,7 +36,6 @@
     "claude"
   ],
   "role_assignments": {
-    "coordinator": "codex",
     "implementer": "codex",
     "reviewer": "claude"
   },

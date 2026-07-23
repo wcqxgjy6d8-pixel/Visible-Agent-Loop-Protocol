@@ -66,8 +66,12 @@ def validator_for(schema_name):
 
 schema_by_name = {
     "attention-map.json": "attention-map.schema.json",
+    "assignment-declaration.json": "assignment-declaration.schema.json",
+    "assignment-validation.json": "assignment-validation.schema.json",
     "automation-policy.json": "automation-policy.schema.json",
     "agent-recommendations.json": "agent-recommendations.schema.json",
+    "capabilities.json": "capabilities.schema.json",
+    "capability-passport.json": "capability-passport.schema.json",
     "context-pack.json": "context-pack.schema.json",
     "context-selection.json": "context-selection.schema.json",
     "correction-cycle.json": "correction-cycle.schema.json",

@@ -20,6 +20,7 @@ from valp_cli.workflow import (
     collect_herdr_preflight,
     dispatch_task,
     publish_task,
+    route_task,
     write_herdr_submission_receipt,
 )
 
@@ -90,6 +91,41 @@ print(RESPONSES[key])
 
 
 class PackagedHerdrAdapterTests(unittest.TestCase):
+    def publish_routed_task(self, root: Path, task_id: str) -> Path:
+        declaration = {
+            "schema_version": "valp-assignment-declaration.v1",
+            "declaration_id": f"test-declaration-{task_id}",
+            "task_id": task_id,
+            "declared_at": "2026-07-23T10:00:00Z",
+            "leader": {
+                "agent_id": "codex",
+                "selected_by": "user",
+                "selection_ref": f"test-user-selection:{task_id}",
+            },
+            "assignments": {
+                "coordinator": "codex",
+                "reviewer": "codex",
+            },
+            "reasons": {
+                "coordinator": "Test Leader explicitly accepted the runtime coordinator role.",
+                "reviewer": "Test Leader declared the bounded review role.",
+            },
+        }
+        task_dir = publish_task(
+            root,
+            task_id,
+            "Coordinate a bounded runtime check.",
+            profile="generic-analysis",
+            runtime="herdr",
+        )
+        route_task(
+            root,
+            task_id,
+            runtime="herdr",
+            assignment_declaration=declaration,
+        )
+        return task_dir
+
     def test_existing_invalid_submission_receipt_conflicts_instead_of_being_replaced(self) -> None:
         task_id = "TASK-RECEIPT-CONFLICT"
         expected = ["agents/codex/self-review.md"]
@@ -460,13 +496,7 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
             with patch.dict(os.environ, {"PATH": clean_path}, clear=False):
                 with patch("valp_cli.workflow.load_local_capabilities", return_value=TEST_CAPABILITIES):
                     with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                        task_dir = publish_task(
-                            root,
-                            "TASK-CLEAN-HERDR",
-                            "Coordinate a bounded runtime check.",
-                            profile="generic-analysis",
-                            runtime="herdr",
-                        )
+                        task_dir = self.publish_routed_task(root, "TASK-CLEAN-HERDR")
                 commands = dispatch_task(
                     root,
                     "TASK-CLEAN-HERDR",
@@ -495,13 +525,7 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
             with patch.dict(os.environ, {"PATH": clean_path}, clear=False):
                 with patch("valp_cli.workflow.load_local_capabilities", return_value=TEST_CAPABILITIES):
                     with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                        task_dir = publish_task(
-                            root,
-                            "TASK-HERDR-EVIDENCE",
-                            "Coordinate a bounded runtime check.",
-                            profile="generic-analysis",
-                            runtime="herdr",
-                        )
+                        task_dir = self.publish_routed_task(root, "TASK-HERDR-EVIDENCE")
                 evidence = task_dir / "agents" / "codex" / "self-review.md"
                 evidence.write_text("# Self Review\n\nPassed.\n", encoding="utf-8")
                 dispatch_task(

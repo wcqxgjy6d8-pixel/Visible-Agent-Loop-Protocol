@@ -3,7 +3,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 import errno
 import hashlib
-import itertools
 import json
 import math
 import os
@@ -830,7 +829,7 @@ def iteration_budget_for(task_id: str, role_assignments: dict[str, str]) -> dict
     return {
         "schema_version": "valp-iteration-budget.v1",
         "task_id": task_id,
-        "strategy": "minimum_capable_team",
+        "strategy": "leader_declared_bounded_team",
         "max_dispatch_reference_tokens": max(initial_tokens * 2 + reviewer_tokens * max_fix_review_rounds, 1),
         "max_dispatches": max(len(roles) + 2, 3),
         "max_reroutes": 1,
@@ -1900,7 +1899,7 @@ def evidence_board_for(profile: str, loop_layer: str, selected_agents: list[str]
             "required_evidence": ["attention-map.json", "visible-routing.md"],
         },
         {
-            "claim": "selected agents have visible dispatches",
+            "claim": "Leader-declared Agents have visible dispatches",
             "status": "needs_dispatch_completion",
             "required_evidence": ["agents/<agent>/dispatch.md", "dispatch-receipts.jsonl"],
         },
@@ -1950,16 +1949,21 @@ def attention_heads_for(
     candidate_scores: dict[str, dict[str, Any]],
     design_contract: dict[str, Any],
     role_assignments: dict[str, str],
+    leader_agent: str,
 ) -> dict[str, Any]:
     heads: dict[str, Any] = {}
     for head, role in ATTENTION_HEAD_ROLES.items():
-        selected = role_assignments.get(role)
+        selected = leader_agent if role == "coordinator" else role_assignments.get(role)
         score = candidate_scores.get(selected or "", {}).get("overall")
         heads[head] = {
             "selected": selected,
             "candidate": f"role:{role}",
             "score": score,
-            "status": "selected" if selected in selected_agents else "not_selected",
+            "status": (
+                "user_selected_leader"
+                if role == "coordinator" and selected
+                else "leader_declared" if selected in selected_agents else "not_declared"
+            ),
         }
     if loop_layer == "external_feedback_loop":
         heads["external_feedback"] = {
@@ -1988,6 +1992,7 @@ def write_visible_attention(
     candidate_scores: dict[str, dict[str, Any]],
     skill_recommendations: dict[str, Any],
     role_assignments: dict[str, str],
+    leader_agent: str,
     feedback_history: list[dict[str, Any]],
     control_contract_record: dict[str, str],
 ) -> dict[str, Any]:
@@ -2008,7 +2013,15 @@ def write_visible_attention(
     )
     mask_list = mask_list_for(profile, loop_layer, design_contract)
     evidence_board = evidence_board_for(profile, loop_layer, selected_agents, design_contract)
-    heads = attention_heads_for(loop_layer, profile, selected_agents, candidate_scores, design_contract, role_assignments)
+    heads = attention_heads_for(
+        loop_layer,
+        profile,
+        selected_agents,
+        candidate_scores,
+        design_contract,
+        role_assignments,
+        leader_agent,
+    )
     attention_map = {
         "schema_version": "valp-visible-attention-map.v1",
         "task_id": task_id,
@@ -2016,6 +2029,7 @@ def write_visible_attention(
         "loop_layer": loop_layer,
         "generated_at": now_iso(),
         "heads": heads,
+        "leader_agent": leader_agent,
         "selected_agents": selected_agents,
         "role_assignments": role_assignments,
         "candidate_scores_ref": "routing.json#candidate_scores",
@@ -2159,9 +2173,7 @@ def publish_task(
     task_id: str,
     prompt: str,
     profile: str | None = None,
-    route: bool = True,
     runtime: str | None = None,
-    include_agents: list[str] | None = None,
 ) -> Path:
     root = workspace_root(root)
     normalize_runtime(runtime)
@@ -2177,7 +2189,7 @@ def publish_task(
 
 ID: {task_id}
 Profile: {selected_profile}
-Mode: Selected during routing
+Mode: Awaiting Leader assignment
 
 ## Goal
 
@@ -2185,7 +2197,7 @@ Mode: Selected during routing
 
 ## Expected Evidence
 
-Generated during routing.
+Declared by the user-selected Leader before VALP validation.
 
 ## Approval Risks
 
@@ -2216,17 +2228,16 @@ Generated during routing.
         "approval_required": approval_risks,
         "updated_at": now_iso(),
     }
-    requested_agents = list(dict.fromkeys(str(agent) for agent in (include_agents or []) if str(agent).strip()))
-    if requested_agents:
-        state["requested_agents"] = requested_agents
     write_json(directory / "state.json", state)
-    if route:
-        scan_workspace(root, task_id, runtime=runtime)
-        route_task(root, task_id, runtime=runtime)
     return directory
 
 
-def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str, Any]:
+def route_task(
+    root: Path,
+    task_id: str,
+    runtime: str | None = None,
+    assignment_declaration: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     root = workspace_root(root)
     normalize_runtime(runtime)
     directory = task_dir(root, task_id)
@@ -2234,6 +2245,67 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
     state = read_json(state_path)
     if not state:
         raise SystemExit(f"Missing state.json for task {task_id}")
+    declaration = assignment_declaration or read_json(directory / "assignment-declaration.json")
+    if not declaration:
+        raise SystemExit(
+            "Routing requires a Leader-authored assignment declaration; "
+            "VALP does not select Agents"
+        )
+    if declaration.get("schema_version") != "valp-assignment-declaration.v1":
+        raise SystemExit("Assignment declaration must use valp-assignment-declaration.v1")
+    allowed_declaration_fields = {
+        "schema_version",
+        "declaration_id",
+        "task_id",
+        "declared_at",
+        "leader",
+        "assignments",
+        "reasons",
+    }
+    extra_declaration_fields = sorted(set(declaration) - allowed_declaration_fields)
+    if extra_declaration_fields:
+        raise SystemExit(
+            "Invalid Leader assignment declaration: unexpected_fields:"
+            + ",".join(extra_declaration_fields)
+        )
+    if declaration.get("task_id") != task_id:
+        raise SystemExit("Assignment declaration task_id does not match the routed task")
+    leader = declaration.get("leader") if isinstance(declaration.get("leader"), dict) else {}
+    if set(leader) != {"agent_id", "selected_by", "selection_ref"}:
+        raise SystemExit("Invalid Leader assignment declaration: invalid_leader_fields")
+    if leader.get("selected_by") != "user" or not leader.get("agent_id") or not leader.get("selection_ref"):
+        raise SystemExit("Assignment declaration requires explicit user-selected Leader evidence")
+    declared_assignments = declaration.get("assignments")
+    if not isinstance(declared_assignments, dict) or not declared_assignments:
+        raise SystemExit("Assignment declaration has no role assignments")
+    role_assignments = {
+        str(role): str(agent)
+        for role, agent in declared_assignments.items()
+        if str(role).strip() and str(agent).strip()
+    }
+    declaration_errors: list[str] = []
+    if not str(declaration.get("declaration_id") or "").strip():
+        declaration_errors.append("missing_declaration_id")
+    declared_at = str(declaration.get("declared_at") or "").strip()
+    try:
+        declared_timestamp = datetime.fromisoformat(declared_at.replace("Z", "+00:00"))
+    except ValueError:
+        declared_timestamp = None
+    if declared_timestamp is None or declared_timestamp.tzinfo is None:
+        declaration_errors.append("invalid_declared_at")
+    reasons = declaration.get("reasons")
+    if not isinstance(reasons, dict):
+        reasons = {}
+    if role_assignments != declared_assignments:
+        declaration_errors.append("invalid_role_or_agent_value")
+    if set(reasons) != set(role_assignments):
+        declaration_errors.append("assignment_reason_roles_mismatch")
+    for role in role_assignments:
+        if not str(reasons.get(role) or "").strip():
+            declaration_errors.append(f"missing_assignment_reason:{role}")
+    if declaration_errors:
+        raise SystemExit("Invalid Leader assignment declaration: " + ", ".join(declaration_errors))
+    write_json(directory / "assignment-declaration.json", declaration)
     prompt = (directory / "task.md").read_text(encoding="utf-8", errors="replace")
     profile = state.get("profile") or classify_profile(prompt)
     approval_risks = classify_approval_risks(extract_goal_text(prompt))
@@ -2250,14 +2322,11 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
     overlay = load_local_overlay(root)
     agents = capabilities.get("agents") or {}
     feedback_history = load_routing_feedback_history(root)
-    # Skill/MCP evidence is collected before candidate scoring. Per-agent
-    # slices are written after the minimum capable team is selected.
+    # Skill/MCP evidence is collected before advisory scoring. Per-agent
+    # slices are written only for the Leader-declared Agents after validation.
     skill_recommendations = run_skill_recommendations(root, task_id, profile, prompt)
     routing_evaluated_at = now_iso()
-    enforce_model_role_gate = (
-        resolve_runtime(runtime) != "manual"
-        and any(isinstance(info.get("model_identity"), dict) for info in agents.values())
-    )
+    enforce_model_role_gate = resolve_runtime(runtime) != "manual"
     candidate_scores = score_candidates(
         profile,
         agents,
@@ -2267,22 +2336,37 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         enforce_model_role_gate=enforce_model_role_gate,
         evaluated_at=routing_evaluated_at,
     )
-    requested_agents = validate_requested_agents(state.get("requested_agents") or [], agents)
-    selected_agents = select_agents(profile, agents, candidate_scores, requested_agents)
-    role_assignments = role_assignments_for(
-        profile,
-        selected_agents,
-        agents,
-        candidate_scores,
-        requested_agents,
-        enforce_model_role_gate=enforce_model_role_gate,
-    )
-    required_roles = required_roles_for(profile, agents, requested_agents)
+    selected_agents = list(dict.fromkeys(role_assignments.values()))
+    required_roles = required_roles_for(profile, agents)
+    assignment_blockers: list[str] = []
+    missing_roles = [role for role in required_roles if role not in role_assignments]
+    assignment_blockers.extend(f"missing_required_role:{role}" for role in missing_roles)
+    if (
+        role_assignments.get("coordinator")
+        and role_assignments.get("coordinator") != str(leader.get("agent_id"))
+    ):
+        assignment_blockers.append("coordinator_must_match_user_selected_leader")
+    for role, agent in role_assignments.items():
+        info = agents.get(agent)
+        if not isinstance(info, dict):
+            assignment_blockers.append(f"unknown_agent:{role}:{agent}")
+        elif not bool(info.get("active", True)):
+            assignment_blockers.append(f"inactive_agent:{role}:{agent}")
+        elif role in {"coordinator", "implementer", "reviewer", "prototype", "researcher"} and role_fit_score(
+            info, role
+        ) <= 0.0:
+            assignment_blockers.append(f"role_ineligible:{role}:{agent}")
     blocked_model_roles = [
         role
         for role in ("implementer", "reviewer")
-        if enforce_model_role_gate and role in required_roles and role not in role_assignments
+        if enforce_model_role_gate
+        and role in role_assignments
+        and role in (candidate_scores.get(role_assignments[role], {}).get("model_role_gate", {}).get("blocked_roles") or [])
     ]
+    assignment_blockers.extend(
+        f"active_model_identity:{role}:{role_assignments[role]}"
+        for role in blocked_model_roles
+    )
     model_role_gate = {
         "enforced": enforce_model_role_gate,
         "status": "blocked" if blocked_model_roles else "pass",
@@ -2294,7 +2378,38 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             else "High-risk model identity requirements are satisfied or not applicable."
         ),
     }
-    capabilities_missing = [f"active_model_identity:{role}" for role in blocked_model_roles]
+    capabilities_missing = list(assignment_blockers)
+    assignment_validation = {
+        "schema_version": "valp-assignment-validation.v1",
+        "task_id": task_id,
+        "declaration_ref": "assignment-declaration.json",
+        "authority": "leader_declared",
+        "status": "blocked" if assignment_blockers else "pass",
+        "validated_at": routing_evaluated_at,
+        "blockers": assignment_blockers,
+        "validated_assignments": role_assignments,
+    }
+    write_json(directory / "assignment-validation.json", assignment_validation)
+    if assignment_blockers:
+        state["status"] = "blocked"
+        state["role_assignments"] = role_assignments
+        state["selected_agents"] = selected_agents
+        state["capabilities_missing"] = capabilities_missing
+        state["assignment_authority"] = "leader_declared"
+        state["assignment_declaration"] = {
+            "status": "recorded",
+            "ref": "assignment-declaration.json",
+            "leader_agent": leader.get("agent_id"),
+            "selected_by": leader.get("selected_by"),
+            "selection_ref": leader.get("selection_ref"),
+        }
+        state["assignment_validation"] = {
+            "status": "blocked",
+            "ref": "assignment-validation.json",
+        }
+        state["updated_at"] = now_iso()
+        write_json(state_path, state)
+        raise SystemExit("Assignment validation blocked: " + ", ".join(assignment_blockers))
     preflight = runtime_preflight_for_agents(
         capabilities.get("runtime_preflight") or {},
         selected_agents,
@@ -2342,7 +2457,7 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             raise SystemExit(f"Routing blocked by iteration budget: {iteration_budget.get('stop_reason') or iteration_budget.get('status')}")
     iteration_budget.setdefault("usage", {})["reroutes"] = reroute_count
     iteration_budget["task_id"] = task_id
-    iteration_budget["strategy"] = "minimum_capable_team"
+    iteration_budget["strategy"] = "leader_declared_bounded_team"
     visible_attention = write_visible_attention(
         root,
         directory,
@@ -2353,6 +2468,7 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         candidate_scores,
         skill_recommendations,
         role_assignments,
+        str(leader.get("agent_id")),
         feedback_history,
         control_contract_record,
     )
@@ -2392,12 +2508,23 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         "capabilities_needed": PROFILE_CAPABILITIES.get(profile, PROFILE_CAPABILITIES["generic-analysis"]),
         "role_requirements": required_roles,
         "role_assignments": role_assignments,
+        "assignment_authority": "leader_declared",
+        "assignment_declaration": {
+            "status": "recorded",
+            "ref": "assignment-declaration.json",
+            "leader_agent": leader.get("agent_id"),
+            "selected_by": leader.get("selected_by"),
+            "selection_ref": leader.get("selection_ref"),
+        },
+        "assignment_validation": {
+            "status": "pass",
+            "ref": "assignment-validation.json",
+        },
         "model_role_gate": model_role_gate,
         "team_selection": {
-            "strategy": "minimum_capable_team",
+            "strategy": "leader_declared_valp_validated",
             "required_roles": required_roles,
             "selected_agents": selected_agents,
-            "supplemental_requested_agents": [agent for agent in requested_agents if agent not in role_assignments.values()],
         },
         "submission_dependencies": {
             "status": "recorded",
@@ -2414,15 +2541,10 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         "control_contract": control_contract_record,
         "control_slices": control_slice_refs,
         "coordinator_selection": {
-            "selected_agent": role_assignments.get("coordinator"),
-            "selection_rule": "Selected from current capability evidence, local overlay hints, runtime availability, context policy, and task profile. The open protocol does not name a universal leader.",
+            "selected_agent": leader.get("agent_id"),
+            "selection_rule": "Explicit user-selected Leader from assignment-declaration.json; VALP validated but did not select the Agent.",
         },
         "selected_agents": selected_agents,
-        "requested_agents": requested_agents,
-        "requested_agent_roles": {
-            agent: requested_agent_role(agent, agents)
-            for agent in requested_agents
-        },
         "agent_match_reasons": {
             agent: match_reasons_for(agent, profile, agents.get(agent, {}))
             for agent in selected_agents
@@ -2503,12 +2625,10 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             "provider_matrix": {"status": "scanned", "ref": "routing.json"},
             "squad_routing": {"used": False},
             "selected_agents": selected_agents,
-            "requested_agents": requested_agents,
-            "requested_agent_roles": {
-                agent: requested_agent_role(agent, agents)
-                for agent in requested_agents
-            },
             "role_assignments": role_assignments,
+            "assignment_authority": "leader_declared",
+            "assignment_declaration": routing["assignment_declaration"],
+            "assignment_validation": routing["assignment_validation"],
             "submission_dependencies": routing["submission_dependencies"],
             "delegation_policy": routing["delegation_policy"],
             "capabilities_needed": routing["capabilities_needed"],
@@ -2596,11 +2716,7 @@ def score_candidates(
         context_fit = 0.85
         feedback_prior = feedback_prior_for_agent(agent, profile, history)
         agent_preflight = preflight_agents.get(agent) if isinstance(preflight_agents, dict) else {}
-        runtime_probe = (
-            agent_preflight.get("model_probe")
-            if enforce_model_role_gate and isinstance(agent_preflight, dict)
-            else None
-        )
+        runtime_probe = agent_preflight.get("model_probe") if isinstance(agent_preflight, dict) else None
         model_identity = model_identity_for(
             agent,
             info,
@@ -2666,119 +2782,15 @@ def score_candidates(
     return scores
 
 
-def select_agents(
-    profile: str,
-    agents: dict[str, Any],
-    scores: dict[str, dict[str, Any]],
-    requested_agents: list[str] | None = None,
-) -> list[str]:
-    requested = validate_requested_agents(requested_agents, agents)
-    required_roles = required_roles_for(profile, agents, requested)
-    viable = sorted(
-        agent
-        for agent in scores
-        if agent in agents
-        and bool(agents[agent].get("active", True))
-        and (float(scores[agent].get("overall", 0)) >= 0.5 or agent in requested)
-    )
-    requested_set = set(requested)
-    for team_size in range(max(1, len(requested_set)), len(viable) + 1):
-        covering: list[tuple[float, float, tuple[str, ...]]] = []
-        for team in itertools.combinations(viable, team_size):
-            if not requested_set.issubset(team):
-                continue
-            role_scores = [
-                max(
-                    float(
-                        scores[agent].get("role_fit", {}).get(
-                            role,
-                            role_fit_score(agents[agent], role),
-                        )
-                    )
-                    for agent in team
-                )
-                for role in required_roles
-            ]
-            if len(agents) > 1 and any(value < 0.35 for value in role_scores):
-                continue
-            covering.append(
-                (
-                    sum(role_scores),
-                    sum(float(scores[agent].get("overall", 0)) for agent in team) / len(team),
-                    team,
-                )
-            )
-        if covering:
-            return list(max(covering, key=lambda item: (item[0], item[1], item[2]))[2])
-
-    ranked = sorted(scores, key=lambda name: scores[name].get("overall", 0), reverse=True)
-    fallback = requested or ranked[:1]
-    return list(dict.fromkeys(fallback))
-
-
-def requested_agent_role(agent: str, agents: dict[str, Any]) -> str:
-    """Map an explicitly requested agent to its declared primary role."""
-    return inferred_primary_role(agents.get(agent) or {})
-
-
 def required_roles_for(
     profile: str,
     agents: dict[str, Any],
-    requested_agents: list[str] | None = None,
 ) -> list[str]:
-    roles = list(PROFILE_ROLE_REQUIREMENTS.get(profile, PROFILE_ROLE_REQUIREMENTS["generic-analysis"]))
-    for agent in requested_agents or []:
-        role = requested_agent_role(str(agent), agents)
-        if role in {"coordinator", "implementer", "reviewer", "prototype", "researcher"} and role not in roles:
-            roles.append(role)
-    return roles
-
-
-def validate_requested_agents(
-    requested_agents: list[str] | None,
-    agents: dict[str, Any],
-) -> list[str]:
-    requested = list(dict.fromkeys(str(agent) for agent in (requested_agents or []) if str(agent).strip()))
-    missing = [agent for agent in requested if agent not in agents]
-    inactive = [agent for agent in requested if agent in agents and not bool(agents[agent].get("active", True))]
-    if missing:
-        raise SystemExit("Requested agent is not present in the capability registry: " + ", ".join(missing))
-    if inactive:
-        raise SystemExit("Requested agent is inactive in the capability registry: " + ", ".join(inactive))
-    return requested
-
-
-def role_assignments_for(
-    profile: str,
-    selected_agents: list[str],
-    agents: dict[str, Any],
-    scores: dict[str, dict[str, Any]],
-    requested_agents: list[str] | None = None,
-    enforce_model_role_gate: bool = False,
-) -> dict[str, str]:
-    assignments: dict[str, str] = {}
-    required_roles = required_roles_for(profile, agents, requested_agents)
-    for role in required_roles:
-        eligible_agents = selected_agents
-        if enforce_model_role_gate and role in {"implementer", "reviewer"}:
-            eligible_agents = [
-                name
-                for name in selected_agents
-                if role not in (scores.get(name, {}).get("model_role_gate", {}).get("blocked_roles") or [])
-            ]
-        ranked = sorted(
-            eligible_agents,
-            key=lambda name: (scores.get(name, {}).get("role_fit", {}).get(role, 0), scores.get(name, {}).get("overall", 0)),
-            reverse=True,
-        )
-        if ranked:
-            assignments[role] = ranked[0]
-    for agent in requested_agents or []:
-        role = requested_agent_role(str(agent), agents)
-        blocked_roles = scores.get(str(agent), {}).get("model_role_gate", {}).get("blocked_roles") or []
-        if role in required_roles and not (enforce_model_role_gate and role in blocked_roles):
-            assignments[role] = str(agent)
-    return assignments
+    return [
+        role
+        for role in PROFILE_ROLE_REQUIREMENTS.get(profile, PROFILE_ROLE_REQUIREMENTS["generic-analysis"])
+        if role != "coordinator"
+    ]
 
 
 def agent_capability_text(info: dict[str, Any]) -> str:
@@ -2841,13 +2853,13 @@ def match_reasons_for(agent: str, profile: str, info: dict[str, Any]) -> list[st
     if strengths:
         reasons.extend(strengths[:2])
     if not reasons:
-        reasons.append(f"candidate selected for {profile}")
+        reasons.append(f"candidate capability facts for {profile}")
     return reasons
 
 
 def routing_confidence(scores: dict[str, dict[str, Any]], selected_agents: list[str]) -> dict[str, Any]:
     if not selected_agents:
-        return {"overall": "low", "reason": "No selected agents."}
+        return {"overall": "low", "reason": "No Leader-declared Agents."}
     average = sum(scores[agent]["overall"] for agent in selected_agents) / len(selected_agents)
     band = "high" if average >= 0.75 else "medium" if average >= 0.55 else "low"
     return {"overall": band, "score": round(average, 2), "reason": "Computed from local capability scan and overlay hints."}
@@ -2865,7 +2877,7 @@ def rejected_candidates(scores: dict[str, dict[str, Any]], selected_agents: list
                     "agent": agent,
                     "confidence": score.get("confidence", "unknown"),
                     "score": score.get("overall"),
-                    "reason": "Not selected because selected role candidates had stronger current capability evidence.",
+                    "reason": "The Leader declaration did not assign this Agent; the score is advisory only.",
                 }
             )
     return rejected
@@ -3338,7 +3350,7 @@ def provider_matrix_for(
             agent,
             info,
             overlay_profile,
-            runtime_probe=agent_preflight.get("model_probe") if dynamic_discovery_required else None,
+            runtime_probe=agent_preflight.get("model_probe"),
             evaluated_at=evaluated_at,
         )
         providers[agent] = {
@@ -5961,9 +5973,9 @@ def dispatch_task(
         targets = selected_agents if agent == "all" else [agent]
     unknown_targets = [target for target in targets if target not in selected_agents]
     if unknown_targets:
-        raise SystemExit("Agent is not selected for this task: " + ", ".join(unknown_targets))
+        raise SystemExit("Agent is not declared for this task: " + ", ".join(unknown_targets))
     if not targets:
-        raise SystemExit("No selected agent is assigned to the requested role")
+        raise SystemExit("No Leader-declared Agent is assigned to the requested role")
 
     phases: list[tuple[str, str]] = []
     for target in targets:

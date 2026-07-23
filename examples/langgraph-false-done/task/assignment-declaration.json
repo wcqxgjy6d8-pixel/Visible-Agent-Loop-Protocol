@@ -1,0 +1,21 @@
+{
+  "schema_version": "valp-assignment-declaration.v1",
+  "declaration_id": "decl-VALP-NON-HERDR-E2E-001-1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "declared_at": "2026-07-23T10:00:00Z",
+  "leader": {
+    "agent_id": "langgraph_coordinator",
+    "selected_by": "user",
+    "selection_ref": "example:user-selected-langgraph-leader"
+  },
+  "assignments": {
+    "coordinator": "langgraph_coordinator",
+    "implementer": "langgraph_worker",
+    "reviewer": "langgraph_reviewer"
+  },
+  "reasons": {
+    "coordinator": "User-selected Leader for the LangGraph example.",
+    "implementer": "Leader-declared LangGraph worker assignment.",
+    "reviewer": "Leader-declared independent reviewer assignment."
+  }
+}

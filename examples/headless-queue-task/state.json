@@ -57,9 +57,20 @@
     "claude"
   ],
   "role_assignments": {
-    "coordinator": "codex",
     "implementer": "codex",
     "reviewer": "claude"
+  },
+  "assignment_authority": "leader_declared",
+  "assignment_declaration": {
+    "status": "recorded",
+    "ref": "assignment-declaration.json",
+    "leader_agent": "queue-leader",
+    "selected_by": "user",
+    "selection_ref": "example:user-selected-queue-leader"
+  },
+  "assignment_validation": {
+    "status": "pass",
+    "ref": "assignment-validation.json"
   },
   "capabilities_needed": [
     "implementation",

@@ -67,6 +67,20 @@ class ModelAwareRoutingTests(unittest.TestCase):
 
     def test_herdr_preflight_emits_supported_model_probe_from_pane_metadata(self) -> None:
         def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
+            if command[1:] == ["agent", "--help"]:
+                return {
+                    "ok": True,
+                    "exit_code": 0,
+                    "stdout": "herdr agent prompt <target> <text>\nherdr agent wait <target>",
+                    "stderr": "",
+                }
+            if command[1:] == ["pane", "--help"]:
+                return {
+                    "ok": True,
+                    "exit_code": 0,
+                    "stdout": "herdr pane send-text <pane> <text>\nherdr pane send-keys <pane> <key>",
+                    "stderr": "",
+                }
             if command[1:] == ["status", "--json"]:
                 payload = {"client": {"version": "1"}, "server": {"version": "1"}}
             elif command[1:] == ["pane", "list"]:

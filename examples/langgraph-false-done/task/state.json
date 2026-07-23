@@ -184,8 +184,8 @@
       "max_chars": 3000,
       "max_reference_tokens": 750,
       "token_estimator": "ceil(chars/4)",
-      "actual_chars": 2949,
-      "actual_reference_tokens": 738,
+      "actual_chars": 2359,
+      "actual_reference_tokens": 590,
       "dispatch_ref": "agents/langgraph_coordinator/dispatch.md",
       "skill_slice_ref": "skill-slices/langgraph_coordinator.json"
     },
@@ -194,8 +194,8 @@
       "max_chars": 2400,
       "max_reference_tokens": 600,
       "token_estimator": "ceil(chars/4)",
-      "actual_chars": 2275,
-      "actual_reference_tokens": 569,
+      "actual_chars": 2259,
+      "actual_reference_tokens": 565,
       "dispatch_ref": "agents/langgraph_reviewer/dispatch.md",
       "skill_slice_ref": "skill-slices/langgraph_reviewer.json"
     },
@@ -204,8 +204,8 @@
       "max_chars": 2800,
       "max_reference_tokens": 700,
       "token_estimator": "ceil(chars/4)",
-      "actual_chars": 2729,
-      "actual_reference_tokens": 683,
+      "actual_chars": 2323,
+      "actual_reference_tokens": 581,
       "dispatch_ref": "agents/langgraph_worker/dispatch.md",
       "skill_slice_ref": "skill-slices/langgraph_worker.json"
     }

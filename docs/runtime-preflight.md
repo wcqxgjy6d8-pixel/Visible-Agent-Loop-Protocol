@@ -17,6 +17,7 @@ Pane-controller adapters should record:
 ```text
 runtime status
 restart/update-needed status
+submission capability and selected transport mode
 agent pane id
 agent status
 terminal width and height, when available
@@ -77,6 +78,10 @@ bin/valp preflight --runtime queue --agent codex --agent claude --json
 ```
 
 and refuses to submit when a selected agent has a failing preflight check.
+For HERDR, an installed CLI is insufficient by itself: preflight also requires
+atomic `agent prompt` or the complete `pane send-text` + `pane send-keys` +
+`agent wait` fallback. Capability is detected from command help, not assumed
+from the HERDR version.
 
 ## Evidence Rule
 

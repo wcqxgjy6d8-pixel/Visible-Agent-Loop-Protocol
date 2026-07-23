@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
 import sqlite3
 from pathlib import Path
 
@@ -17,6 +19,18 @@ from .task_control import TASK_STATUSES, init_task, task_state, transition_task
 from .process_adapter import run_process
 from .langgraph_adapter import LangGraphAdapterError, resume_langgraph_run, submit_langgraph_run
 from .workflow import RUNTIME_CHOICES, collect_runtime_preflight, dispatch_task, publish_task, read_json, resume_suspended_task, route_task, scan_workspace, wait_for_task
+
+
+def split_worker_command(command: str) -> list[str]:
+    parts = shlex.split(command, posix=os.name != "nt")
+    if os.name != "nt":
+        return parts
+    return [
+        part[1:-1]
+        if len(part) >= 2 and part[0] == part[-1] and part[0] in {'"', "'"}
+        else part
+        for part in parts
+    ]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -85,6 +99,16 @@ notes:
     dispatch.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Override the runtime adapter recorded in routing.json")
     dispatch.add_argument("--wait-seconds", type=float, help="Non-negative HERDR evidence wait timeout for submitted dispatches")
     dispatch.add_argument("--proof-seconds", type=float, help="Non-negative HERDR submission proof timeout for submitted dispatches")
+    dispatch.add_argument(
+        "--recover-incomplete",
+        action="store_true",
+        help="Resubmit one explicitly selected HERDR work item whose proven submission produced no evidence",
+    )
+    dispatch.add_argument(
+        "--retry-generation",
+        type=int,
+        help="Explicit incomplete-submission retry generation; the bounded reference path accepts only 1",
+    )
     dispatch.add_argument("--submit", action="store_true", help="Actually submit through the selected reference adapter when supported")
 
     preflight = sub.add_parser("preflight", help="Check selected runtime adapter readiness")
@@ -109,14 +133,17 @@ notes:
     wait.add_argument("--poll-interval", type=float, default=0.25, help="Runtime polling interval in seconds")
     wait.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
-    resume = sub.add_parser("resume", help="Resume a suspended coordinator from an explicit external event")
+    resume = sub.add_parser(
+        "resume",
+        help="Resume a suspension or recover an accepted timeout from a late completion receipt",
+    )
     resume.add_argument("task_id", help="Task id")
     resume.add_argument("--workspace", default=".", help="Workspace root")
     resume.add_argument(
         "--event",
-        choices=["user_input", "runtime_failure", "cancellation"],
+        choices=["receipt", "user_input", "runtime_failure", "cancellation"],
         required=True,
-        help="External event that resumes coordinator turns",
+        help="External event, or receipt for an identity-bound late completion recovery",
     )
     resume.add_argument(
         "--ref",
@@ -259,7 +286,12 @@ notes:
     process_sub = process.add_subparsers(dest="process_command", required=True)
     process_run = process_sub.add_parser("run", help="Dry-run or execute one addressable local worker")
     process_run.add_argument("task_id")
-    process_run.add_argument("--command", required=True, help="Worker command parsed with shell-like quoting, without a shell")
+    process_run.add_argument(
+        "--command",
+        dest="worker_command",
+        required=True,
+        help="Worker command parsed with shell-like quoting, without a shell",
+    )
     process_run.add_argument("--timeout", type=float, default=30.0)
     process_run.add_argument("--approve", action="store_true", help="Approve actual worker execution")
     process_run.add_argument("--workspace", default=".", help="Workspace/control root parent")
@@ -464,6 +496,8 @@ def main(argv: list[str] | None = None) -> int:
             role=args.role,
             wait_seconds=args.wait_seconds,
             proof_seconds=args.proof_seconds,
+            recover_incomplete=args.recover_incomplete,
+            retry_generation=args.retry_generation,
         )
         if args.submit:
             print(f"Submitted dispatch for task {args.task_id}")
@@ -700,10 +734,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "adapter" and args.adapter_command == "process" and args.process_command == "run":
-        import shlex
         root = installation_root(Path(args.workspace), Path(args.root) if args.root else None)
         try:
-            result = run_process(root, args.task_id, shlex.split(args.command), timeout_seconds=args.timeout, approve=args.approve)
+            result = run_process(
+                root,
+                args.task_id,
+                split_worker_command(args.worker_command),
+                timeout_seconds=args.timeout,
+                approve=args.approve,
+            )
         except ControlPlaneError as error:
             raise SystemExit(f"{error.code}: {error}") from error
         if args.json:

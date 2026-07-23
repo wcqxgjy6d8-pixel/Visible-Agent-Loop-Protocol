@@ -34,6 +34,52 @@ The existence of a public HERDR repository does not remove the adapter gap:
 VALP still needs an independently operated hosted or agent-provider adapter
 before it can claim broad automated Full Mode interoperability.
 
+## Packaged HERDR Submission
+
+The reference CLI packages its HERDR submission bridge in `valp_cli`; it does
+not shell out to a repository-external `herdr-loop` helper. Capability probing
+selects one of three explicit modes:
+
+| Mode | Required HERDR commands | Submission proof |
+|---|---|---|
+| `agent_prompt` | `herdr agent prompt` | successful atomic runtime response, bound to the routed agent/session |
+| `pane_send_text_enter` | `herdr pane send-text`, `herdr pane send-keys`, `herdr agent wait` | successful insertion and Enter followed by observed `working` state |
+| `unavailable` | neither complete path | preflight and submitted dispatch fail closed with remediation |
+
+The compatibility path permits one bounded Enter retry inside the configured
+proof timeout. This handles a runtime where a large paste is still being
+processed when the first Enter arrives. The adapter still requires an observed
+`working` state after the retry; successful insertion or Enter alone is not
+submission proof.
+
+The probe reads command help instead of inferring features from a version
+string. A successful transport writes a native identity-bound
+`valp-dispatch-receipt.v2` submission receipt. Evidence waiting can append a
+completion receipt only after every declared expected ref is nonempty and the
+completion cites the exact submission receipt. Text insertion alone is never a
+submitted or completed receipt.
+
+If the packaged bridge fails before it can write concrete submission proof, it
+blocks the iteration budget with `runtime dispatch failure`. The same public
+dispatch command may reopen that exact blocker once, and only after a fresh
+HERDR preflight passes for the same dependency-ready work item. A second
+failure records `runtime dispatch retry exhausted` and remains blocked; it is
+not an automatic retry loop. Approval, dependency, model-identity, evidence,
+and other budget blockers are never reopened by this path.
+
+After concrete submission proof exists, a missing worker result is a different
+failure class. Automatic frontier routing must not silently submit that work
+again. The operator may use `valp dispatch` with one explicit agent, role,
+`--recover-incomplete`, and `--retry-generation 1`. The packaged HERDR adapter
+validates the complete work-item and control-contract identity before choosing
+one outcome. When all expected refs have arrived, it appends the completion for
+the original submission without preflight or transport. When all refs remain
+absent or invalid, it performs a fresh preflight and appends a distinct retry
+receipt only after successful resubmission. Partial evidence, a second recovery
+attempt, and a failed recovery transport stop fail-closed; neither the ordinary
+runtime retry nor another explicit recovery may loop. The originating receipt
+is never rewritten.
+
 Terminals are display surfaces, not automatically runtime adapters. A terminal
 that can open panes still needs an adapter layer that can submit dispatches,
 read or collect outputs, and write receipts/evidence.
@@ -153,6 +199,20 @@ invocation receipt and restart/restore evidence showing duplicate invocation is
 suppressed across recovery. Otherwise it must downgrade the continuation
 capability claim. An optional `checkpoint_ref` is only an opaque safe, existing,
 non-empty task-local ref and is not restorability or invocation evidence.
+
+When timeout wins a wake race, the accepted suspension projection freezes the
+receipt cursor it observed. A completion receipt already inside that boundary
+is a losing event from the same race and must be rejected as a conflicting
+wake. Only a newer identity-bound completion beyond that cursor is eligible for
+the explicit late-completion recovery path.
+
+Continuation envelope identifiers (`suspension_id`, `wake_id`, and
+`wake_event_id`) must be content-addressed `sha256:` values with 64 lowercase
+hexadecimal characters. Adapters must validate them before constructing or
+looking up artifact paths. The active suspension epoch comes only from the
+authoritative task state projection; an envelope is accepted only when its
+epoch matches that projection exactly, and persisted envelopes cannot raise or
+otherwise redefine the active epoch.
 
 ## Coordinator Patterns
 
@@ -353,3 +413,26 @@ delivery.
 
 An adapter must never upgrade an internal "completed" state into VALP
 completion unless the VALP expected evidence gate is satisfied.
+
+## Coordinator Continuation
+
+Provider-neutral continuation uses an immutable envelope on the typed
+`runtime_control` channel. The reference file-backed implementation is exposed
+provisionally by `valp_cli.continuation.ContinuationStore`; it separates wake persistence
+(`pending`) from invocation CAS (`claim`) and provider consumption (`consume`).
+Only a receipt carrying a real provider/session invocation ID plus durable
+duplicate-suppression evidence can emit
+`continuation_started` and `resume_consumed`. Hermes CLI is an adapter example;
+pane insertion remains transport-only, Codex App remains Manual, and no
+synthetic wake/output digest may be promoted to `automatic_full`.
+
+Hermes is currently Manual/degraded: `-z` is a oneshot path that bypasses
+resume, and `hermes chat -q --resume` uses the user-message channel. Neither is
+a typed `runtime_control` continuation API, so neither may produce the two
+provider-consumption events.
+
+The candidate store revalidates the exact persisted envelope, payload, control
+contract, full invocation key, target tuple, capability proof, and immutable
+provider receipt at each transition. Pending envelopes are recovered from disk
+after restart. Unsupported file-locking platforms fail closed; they do not
+append an unlocked ledger.

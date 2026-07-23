@@ -301,14 +301,16 @@ For Full Mode and Remote Mode, the same agent also needs a prior
 local sub-agent result is useful as analysis evidence, but it is not HERDR/live
 dispatch proof.
 
-To see the HERDR reference-adapter submit commands:
+To see the detected HERDR packaged-adapter plan:
 
 ```bash
 bin/valp dispatch TASK-001 --workspace /path/to/workspace
 ```
 
 For Manual Mode tasks, the same command prints manual copy instructions instead
-of HERDR submit commands.
+of a HERDR adapter plan. For HERDR tasks, the plan names the detected
+`agent_prompt` or `pane_send_text_enter` transport. It fails closed if neither
+path is available.
 
 To actually submit through the local HERDR adapter:
 
@@ -337,8 +339,8 @@ bin/valp wait TASK-001 --workspace /path/to/workspace \
   --timeout 300 --execution-timeout 3600
 ```
 
-The zero evidence-wait window makes the HERDR call submission-only: it returns
-after pane delivery proof and does not wait for expected evidence. The generated
+The zero evidence-wait window makes the packaged HERDR call submission-only: it returns
+after runtime delivery proof and does not wait for expected evidence. The generated
 wait policy still carries the exact expected refs, and `valp wait` owns later
 evidence observation and the completion receipt.
 
@@ -366,6 +368,18 @@ bin/valp resume TASK-001 --workspace /path/to/workspace --event user_input --ref
 The `--ref` file must be a closed task-local `valp-exception-wake.v1` artifact
 bound to the current task, suspension id, epoch, event, principal, and reason;
 see `examples/exception-wake.json` for the shape.
+
+If the protocol execution deadline already produced an accepted timeout wake,
+a later identity-bound completion uses the receipt ledger instead:
+
+```bash
+bin/valp resume TASK-001 --workspace /path/to/workspace \
+  --event receipt --ref dispatch-receipts.jsonl#<line>
+```
+
+This recovery preserves the timeout wake and fails closed unless the completion
+matches the timed-out work item, valid evidence, and original concrete runtime
+submission.
 
 Suspension is non-terminal. It does not satisfy evidence, review, approval,
 recommendation-resolution, synthesis, or audit gates.

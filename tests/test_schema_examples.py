@@ -36,6 +36,10 @@ EXAMPLE_SCHEMA_BY_NAME = {
     "trigger-policy.json": "trigger-policy.schema.json",
     "wait-policy.json": "wait-policy.schema.json",
     "wake-result.json": "wake-result.schema.json",
+    "continuation-envelope.json": "continuation-envelope.schema.json",
+    "continuation-capability.json": "continuation-capability.schema.json",
+    "continuation-event.json": "continuation-event.schema.json",
+    "continuation-invocation-receipt.json": "continuation-invocation-receipt.schema.json",
 }
 
 

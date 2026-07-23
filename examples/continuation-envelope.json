@@ -1,0 +1,17 @@
+{
+  "schema_version": "valp-continuation-envelope.v1",
+  "task_id": "TASK-CONTINUATION-001",
+  "suspension_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "suspension_epoch": 1,
+  "wake_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "wake_event_id": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "wake_reason": "dependency_ready",
+  "accepted_state_revision": 2,
+  "control_contract_ref": "control-contract.json",
+  "control_contract_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "payload_ref": "continuations/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/payload.json",
+  "payload_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "continuation_generation": 1,
+  "target": {"coordinator_agent": "hermes", "adapter_id": "hermes-cli", "provider_id": "test-provider", "durable_boundary_ref": "session:example"},
+  "channel": {"kind": "runtime_control", "user_input_allowed": false, "raw_worker_output_allowed": false}
+}

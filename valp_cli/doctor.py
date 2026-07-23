@@ -316,12 +316,18 @@ def runtime_checks() -> list[DoctorCheck]:
 
     herdr = collect_runtime_preflight(runtime="herdr")
     status = herdr.get("status")
+    submission = (herdr.get("checks") or {}).get("submission_transport") or {}
+    doctor_status = PASS if status == PASS else FAIL if status == FAIL else WARN
+    submission_mode = submission.get("mode") or "unknown"
     checks.append(
         make_check(
             "runtime_herdr",
             "HERDR reference runtime is available",
-            PASS if status == PASS else WARN,
-            f"HERDR preflight status: {status}; command={herdr_path}.",
+            doctor_status,
+            (
+                f"HERDR preflight status: {status}; submission mode: {submission_mode}; "
+                f"command={herdr_path}."
+            ),
             ["adapter_class=" + str(herdr.get("adapter_class"))],
             None if status == PASS else "Run bin/valp preflight --runtime herdr for detailed pane/runtime diagnostics.",
         )

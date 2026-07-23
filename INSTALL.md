@@ -24,8 +24,10 @@ scripts/verify-examples.sh
 ```
 
 This installs the `valp` console script from the local checkout and the
-development dependency used by the repository smoke check. It does not install
-or replace a runtime adapter.
+development dependency used by the repository smoke check. The VALP package
+includes its HERDR bridge, so clean installs do not need a separate
+`herdr-loop` command. HERDR itself remains an external reference runtime and is
+not installed or replaced by VALP.
 
 ## First Run Health Gate
 
@@ -52,6 +54,13 @@ A dry run may create a task folder and print submit commands. It must not
 actually send work to agents and must not be reported as a completed task.
 Newly published dry-run tasks normally fail `valp audit` because expected
 evidence and final synthesis do not exist yet.
+
+For HERDR, preflight probes command help rather than assuming capabilities from
+a version number. It accepts atomic `herdr agent prompt` when advertised, or the
+complete compatibility path consisting of `herdr pane send-text`, `herdr pane
+send-keys`, and `herdr agent wait`. An installed HERDR that exposes neither path
+is a failed Full Mode preflight with an actionable error; use Manual Mode until
+the runtime is updated or a compatible adapter is selected.
 
 For the fastest stable setup:
 

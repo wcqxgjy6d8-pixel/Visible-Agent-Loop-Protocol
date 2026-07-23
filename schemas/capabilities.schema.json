@@ -22,6 +22,10 @@
     "local_overlay": {
       "type": "object"
     },
+    "continuation_capabilities": {
+      "type": "array",
+      "items": {"$ref": "urn:valp:schema:continuation-capability:v1"}
+    },
     "routing_feedback_refs": {
       "type": "array",
       "items": {"type": "string"}

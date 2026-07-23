@@ -103,6 +103,13 @@ wait`. Runtime failure, cancellation, and user input each require a closed
 `valp-exception-wake.v1` source artifact bound to the current task, suspension
 id, and epoch. External events use:
 
+The root wait policy may be generated before any suspension occurs. Policy
+presence alone is therefore not a deterministic-wake claim. Audit applicability
+starts with a v2 suspension projection, a committed wait event, or malformed
+wait-event input. Once applicable, a missing or invalid event ledger fails; an
+operator must not reconstruct, remove, or hide historical events to change the
+result.
+
 The reference dispatch helper writes a phase-specific root wait policy before
 submission. During suspension, the reference wait bridge may observe expected
 evidence that was absent at entry and emit an identity-bound completion receipt
@@ -182,6 +189,13 @@ evidence affects task completion, the task should also write
 owned the fix, which evidence was replaced, and whether the final outcome was
 `fixed`, `blocked`, `escalated`, or `cancelled`. Only `fixed` can satisfy Done
 Criteria.
+
+A fixed `evidence_superseded` round may bind a later completion generation to
+the same submission dependency. The original refs stay superseded, while the
+replacement refs must be named by the fixed round and final correction outcome,
+remain valid, and belong to the same task, agent, role, and work item. Receipt
+line order remains authoritative: the replacement completion must precede the
+dependent reviewer submission.
 
 ## Recommendation Resolution
 

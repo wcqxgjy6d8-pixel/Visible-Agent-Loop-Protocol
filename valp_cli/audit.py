@@ -8,6 +8,13 @@ from dataclasses import dataclass, asdict
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .control_contract import (
+    CONTROL_CONTRACT_REF,
+    control_contract_digest,
+    validate_control_contract,
+    validate_control_slice,
+)
+from .continuation import SUCCESS_EVENTS, digest as continuation_digest, file_digest as continuation_file_digest, idempotency_key as continuation_idempotency_key
 from .delegation import validate_delegation_policy
 from .model_identity import model_aware_provider_errors, model_aware_role_errors
 from .risk import classify_approval_risks
@@ -114,6 +121,7 @@ class TaskAudit:
         self.mask_list = self._load_json("mask-list.json")
         self.evidence_board = self._load_json("evidence-board.json")
         self.correction_cycle = self._load_json("correction-cycle.json")
+        self.control_contract = self._load_json(CONTROL_CONTRACT_REF)
         self.receipts = self._load_jsonl("dispatch-receipts.jsonl")
         self.routing_history = self._load_jsonl("routing-history.jsonl")
         self.wait_events = self._load_jsonl("wait-events.jsonl")
@@ -130,6 +138,7 @@ class TaskAudit:
             self.check_runtime_adapter_and_state_mapping(),
             self.check_state_status_vocabulary(),
             self.check_deterministic_wake(),
+            self.check_continuation_ledger(),
             self.check_local_overlay(),
             self.check_selected_agents_and_context(),
             self.check_provider_matrix(),
@@ -139,6 +148,7 @@ class TaskAudit:
             self.check_iteration_budget(),
             self.check_delegation_policy(),
             self.check_visible_attention(),
+            self.check_control_contract(),
             self.check_context_pack(),
             self.check_skill_recommendations(),
             self.check_squad_routing(),
@@ -177,6 +187,160 @@ class TaskAudit:
             skip_count=skip_count,
             items=items,
         )
+
+    def check_continuation_ledger(self) -> AuditItem:
+        """Validate continuation evidence when a task opts into the kernel."""
+        path = self.task_dir / "continuations" / "events.jsonl"
+        if not path.exists():
+            return self._skip("continuation", "Continuation ledger is identity-bound and append-only", "Task has no continuation ledger", [])
+        evidence = self._existing(["continuations/events.jsonl"])
+        try:
+            events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        except (OSError, json.JSONDecodeError) as exc:
+            return self._fail("continuation", "Continuation ledger is identity-bound and append-only", f"Cannot read continuation ledger: {exc}", evidence)
+        errors: list[str] = []
+        task_id = str(self.state.get("task_id") or self.routing.get("task_id") or "")
+        for index, event in enumerate(events, 1):
+            if event.get("event_sequence") != index or event.get("task_id") != task_id:
+                errors.append(f"event {index} has invalid sequence or task identity")
+            if event.get("channel") != "runtime_control":
+                errors.append(f"event {index} is not runtime_control")
+            unsigned = dict(event)
+            observed_event_id = unsigned.pop("event_id", None)
+            if observed_event_id != continuation_digest(unsigned):
+                errors.append(f"event {index} has an invalid event_id digest")
+
+        pending_events = [event for event in events if event.get("event") == "resume_pending"]
+        success_events = [event for event in events if event.get("event") in SUCCESS_EVENTS]
+        if success_events and not pending_events:
+            errors.append("continuation success events bypass persisted resume_pending")
+
+        capability_path = self.task_dir / "continuations" / "capability.json"
+        capability: dict[str, Any] = {}
+        if capability_path.is_file():
+            try:
+                capability = json.loads(capability_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                errors.append("continuation capability is malformed")
+
+        for pending in pending_events:
+            wake_id = str(pending.get("wake_id") or "")
+            artifact_dir = self.task_dir / "continuations" / wake_id.removeprefix("sha256:")
+            envelope_path = artifact_dir / "envelope.json"
+            payload_path = artifact_dir / "payload.json"
+            try:
+                envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+                payload = json.loads(payload_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                errors.append(f"{wake_id}: persisted envelope or payload is missing/malformed")
+                continue
+            envelope_digest = continuation_digest(envelope)
+            key = continuation_idempotency_key(envelope)
+            if pending.get("envelope_digest") != envelope_digest or pending.get("idempotency_key") != key:
+                errors.append(f"{wake_id}: resume_pending does not bind the persisted envelope")
+            if continuation_digest(payload) != envelope.get("payload_digest"):
+                errors.append(f"{wake_id}: persisted payload digest does not match envelope")
+            payload_ref = str(envelope.get("payload_ref") or "")
+            if not self._is_safe_task_ref(payload_ref) or (self.task_dir / payload_ref).resolve() != payload_path.resolve():
+                errors.append(f"{wake_id}: envelope payload_ref is unsafe or mismatched")
+            control_ref = str(envelope.get("control_contract_ref") or "")
+            control_path = self.task_dir / control_ref
+            if (
+                not self._is_safe_task_ref(control_ref)
+                or not control_path.is_file()
+                or continuation_file_digest(control_path) != envelope.get("control_contract_digest")
+            ):
+                errors.append(f"{wake_id}: control contract digest is missing or mismatched")
+
+            expected_bindings = {
+                "task_id": envelope.get("task_id"),
+                "suspension_id": envelope.get("suspension_id"),
+                "suspension_epoch": envelope.get("suspension_epoch"),
+                "wake_id": envelope.get("wake_id"),
+                "wake_event_id": envelope.get("wake_event_id"),
+                "continuation_generation": envelope.get("continuation_generation"),
+                "idempotency_key": key,
+                "envelope_digest": envelope_digest,
+                "payload_digest": envelope.get("payload_digest"),
+                "control_contract_digest": envelope.get("control_contract_digest"),
+                "target": envelope.get("target"),
+            }
+            correlated = [
+                event for event in success_events
+                if event.get("idempotency_key") == key
+            ]
+            for event in correlated:
+                if any(event.get(field) != value for field, value in expected_bindings.items()):
+                    errors.append(f"{wake_id}: {event.get('event')} is not correlated to the envelope")
+            names = [str(event.get("event")) for event in correlated]
+            if names != list(SUCCESS_EVENTS[: len(names)]):
+                errors.append(f"{wake_id}: acknowledgement chain is incomplete or out of order")
+
+            if "resume_consumed" not in names:
+                continue
+            started = next((event for event in correlated if event.get("event") == "continuation_started"), {})
+            consumed = next((event for event in correlated if event.get("event") == "resume_consumed"), {})
+            receipt_ref = str(consumed.get("invocation_receipt_ref") or "")
+            if not self._is_safe_task_ref(receipt_ref):
+                errors.append(f"{wake_id}: invocation receipt ref is unsafe")
+                continue
+            receipt_path = self.task_dir / receipt_ref
+            try:
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                errors.append(f"{wake_id}: invocation receipt is missing or malformed")
+                continue
+            receipt_digest = continuation_digest(receipt)
+            if any(
+                event.get("invocation_receipt_ref") != receipt_ref
+                or event.get("invocation_receipt_digest") != receipt_digest
+                or event.get("invocation_id") != (receipt.get("provider") or {}).get("invocation_id")
+                for event in (started, consumed)
+            ):
+                errors.append(f"{wake_id}: provider receipt event correlation is invalid")
+            receipt_bindings = {
+                "task_id": envelope.get("task_id"),
+                "suspension_id": envelope.get("suspension_id"),
+                "suspension_epoch": envelope.get("suspension_epoch"),
+                "wake_id": envelope.get("wake_id"),
+                "continuation_generation": envelope.get("continuation_generation"),
+                "idempotency_key": key,
+                "payload_digest": envelope.get("payload_digest"),
+                "durable_boundary_ref": (envelope.get("target") or {}).get("durable_boundary_ref"),
+                "result": "consumed",
+            }
+            if any(receipt.get(field) != value for field, value in receipt_bindings.items()):
+                errors.append(f"{wake_id}: provider invocation receipt is not envelope-correlated")
+
+            target = envelope.get("target") or {}
+            proof = capability.get("proof") or {}
+            adapter = receipt.get("adapter") or {}
+            provider = receipt.get("provider") or {}
+            capability_valid = (
+                capability.get("mode") == "automatic_full"
+                and capability.get("adapter_id") == target.get("adapter_id") == adapter.get("id")
+                and capability.get("adapter_version") == adapter.get("version")
+                and capability.get("provider_id") == target.get("provider_id") == provider.get("id")
+                and capability.get("coordinator_surface") == target.get("coordinator_agent")
+                and proof.get("invocation_receipt") is True
+                and proof.get("duplicate_suppression") is True
+                and receipt.get("identity_evidence_ref") == proof.get("identity_evidence_ref")
+                and receipt.get("duplicate_suppression_ref") == proof.get("duplicate_suppression_evidence_ref")
+            )
+            if not capability_valid:
+                errors.append(f"{wake_id}: capability, target, and provider receipt do not correlate")
+            for ref in (receipt.get("identity_evidence_ref"), receipt.get("duplicate_suppression_ref")):
+                ref = str(ref or "")
+                if not self._is_safe_task_ref(ref) or not (self.task_dir / ref).is_file():
+                    errors.append(f"{wake_id}: provider evidence ref is missing or unsafe")
+
+        known_pending_keys = {event.get("idempotency_key") for event in pending_events}
+        for event in success_events:
+            if event.get("idempotency_key") not in known_pending_keys:
+                errors.append(f"event {event.get('event_sequence')} has no correlated resume_pending")
+        if errors:
+            return self._fail("continuation", "Continuation ledger is identity-bound and append-only", "; ".join(errors[:4]), evidence)
+        return self._pass("continuation", "Continuation ledger is identity-bound and append-only", f"Validated {len(events)} continuation events", evidence)
 
     def check_state_status_vocabulary(self) -> AuditItem:
         if self.state.get("schema_version") != "valp-visible-loop-state.v2":
@@ -238,7 +402,14 @@ class TaskAudit:
             ]
         )
         suspension = self.state.get("suspension") or {}
-        claimed = bool(self.wait_policy or self.wait_events or self.state.get("schema_version") == "valp-visible-loop-state.v2" and suspension)
+        claimed = bool(
+            self.wait_events
+            or self.jsonl_errors.get("wait-events.jsonl")
+            or (
+                self.state.get("schema_version") == "valp-visible-loop-state.v2"
+                and (suspension or self.state.get("status") == "suspended")
+            )
+        )
         if not claimed:
             return self._skip(
                 "deterministic_wake",
@@ -1119,6 +1290,141 @@ class TaskAudit:
             evidence,
         )
 
+    def check_control_contract(self) -> AuditItem:
+        routing_marker = self.routing.get("control_contract") or {}
+        state_marker = self.state.get("control_contract") or {}
+        slice_refs = self.routing.get("control_slices") or self.state.get("control_slices") or {}
+        selected_agents = self._selected_agents()
+        required = bool(routing_marker or state_marker or slice_refs) or (
+            self.state.get("schema_version") == "valp-visible-loop-state.v2"
+            and bool(selected_agents)
+        )
+        slice_evidence_refs = [str(ref) for ref in slice_refs.values()] if isinstance(slice_refs, dict) else []
+        evidence = self._existing(
+            [
+                CONTROL_CONTRACT_REF,
+                "routing.json",
+                "state.json",
+                "context-pack.json",
+                *slice_evidence_refs,
+                *[f"agents/{agent}/dispatch.md" for agent in selected_agents],
+            ]
+        )
+        if not required:
+            return self._skip(
+                "control_contract",
+                "Workers load the immutable highest-priority control contract before execution",
+                "Legacy task without a generated worker control contract",
+                evidence,
+            )
+        if not self.control_contract:
+            return self._fail(
+                "control_contract",
+                "Workers load the immutable highest-priority control contract before execution",
+                "Missing or invalid control-contract.json",
+                evidence,
+            )
+
+        task_id = str(self.state.get("task_id") or self.routing.get("task_id") or "")
+        digest = control_contract_digest(
+            self.control_contract,
+            (self.task_dir / CONTROL_CONTRACT_REF).read_bytes(),
+        )
+        expected_marker = {
+            "status": "recorded",
+            "ref": CONTROL_CONTRACT_REF,
+            "digest": digest,
+            "priority_class": "highest_runtime_control",
+        }
+        failures = validate_control_contract(self.control_contract, task_id)
+        if routing_marker != expected_marker or state_marker != expected_marker:
+            failures.append("routing/state control contract markers are missing or mismatched")
+        if not isinstance(slice_refs, dict) or set(slice_refs) != set(selected_agents):
+            failures.append("control slice refs do not cover exactly the selected agents")
+
+        work_items_by_agent: dict[str, list[str]] = {}
+        for item in self.submission_dependencies.get("work_items") or []:
+            if not isinstance(item, dict):
+                continue
+            agent = str(item.get("agent") or "")
+            work_item_id = str(item.get("work_item_id") or "")
+            if agent and work_item_id:
+                work_items_by_agent.setdefault(agent, []).append(work_item_id)
+
+        for agent in selected_agents:
+            slice_ref = str(slice_refs.get(agent) or "") if isinstance(slice_refs, dict) else ""
+            if not slice_ref or not self._is_safe_task_ref(slice_ref):
+                failures.append(f"missing or unsafe control slice ref for {agent}")
+                continue
+            control_slice = self._load_json(slice_ref)
+            failures.extend(
+                f"{agent}: {error}"
+                for error in validate_control_slice(
+                    control_slice,
+                    task_id,
+                    agent,
+                    work_items_by_agent.get(agent) or [],
+                    digest,
+                )
+            )
+            dispatch = self._read_text(f"agents/{agent}/dispatch.md")
+            compact_slice = json.dumps(control_slice, ensure_ascii=False, separators=(",", ":"))
+            headings = [line.strip() for line in dispatch.splitlines() if line.startswith("## ")]
+            if compact_slice not in dispatch:
+                failures.append(f"{agent}: dispatch does not contain the exact compact control slice")
+            if not headings or headings[0] != "## VALP Control Contract (Load First)":
+                failures.append(f"{agent}: control contract is not the first dispatch section")
+
+        context_items = self.context_pack.get("items") or []
+        if (
+            not context_items
+            or not isinstance(context_items[0], dict)
+            or not isinstance(context_items[0].get("evidence_refs"), list)
+            or not context_items[0]["evidence_refs"]
+            or context_items[0]["evidence_refs"][0] != CONTROL_CONTRACT_REF
+        ):
+            failures.append("context pack does not load the control contract first")
+
+        terminal_events = {"dispatch_completed", "manual_result_attested"}
+        for item in self.submission_dependencies.get("work_items") or []:
+            if not isinstance(item, dict):
+                continue
+            matching_receipts = [
+                receipt
+                for receipt in self.receipts
+                if self._receipt_matches_work_item_identity(receipt, item)
+                or self._receipt_matches_manual_work_item(receipt, item)
+            ]
+            if not matching_receipts or matching_receipts[-1].get("event") not in terminal_events:
+                continue
+            agent = str(item.get("agent") or "")
+            acknowledgement_lines = [
+                "control_contract_ref: control-contract.json",
+                f"control_contract_digest: {digest}",
+                "control_contract_status: honored",
+            ]
+            agent_evidence = "\n".join(
+                self._read_text(str(ref))
+                for ref in item.get("expected_refs") or []
+                if str(ref).startswith(f"agents/{agent}/")
+            )
+            if not agent_evidence or any(line not in agent_evidence for line in acknowledgement_lines):
+                failures.append(f"{agent}: completed work item lacks the identity-bound control acknowledgement")
+
+        if failures:
+            return self._fail(
+                "control_contract",
+                "Workers load the immutable highest-priority control contract before execution",
+                "; ".join(list(dict.fromkeys(failures))[:8]),
+                evidence,
+            )
+        return self._pass(
+            "control_contract",
+            "Workers load the immutable highest-priority control contract before execution",
+            f"Validated immutable contract and {len(selected_agents)} provider-neutral control slices",
+            evidence,
+        )
+
     def check_context_pack(self) -> AuditItem:
         evidence = self._existing(["context-pack.json", "context-selection.json", "routing.json", "state.json"])
         required = self._agent_recommendations_required() or bool(self.routing.get("context_pack") or self.state.get("context_pack") or self.context_pack)
@@ -1452,6 +1758,7 @@ class TaskAudit:
                 self.task_dir,
                 self.evidence_status,
                 manual_mode=runtime.get("class") == "manual",
+                correction_cycle=self.correction_cycle,
             )
         if errors:
             return self._fail(

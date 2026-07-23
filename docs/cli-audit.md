@@ -8,7 +8,7 @@ publish -> scan -> route -> dispatch -> audit
 
 It is intentionally small. It creates task evidence, reads local capability
 profiles when present, writes routing and dispatch files, prints Manual Mode
-copy instructions, HERDR reference-adapter submit commands, or headless queue
+copy instructions, a HERDR packaged-adapter transport plan, or headless queue
 reference records, and audits
 completion evidence.
 
@@ -122,7 +122,7 @@ bin/valp dispatch TASK-001 --workspace /path/to/workspace
 ```
 
 For Manual Mode tasks this prints copy instructions and expected evidence refs.
-For HERDR-routed tasks it prints HERDR reference-adapter submit commands. For
+For HERDR-routed tasks it prints the packaged reference-adapter transport plan. For
 queue-routed tasks it prints queue enqueue instructions.
 
 The generated `agents/<agent>/dispatch.md` files are concise assignments. They
@@ -138,9 +138,11 @@ bin/valp dispatch TASK-001 --workspace /path/to/workspace --runtime herdr --subm
 bin/valp dispatch TASK-001 --workspace /path/to/workspace --runtime queue --submit
 ```
 
-`dispatch --runtime herdr --submit` calls `herdr-loop submit-dispatch` for each
-routed agent. It should only be used when the local HERDR panes/runtime are
-ready.
+`dispatch --runtime herdr --submit` uses the adapter packaged in `valp_cli` for
+each routed agent; no separate `herdr-loop` executable is required. Preflight
+selects atomic `herdr agent prompt` when available, otherwise the complete pane
+insertion + Enter + working-state fallback. It fails closed before delivery
+when neither path is present.
 
 `dispatch --runtime queue --submit` writes task-local queue submission records
 and `dispatch_submitted` receipts. It does not mark the task complete; a queue
@@ -282,6 +284,7 @@ The command maps the Done Criteria into these audit items:
 |---|---|
 | `profile_routing` | profile and routing are recorded |
 | `runtime_adapter` | runtime adapter and task state mapping are recorded |
+| `deterministic_wake` | a v2 suspension or wait-event evidence is replayable; an authored-only wait policy is not a claim |
 | `local_overlay` | local overlay inputs are recorded when used |
 | `selected_agents_context` | selected agents and context policies are recorded |
 | `provider_matrix` | provider matrix fields needed for the task are recorded |
@@ -292,6 +295,7 @@ The command maps the Done Criteria into these audit items:
 | `skill_recommendations` | skill recommendation backend result is recorded when available |
 | `squad_routing` | squad routing evidence is recorded when a squad is used |
 | `dispatch_receipts` | dispatch receipts satisfy the required gates; Full/Remote Mode completions require prior runtime submission proof |
+| `submission_dependencies` | prerequisite completion physically precedes dependent submission; a later correction generation qualifies only through fixed, identity-bound, valid replacement evidence |
 | `expected_evidence` | expected evidence refs exist, are task-relative safe paths, and are not invalid/superseded/rejected/blocked |
 | `correction_cycle` | correction cycle evidence is recorded and fixed when work was rejected, retried, blocked, invalid, or superseded |
 | `agent_recommendations` | selected-agent recommendations and next-step suggestions are resolved with coordinator scope control |

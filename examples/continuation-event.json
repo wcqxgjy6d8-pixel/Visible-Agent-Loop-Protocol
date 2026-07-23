@@ -1,0 +1,18 @@
+{
+  "schema_version": "valp-continuation-event.v1",
+  "event_sequence": 1,
+  "event": "resume_pending",
+  "task_id": "TASK-CONTINUATION-001",
+  "suspension_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "suspension_epoch": 1,
+  "wake_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "wake_event_id": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "continuation_generation": 1,
+  "idempotency_key": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "envelope_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "payload_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "control_contract_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "target": {"coordinator_agent": "coordinator", "adapter_id": "example-adapter", "provider_id": "example-provider", "durable_boundary_ref": "provider-session:example"},
+  "channel": "runtime_control",
+  "event_id": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+}

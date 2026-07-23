@@ -1,0 +1,14 @@
+{
+  "schema_version": "valp-continuation-capability.v1",
+  "adapter_id": "hermes-cli",
+  "adapter_version": "cli",
+  "provider_id": "test-provider",
+  "coordinator_surface": "hermes-cli",
+  "mode": "manual",
+  "proof": {
+    "invocation_receipt": false,
+    "duplicate_suppression": false,
+    "identity_evidence_ref": "",
+    "duplicate_suppression_evidence_ref": ""
+  }
+}

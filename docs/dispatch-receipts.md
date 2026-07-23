@@ -70,6 +70,19 @@ satisfy that gate. If late evidence appears after a timeout, the runtime must
 append a newer identity-bound `dispatch_completed` receipt and use an explicit
 recovery transition.
 
+The reference CLI exposes that transition as:
+
+```bash
+valp resume <task-id> --workspace <root> \
+  --event receipt --ref dispatch-receipts.jsonl#<line>
+```
+
+This path is available only after an accepted timeout wake. It verifies the
+timed-out work-item identity, suspension epoch, receipt sequence, expected
+evidence, and original concrete submission receipt before returning the current
+task to `dispatching`. The accepted timeout event and wake-result remain
+unchanged.
+
 File-backed adapters must allocate the next receipt sequence and durably append
 the receipt while holding one inter-process task lock. The reference queue
 adapter uses the same lock as the state/wake reducer so concurrent submitters
@@ -80,6 +93,36 @@ submission a stable receipt ID. Retrying after a file or directory flush error
 reuses an identical queue record and receipt instead of appending a second
 sequence. A queue JSON file alone is prepared data, not delivery proof; a worker
 must require its matching `dispatch_submitted` receipt or reconcile the pair.
+
+## Incomplete Submission Recovery
+
+If a concrete HERDR `dispatch_submitted` receipt exists but the same work item
+has no terminal receipt, the automatic frontier correctly treats it as already
+delivered even when expected evidence arrives after the observer window. A
+coordinator may explicitly reconcile that one work item through the public
+dispatch interface:
+
+```bash
+valp dispatch <task-id> --workspace <root> \
+  --agent <agent> --role <role> --runtime herdr \
+  --recover-incomplete --retry-generation 1 --submit
+```
+
+This is not the transport-failure retry. The command first requires one exact
+prior submission, no conflicting terminal receipt, the unchanged routed
+identity, and a matching immutable control contract and agent slice. If every
+expected ref is already valid, it appends the identity-bound
+`dispatch_completed` receipt for the original submission without HERDR
+preflight, worker submission, or a retry receipt. If every ref remains absent
+or invalid, it performs the one bounded resubmission; that retry receipt
+preserves the original identity, adds `retry_generation: 1`, and binds both the
+originating receipt ID and control-contract digest in `proof.recovery`. Partial
+evidence, a repeat or different identity, retry generation 2, and any attempt
+after failed recovery transport fail closed. The original ledger line is never
+deleted or rewritten.
+
+See `examples/incomplete-submission-recovery/dispatch-receipts.jsonl` for the
+original and retry receipts.
 
 If an evidence file exists but is marked `invalid`, `superseded`, `rejected`, or
 `blocked` in `evidence-status.json`, it does not satisfy `dispatch_completed` or

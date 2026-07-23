@@ -364,6 +364,12 @@ adapter submit commands for pane-controller tasks, or queue enqueue
 instructions for headless queue tasks. Use `--submit` only when the selected
 runtime is ready.
 
+The HERDR submission adapter is packaged with the VALP CLI; a separate
+`herdr-loop` executable is not required. Preflight detects either atomic
+`herdr agent prompt` submission or the compatible `pane send-text` +
+`pane send-keys` + `agent wait` fallback and fails closed when neither complete
+path is available.
+
 `valp audit` scans a task evidence folder and checks the Done Criteria from
 `SPEC.md`, including runtime preflight, skill recommendation evidence,
 correction-cycle evidence, invalid evidence status, and unsupported
@@ -384,10 +390,10 @@ The repository includes five self-verifying task examples:
 | Example | What it proves | Expected audit |
 |---|---|---|
 | `examples/minimal-task/` | Manual Mode evidence can be audited without a runtime | `PASS`, `pass=13 warn=0 fail=0` |
-| `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, correction-cycle, recommendation, review, and final synthesis audit gates | `PASS`, `pass=22 warn=0 fail=0` |
+| `examples/full-mode-task/` | Synthetic Full Mode fixture satisfies runtime, receipt, correction-cycle, recommendation, review, and final synthesis audit gates | `PASS`, `pass=23 warn=0 fail=0` |
 | `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=21 warn=0 fail=0` |
 | `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=14 warn=0 fail=0` |
-| `examples/langgraph-false-done/` | Real non-HERDR LangGraph false-done, repair, and independent review case | `PASS`, `pass=26 warn=0 fail=0` |
+| `examples/langgraph-false-done/` | Real non-HERDR LangGraph false-done, repair, and independent review case | `PASS`, `pass=27 warn=0 fail=0` |
 | `docs/case-studies/visible-dispatch-process-proof.md` | Short public video of a real VALP/HERDR publish-and-dispatch process; not a standalone Full Mode completion case study | Process proof only |
 
 Run the complete smoke check:

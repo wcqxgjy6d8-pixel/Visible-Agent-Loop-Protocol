@@ -17,7 +17,21 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+from .control_contract import (
+    CONTROL_CONTRACT_REF,
+    build_control_contract,
+    build_control_slice,
+    control_contract_digest,
+    validate_control_contract,
+    validate_control_slice,
+)
 from .delegation import build_delegation_policy, validate_delegation_policy
+from .herdr_adapter import (
+    HerdrSubmissionError,
+    describe_herdr_submission,
+    detect_herdr_submission_capability,
+    submit_herdr_dispatch,
+)
 from .model_identity import (
     bounded_observation_ttl,
     model_awareness_for,
@@ -570,6 +584,8 @@ def run_command(
             command,
             input=input_text,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=timeout,
             check=False,
@@ -594,8 +610,8 @@ def run_command(
         "command": command,
         "ok": completed.returncode == 0,
         "exit_code": completed.returncode,
-        "stdout": completed.stdout[:stdout_limit],
-        "stderr": completed.stderr[:stderr_limit],
+        "stdout": (completed.stdout or "")[:stdout_limit],
+        "stderr": (completed.stderr or "")[:stderr_limit],
     }
 
 
@@ -1094,6 +1110,43 @@ def enforce_iteration_budget(
     return budget
 
 
+def runtime_dispatch_retry_pending(
+    directory: Path,
+    state: dict[str, Any],
+    runtime_kind: str,
+) -> bool:
+    budget = read_json(directory / "iteration-budget.json")
+    return (
+        runtime_kind == "herdr"
+        and state.get("status") == "dispatching"
+        and budget.get("status") == "blocked"
+        and budget.get("stop_reason") == "runtime dispatch failure"
+    )
+
+
+def resume_runtime_dispatch_retry(
+    directory: Path,
+    routing: dict[str, Any],
+    phases: list[tuple[str, str]],
+) -> dict[str, Any]:
+    with task_state_lock(directory):
+        state = read_json(directory / "state.json")
+        budget = read_json(directory / "iteration-budget.json")
+        if not runtime_dispatch_retry_pending(directory, state, "herdr"):
+            raise SystemExit("Runtime dispatch retry state changed before recovery")
+        budget["status"] = "active"
+        budget["stop_reason"] = None
+        write_json(directory / "iteration-budget.json", budget)
+        budget = enforce_iteration_budget(directory, routing, state, phases)
+        append_timeline_event(
+            directory,
+            "runtime_dispatch_retry_started",
+            "Fresh runtime preflight passed; retrying the same dependency-ready work item once",
+            work_item_ids=[f"{role}:{agent}" for agent, role in phases],
+        )
+        return budget
+
+
 def provider_reachable_match(agent: str, match: dict[str, Any]) -> bool:
     if not match.get("installed"):
         return False
@@ -1164,6 +1217,49 @@ def write_skill_slices(
     for agent in selected_agents:
         relative = f"skill-slices/{agent}.json"
         write_json(directory / relative, compact_skill_slice(task_id, agent, skill_recommendations))
+        refs[agent] = relative
+    return refs
+
+
+def ensure_control_contract(directory: Path, task_id: str) -> tuple[dict[str, Any], str]:
+    path = directory / CONTROL_CONTRACT_REF
+    if path.exists():
+        contract = read_json_strict(path)
+        errors = validate_control_contract(contract, task_id)
+        if errors:
+            raise SystemExit("Invalid worker control contract: " + "; ".join(errors))
+        return contract, control_contract_digest(contract, path.read_bytes())
+    contract = build_control_contract(task_id, now_iso())
+    write_json(path, contract)
+    return contract, control_contract_digest(contract, path.read_bytes())
+
+
+def work_item_ids_by_agent(submission_dependencies: dict[str, Any]) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for item in submission_dependencies.get("work_items") or []:
+        if not isinstance(item, dict):
+            continue
+        agent = str(item.get("agent") or "")
+        work_item_id = str(item.get("work_item_id") or "")
+        if agent and work_item_id:
+            grouped.setdefault(agent, []).append(work_item_id)
+    return {agent: list(dict.fromkeys(work_items)) for agent, work_items in grouped.items()}
+
+
+def write_control_slices(
+    directory: Path,
+    task_id: str,
+    selected_agents: list[str],
+    work_items: dict[str, list[str]],
+    contract_digest: str,
+) -> dict[str, str]:
+    refs: dict[str, str] = {}
+    for agent in selected_agents:
+        relative = f"control-slices/{agent}.json"
+        write_json(
+            directory / relative,
+            build_control_slice(task_id, agent, work_items.get(agent) or [], contract_digest),
+        )
         refs[agent] = relative
     return refs
 
@@ -1597,13 +1693,17 @@ def context_pack_for(
     role_assignments: dict[str, str],
     context_selection: dict[str, Any],
     feedback_history: list[dict[str, Any]],
+    control_contract_record: dict[str, str],
 ) -> dict[str, Any]:
     selected_refs = [str(item.get("path")) for item in (context_selection.get("selected") or []) if item.get("path")]
     items: list[dict[str, Any]] = [
         {
             "section": "project",
-            "summary": "Load the active task and project operating rules from selected task-local refs; do not rely on hidden chat context.",
-            "evidence_refs": [ref for ref in selected_refs if ref.endswith("task.md") or ref == "AGENTS.md"][:4],
+            "summary": "Load and validate the immutable highest-runtime-control contract first, then load the active task and project rules; block on missing or mismatched control evidence.",
+            "evidence_refs": [
+                control_contract_record["ref"],
+                *[ref for ref in selected_refs if ref.endswith("task.md") or ref == "AGENTS.md"][:3],
+            ],
             "recipient_agents": selected_agents,
         },
         {
@@ -1889,6 +1989,7 @@ def write_visible_attention(
     skill_recommendations: dict[str, Any],
     role_assignments: dict[str, str],
     feedback_history: list[dict[str, Any]],
+    control_contract_record: dict[str, str],
 ) -> dict[str, Any]:
     loop_layer = classify_loop_layer(prompt, profile)
     design_contract = find_design_contract(root)
@@ -1903,6 +2004,7 @@ def write_visible_attention(
         role_assignments,
         context_selection,
         feedback_history,
+        control_contract_record,
     )
     mask_list = mask_list_for(profile, loop_layer, design_contract)
     evidence_board = evidence_board_for(profile, loop_layer, selected_agents, design_contract)
@@ -2203,6 +2305,16 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
     skill_recommendations = add_per_agent_skill_recommendations(skill_recommendations, selected_agents)
     write_json(directory / "skill-recommendations.json", skill_recommendations)
     existing_routing = read_json(directory / "routing.json")
+    _control_contract, contract_digest = ensure_control_contract(directory, task_id)
+    control_contract_record = {
+        "status": "recorded",
+        "ref": CONTROL_CONTRACT_REF,
+        "digest": contract_digest,
+        "priority_class": "highest_runtime_control",
+    }
+    previous_control_contract = existing_routing.get("control_contract") or {}
+    if previous_control_contract and previous_control_contract != control_contract_record:
+        raise SystemExit("Routing blocked: immutable worker control contract marker changed")
     iteration_budget = read_json(directory / "iteration-budget.json") or iteration_budget_for(task_id, role_assignments)
     reroute_count = int((iteration_budget.get("usage") or {}).get("reroutes") or 0)
     if existing_routing.get("selected_agents"):
@@ -2242,6 +2354,7 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
         skill_recommendations,
         role_assignments,
         feedback_history,
+        control_contract_record,
     )
     context_policies = {
         agent: context_policy_for(agent, agents.get(agent, {}), overlay)
@@ -2258,6 +2371,13 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
     delegation_policy["violations"] = recorded_delegation_violations
     write_json(directory / "submission-dependencies.json", submission_dependencies)
     write_json(directory / "delegation-policy.json", delegation_policy)
+    control_slice_refs = write_control_slices(
+        directory,
+        task_id,
+        selected_agents,
+        work_item_ids_by_agent(submission_dependencies),
+        contract_digest,
+    )
     routing = {
         "schema_version": "valp-capability-routing.v1",
         "task_id": task_id,
@@ -2291,6 +2411,8 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
             "status": "recorded",
             "ref": "iteration-budget.json",
         },
+        "control_contract": control_contract_record,
+        "control_slices": control_slice_refs,
         "coordinator_selection": {
             "selected_agent": role_assignments.get("coordinator"),
             "selection_rule": "Selected from current capability evidence, local overlay hints, runtime availability, context policy, and task profile. The open protocol does not name a universal leader.",
@@ -2400,6 +2522,8 @@ def route_task(root: Path, task_id: str, runtime: str | None = None) -> dict[str
                 "audit_grade": automation_policy.get("audit_grade"),
             },
             "context_pack": {"status": "recorded", "ref": "context-pack.json"},
+            "control_contract": control_contract_record,
+            "control_slices": control_slice_refs,
             "dispatch_payload_budgets": dispatch_payload_budgets,
             "iteration_budget": {
                 "status": "recorded",
@@ -3057,6 +3181,9 @@ def collect_herdr_preflight(agent_names: list[str] | None = None) -> dict[str, A
         preflight["checks"]["herdr_cli"] = {"status": "fail", "message": "herdr command not found; HERDR pane-controller runtime is unavailable."}
         return preflight
 
+    submission_capability = detect_herdr_submission_capability(herdr, run_command)
+    preflight["checks"]["submission_transport"] = submission_capability
+
     status_result = run_command([herdr, "status", "--json"], timeout=5.0)
     status_json = parse_json_stdout(status_result)
     restart_needed = bool(((status_json.get("server") or {}).get("restart_needed")) or ((status_json.get("update") or {}).get("restart_needed")))
@@ -3319,25 +3446,44 @@ def write_dispatches(
         assigned_roles = roles_for_agent(routing.get("role_assignments") or {}, agent)
         is_coordinator = "coordinator" in assigned_roles
         slice_ref = (routing.get("skill_recommendation_slices") or {}).get(agent)
-        task_refs = ["task.md", "context-pack.json", "iteration-budget.json"]
-        if slice_ref:
-            task_refs.append(slice_ref)
+        control_slice_ref = (routing.get("control_slices") or {}).get(agent)
+        contract_record = routing.get("control_contract") or {}
+        control_slice = read_json(directory / str(control_slice_ref or "")) if control_slice_ref else {}
+        control_errors = validate_control_slice(
+            control_slice,
+            task_id,
+            agent,
+            [
+                str(item.get("work_item_id"))
+                for item in (read_json(directory / "submission-dependencies.json").get("work_items") or [])
+                if isinstance(item, dict) and item.get("agent") == agent
+            ],
+            str(contract_record.get("digest") or ""),
+        )
+        if control_errors:
+            raise SystemExit(f"Invalid control slice for {agent}: " + "; ".join(control_errors))
+        compact_control_slice = json.dumps(control_slice, ensure_ascii=False, separators=(",", ":"))
+        task_refs = ["task.md", "context-pack.json"]
         if is_coordinator:
             task_refs.append("skill-recommendations.json")
+        elif slice_ref:
+            task_refs.append(slice_ref)
         core_task_refs = "\n".join(
             f"- `{relative_ref(directory / ref, root)}`"
             for ref in task_refs
         )
         expected = "\n".join(f"- `{ref}`" for ref in expected_by_agent.get(agent, []))
         exact_evidence = "\n".join(f"- `{relative_ref(directory / ref, root)}`" for ref in expected_by_agent.get(agent, []))
-        reasons = bounded_text("; ".join(routing["agent_match_reasons"].get(agent, [])), 160)
         skill_source = skill_recommendations if is_coordinator else compact_skill_slice(task_id, agent, skill_recommendations)
         skills = format_skill_recommendations_for_dispatch(agent, skill_source, coordinator=is_coordinator)
+        if slice_ref and str(slice_ref) not in skills:
+            skills += f"\n- Provider slice: `{slice_ref}`."
         compact_skill_lines = [
             line
             for line in skills.splitlines()
             if "Full recommendation records remain" in line
             or "Recommendations filtered for" in line
+            or "Provider slice:" in line
             or line.startswith("- Work item ")
         ]
         compact_skills = "\n".join(compact_skill_lines) or (
@@ -3346,9 +3492,9 @@ def write_dispatches(
             else "- Use only the provider-reachable skill slice for this dispatch."
         )
         minimal_skills = (
-            "- Load provider-reachable matches from `skill-recommendations.json` only when relevant."
-            if is_coordinator
-            else "- Load only the provider-reachable skill slice; do not load the coordinator report."
+            f"- Provider slice: `{slice_ref}`."
+            if slice_ref
+            else "- No provider skill slice was generated."
         )
         attention_slice = attention_slice_for_agent(agent, visible_attention)
         budget = dispatch_budget_for_agent(agent, routing.get("role_assignments") or {})
@@ -3356,19 +3502,22 @@ def write_dispatches(
         def render_dispatch(brief: str, attention: str, skill_text: str, actual_chars: int) -> str:
             return f"""# Dispatch: {agent}
 
-Task: {task_id}
-Profile: {profile}
-Payload budget: role={budget['role']} max_chars={budget['max_chars']} max_reference_tokens={budget['max_reference_tokens']} actual_chars={actual_chars} estimator=ceil(chars/4)
+Task: {task_id} | Profile: {profile}
+Payload budget: {actual_chars}/{budget['max_chars']} chars.
+
+## VALP Control Contract (Load First)
+
+Load `{CONTROL_CONTRACT_REF}` first; slice `{control_slice_ref}`; mismatch blocks.
+
+{compact_control_slice}
 
 ## Project Root
 
-```bash
-cd "{root}"
-```
+`cd "{root}"`
 
 ## Role
 
-Primary role: `{budget['role']}`. Capability match: {reasons or 'current routing evidence'}.
+Role: `{budget['role']}`. See `routing.json` for capability evidence.
 
 ## Task Brief
 
@@ -3376,15 +3525,14 @@ Primary role: `{budget['role']}`. Capability match: {reasons or 'current routing
 
 ## Task References
 
-The coordinator/leader owns dispatch precision; load these refs as needed:
+The coordinator/leader owns dispatch precision. Load:
 
 {core_task_refs}
-- Gate contracts: `submission-dependencies.json`, `delegation-policy.json`
-- More refs: `automation-policy.json`, `routing.json`, `visible-routing.md`, `context-selection.json`, `mask-list.json`, `evidence-board.json`
+- Budget/gates: `iteration-budget.json`, `submission-dependencies.json`, `delegation-policy.json`
 
 ## Payload Budget
 
-- Expand only through task-local refs; do not request hidden chat history.
+- Task-local refs only.
 
 ## Visible Attention Slice
 
@@ -3392,10 +3540,8 @@ The coordinator/leader owns dispatch precision; load these refs as needed:
 
 ## Permission Boundary
 
-- Honor approval gates; cite evidence for runtime facts.
+- Honor approval gates; write expected evidence only unless edits are permitted; cite runtime proof.
 - Do not write skills, plugins, memory, MCP configuration, or agent configuration while delegated.
-- Scoped repository edits need permission and must not be live-loaded.
-- Write expected evidence only unless source edits are permitted.
 
 ## Expected Evidence
 
@@ -3405,13 +3551,15 @@ The coordinator/leader owns dispatch precision; load these refs as needed:
 
 {skill_text}
 
-## Evidence Claim Rule
-
-- Cite task-local proof for build, test, and runtime claims.
-
 ## Required Response
 
-Write expected evidence with blockers, confidence, and `## Recommendations`.
+Include blockers, confidence, `## Recommendations`, and:
+
+```text
+control_contract_ref: control-contract.json
+control_contract_digest: {contract_record.get('digest')}
+control_contract_status: honored
+```
 """
 
         variants = [
@@ -3424,7 +3572,7 @@ Write expected evidence with blockers, confidence, and `## Recommendations`.
             ),
             (
                 bounded_text(task_brief, 160),
-                "- See `visible-routing.md` and `context-pack.json` for the task-local role slice.",
+                "- See `context-pack.json` and `visible-routing.md`.",
                 minimal_skills,
             ),
         ]
@@ -3700,6 +3848,223 @@ def write_queue_submission(
             },
         )
     return queue_record
+
+
+def write_herdr_submission_receipt(
+    directory: Path,
+    task_id: str,
+    target: str,
+    role: str,
+    expected: list[str],
+    proof: dict[str, Any],
+    recovery: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    dependency_document = read_json(directory / "submission-dependencies.json")
+    identity = next(
+        (
+            item
+            for item in dependency_document.get("work_items") or []
+            if isinstance(item, dict)
+            and item.get("agent") == target
+            and item.get("role") == role
+        ),
+        work_item_identity(task_id, target, role),
+    )
+    retry_generation = recovery.get("retry_generation") if recovery else None
+    if recovery:
+        if "recovery" in proof:
+            raise SystemExit("HERDR submission proof conflicts with incomplete recovery metadata")
+        proof = {
+            **proof,
+            "recovery": {
+                "kind": "incomplete_submission",
+                "retry_generation": retry_generation,
+                "originating_submission_receipt_id": recovery[
+                    "originating_submission_receipt_id"
+                ],
+                "control_contract_digest": recovery["control_contract_digest"],
+            },
+        }
+    with task_state_lock(directory):
+        existing_receipts = load_dispatch_receipts(directory, task_id)
+        logical_receipts = [
+            receipt
+            for receipt in existing_receipts
+            if receipt.get("schema_version") == "valp-dispatch-receipt.v2"
+            and receipt.get("task_id") == task_id
+            and receipt.get("agent") == target
+            and receipt.get("role") == role
+            and receipt.get("work_item_id") == identity["work_item_id"]
+            and receipt.get("dispatch_id") == identity["dispatch_id"]
+            and receipt.get("dispatch_generation") == identity["dispatch_generation"]
+            and receipt.get("retry_generation") == retry_generation
+            and receipt.get("event") == "dispatch_submitted"
+        ]
+        if logical_receipts:
+            matching = [
+                receipt
+                for receipt in logical_receipts
+                if has_concrete_runtime_submission_proof(receipt)
+                and (receipt.get("proof") or {}).get("runtime") == "HERDR"
+            ]
+            if len(logical_receipts) != 1 or len(matching) != 1 or any(
+                receipt.get("dispatch_ref") != f"agents/{target}/dispatch.md"
+                or receipt.get("expected_refs") != expected
+                or receipt.get("proof") != proof
+                for receipt in matching
+            ) or len({str(receipt.get("receipt_id")) for receipt in matching}) != 1:
+                raise SystemExit("Existing HERDR submission receipt conflicts with the routed work item")
+            return matching[0]
+        event_sequence = max(
+            [
+                int(record["event_sequence"])
+                for record in existing_receipts
+                if record.get("schema_version") == "valp-dispatch-receipt.v2"
+                and type(record.get("event_sequence")) is int
+            ],
+            default=0,
+        ) + 1
+        receipt_id = (
+            f"{task_id}:{identity['work_item_id']}:{identity['dispatch_id']}:"
+            f"{identity['dispatch_generation']}:dispatch_submitted"
+        )
+        if retry_generation is not None:
+            receipt_id = (
+                f"{task_id}:{identity['work_item_id']}:{identity['dispatch_id']}:"
+                f"{identity['dispatch_generation']}:retry:{retry_generation}:dispatch_submitted"
+            )
+        receipt = {
+            "schema_version": "valp-dispatch-receipt.v2",
+            "receipt_id": receipt_id,
+            "task_id": task_id,
+            "event_sequence": event_sequence,
+            "ts": now_iso(),
+            "agent": target,
+            "role": role,
+            "work_item_id": identity["work_item_id"],
+            "dispatch_id": identity["dispatch_id"],
+            "dispatch_generation": identity["dispatch_generation"],
+            "event": "dispatch_submitted",
+            "dispatch_ref": f"agents/{target}/dispatch.md",
+            "expected_refs": expected,
+            "proof": proof,
+            "summary": (
+                "The packaged HERDR adapter submitted the dispatch with runtime proof. "
+                "Completion still requires expected evidence."
+            ),
+        }
+        if retry_generation is not None:
+            receipt["retry_generation"] = retry_generation
+        append_json_line_durable(directory / "dispatch-receipts.jsonl", receipt)
+        return receipt
+
+
+def herdr_expected_ref_status(
+    directory: Path,
+    expected: list[str],
+) -> tuple[bool, list[str], list[str]]:
+    existing: list[str] = []
+    missing: list[str] = []
+    for ref in expected:
+        if not safe_task_evidence_ref(ref):
+            missing.append(ref)
+            continue
+        path = (directory / ref).resolve()
+        try:
+            path.relative_to(directory.resolve())
+        except ValueError:
+            missing.append(ref)
+            continue
+        if (
+            path.is_file()
+            and path.stat().st_size > 0
+            and work_item_evidence_is_valid(directory, {"expected_refs": [ref]})
+        ):
+            existing.append(ref)
+        else:
+            missing.append(ref)
+    return not missing, existing, missing
+
+
+def wait_for_herdr_expected_refs(
+    directory: Path,
+    expected: list[str],
+    wait_seconds: float | None,
+) -> tuple[bool, list[str], list[str]]:
+    timeout_seconds = 60.0 if wait_seconds is None else wait_seconds
+    deadline = time.monotonic() + max(timeout_seconds, 0.0)
+    while True:
+        completed, existing, missing = herdr_expected_ref_status(directory, expected)
+        if completed:
+            return completed, existing, missing
+        if time.monotonic() >= deadline:
+            return False, existing, missing
+        time.sleep(0.5)
+
+
+def write_herdr_completion_receipt(
+    directory: Path,
+    task_id: str,
+    submission: dict[str, Any],
+    existing_refs: list[str],
+) -> dict[str, Any]:
+    suspension_epoch = _herdr_suspension_epoch(directory)
+    identity = {
+        "task_id": task_id,
+        "suspension_epoch": suspension_epoch,
+        "work_item_id": submission.get("work_item_id"),
+        "submission_receipt_id": submission.get("receipt_id"),
+        "expected_refs": existing_refs,
+    }
+    receipt_id = "sha256:" + hashlib.sha256(
+        json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    with task_state_lock(directory):
+        receipts = load_dispatch_receipts(directory, task_id)
+        existing = [receipt for receipt in receipts if receipt.get("receipt_id") == receipt_id]
+        if existing:
+            return existing[0]
+        event_sequence = max(
+            [
+                int(receipt["event_sequence"])
+                for receipt in receipts
+                if receipt.get("schema_version") == "valp-dispatch-receipt.v2"
+                and type(receipt.get("event_sequence")) is int
+            ],
+            default=0,
+        ) + 1
+        completion = {
+            "schema_version": "valp-dispatch-receipt.v2",
+            "receipt_id": receipt_id,
+            "task_id": task_id,
+            "event_sequence": event_sequence,
+            "ts": now_iso(),
+            "agent": str(submission.get("agent") or ""),
+            "role": str(submission.get("role") or "other"),
+            "work_item_id": str(submission.get("work_item_id") or ""),
+            "dispatch_id": str(submission.get("dispatch_id") or ""),
+            "dispatch_generation": int(submission.get("dispatch_generation") or 1),
+            "suspension_epoch": suspension_epoch,
+            "event": "dispatch_completed",
+            "exit_code": 0,
+            "summary": "Expected dispatch evidence exists",
+            "dispatch_ref": str(submission.get("dispatch_ref") or ""),
+            "expected_refs": existing_refs,
+            "proof": {
+                "observer": "valp.packaged-herdr.expected-evidence",
+                "submission_receipt_id": str(submission.get("receipt_id") or ""),
+                "existing_refs": existing_refs,
+            },
+            "runtime": {
+                "name": "HERDR",
+                "transport_mode": str((submission.get("proof") or {}).get("transport_mode") or "unknown"),
+                "pane_id": str((submission.get("proof") or {}).get("pane_id") or ""),
+            },
+        }
+        if submission.get("retry_generation") is not None:
+            completion["retry_generation"] = submission["retry_generation"]
+        append_json_line_durable(directory / "dispatch-receipts.jsonl", completion)
+        return completion
 
 
 def wait_event_id(
@@ -4861,6 +5226,144 @@ def suspend_task(root: Path, task_id: str, timeout_seconds: float | None = None)
         return suspension
 
 
+def recover_timed_out_task_from_receipt(
+    directory: Path,
+    task_id: str,
+    state: dict[str, Any],
+    suspension: dict[str, Any],
+    resume_ref: str | None,
+) -> dict[str, Any]:
+    accepted = suspension.get("accepted_wake") or {}
+    if (
+        suspension.get("status") != "resumed"
+        or suspension.get("resume_event") != "timeout"
+        or accepted.get("resume_event") != "timeout"
+        or accepted.get("wake_reason") != "timeout"
+    ):
+        raise SystemExit("Late completion recovery requires an accepted timeout wake")
+    if not resume_ref or not resume_ref.startswith("dispatch-receipts.jsonl#"):
+        raise SystemExit("Late completion recovery requires a dispatch receipt ref")
+    try:
+        receipt_index = int(resume_ref.rsplit("#", 1)[1])
+    except (ValueError, IndexError):
+        raise SystemExit("Invalid dispatch receipt ref")
+
+    receipts = load_dispatch_receipts(directory, task_id)
+    if receipt_index < 1 or receipt_index > len(receipts):
+        raise SystemExit("Dispatch receipt ref does not exist")
+    if receipt_index <= int(suspension.get("receipt_count_at_entry") or 0):
+        raise SystemExit("Late completion receipt predates the timed-out suspension")
+    accepted_receipt_cursor = suspension.get("receipt_cursor")
+    if (
+        type(accepted_receipt_cursor) is int
+        and receipt_index <= accepted_receipt_cursor
+    ):
+        raise SystemExit(
+            f"Conflicting wake for completed suspension epoch {suspension.get('suspension_epoch')}"
+        )
+    receipt = receipts[receipt_index - 1]
+    if receipt.get("event") != "dispatch_completed":
+        raise SystemExit("Late completion recovery requires dispatch_completed")
+
+    required_work_items = suspension.get("required_work_items") or []
+    matching_items = [
+        item
+        for item in required_work_items
+        if isinstance(item, dict)
+        and receipt_matches_work_item(
+            receipt,
+            item,
+            task_id,
+            strict_identity=True,
+            suspension_epoch=int(suspension.get("suspension_epoch") or 0),
+            event_sequence_at_entry=int(suspension.get("receipt_event_sequence_at_entry") or 0),
+        )
+    ]
+    if len(matching_items) != 1:
+        raise SystemExit("Late completion receipt does not match one timed-out work item identity")
+    item = matching_items[0]
+    work_item_id = str(item.get("work_item_id") or "")
+    if work_item_id not in {str(value) for value in suspension.get("pending_work_item_ids") or []}:
+        raise SystemExit("Late completion receipt does not recover a pending timed-out work item")
+    if not work_item_evidence_is_valid(directory, item):
+        raise SystemExit("Late completion receipt expected evidence is missing or invalid")
+
+    proof = receipt.get("proof") if isinstance(receipt.get("proof"), dict) else {}
+    submission_receipt_id = str(proof.get("submission_receipt_id") or "")
+    submissions = [
+        candidate
+        for candidate in receipts
+        if candidate.get("receipt_id") == submission_receipt_id
+        and candidate.get("event") == "dispatch_submitted"
+        and receipt_matches_work_item(candidate, item, task_id, strict_identity=True)
+        and has_concrete_runtime_submission_proof(candidate)
+    ]
+    if not submission_receipt_id or len(submissions) != 1:
+        raise SystemExit("Late completion receipt is not bound to one concrete submission receipt")
+
+    recovery_identity = {
+        "suspension_id": suspension.get("suspension_id"),
+        "completion_receipt_id": receipt.get("receipt_id"),
+        "completion_receipt_ref": resume_ref,
+    }
+    recovery_events = [
+        event
+        for event in read_json_lines(directory / "timeline.jsonl")
+        if event.get("event") == "late_completion_recovered"
+        and event.get("suspension_id") == suspension.get("suspension_id")
+    ]
+    conflicts = [
+        event
+        for event in recovery_events
+        if any(event.get(key) != value for key, value in recovery_identity.items())
+    ]
+    if conflicts:
+        raise SystemExit("Timed-out suspension already has a conflicting late completion recovery")
+    if not recovery_events:
+        append_timeline_event(
+            directory,
+            "late_completion_recovered",
+            "Recovered current task progress from an identity-bound late completion receipt",
+            **recovery_identity,
+            submission_receipt_id=submission_receipt_id,
+            preserved_timeout_result_ref=accepted.get("result_ref"),
+        )
+
+    if state.get("status") not in {"blocked", "dispatching"}:
+        raise SystemExit(f"Late completion recovery cannot advance task status {state.get('status')}")
+    if state.get("status") == "blocked":
+        state["status"] = "dispatching"
+        state["updated_at"] = now_iso()
+        write_json(directory / "state.json", state)
+
+    budget = read_json(directory / "iteration-budget.json")
+    if budget:
+        stop_reasons = {
+            reason.strip()
+            for reason in str(budget.get("stop_reason") or "").split(";")
+            if reason.strip()
+        }
+        if budget.get("status") == "blocked" and stop_reasons == {"task status is blocked"}:
+            budget["status"] = "active"
+            budget["stop_reason"] = None
+        routing = read_json(directory / "routing.json")
+        if routing:
+            budget = refresh_iteration_budget(directory, routing, budget)
+
+    return {
+        "schema_version": "valp-timeout-recovery.v1",
+        "task_id": task_id,
+        "recovery_event": "late_completion",
+        "resume_event": "receipt",
+        "resume_ref": resume_ref,
+        "completion_receipt_id": receipt.get("receipt_id"),
+        "submission_receipt_id": submission_receipt_id,
+        "preserved_timeout_result_ref": accepted.get("result_ref"),
+        "resulting_task_status": state.get("status"),
+        "iteration_budget_status": budget.get("status") if budget else "not_recorded",
+    }
+
+
 def resume_suspended_task(
     root: Path,
     task_id: str,
@@ -4891,6 +5394,14 @@ def resume_suspended_task(
         if state.get("status") != "suspended" or suspension.get("status") != "waiting":
             accepted = suspension.get("accepted_wake") or {}
             if accepted:
+                if resume_event == "receipt" and accepted.get("resume_event") == "timeout":
+                    return recover_timed_out_task_from_receipt(
+                        directory,
+                        task_id,
+                        state,
+                        suspension,
+                        resume_ref,
+                    )
                 if (
                     accepted.get("resume_event") == resume_event
                     and accepted.get("resume_ref") == resume_ref
@@ -4912,6 +5423,9 @@ def resume_suspended_task(
                 raise SystemExit("Suspension deadline must include a timezone")
             if datetime.now(timezone.utc) < deadline.astimezone(timezone.utc):
                 raise SystemExit("Cannot resume from timeout before the recorded deadline")
+            suspension["receipt_cursor"] = len(
+                load_dispatch_receipts(directory, task_id)
+            )
         if resume_event == "receipt":
             if not resume_ref or not resume_ref.startswith("dispatch-receipts.jsonl#"):
                 raise SystemExit("receipt resume requires a dispatch receipt ref")
@@ -5274,12 +5788,133 @@ def dependency_ready_frontier(
             directory,
             evidence_status,
             manual_mode=False,
+            correction_cycle=read_json(directory / "correction-cycle.json"),
         )
         if dependency_errors:
             blocked.extend(dependency_errors)
         else:
             ready.append(phase)
     return ready, list(dict.fromkeys(blocked))
+
+
+def incomplete_submission_recovery_context(
+    directory: Path,
+    task_id: str,
+    routing: dict[str, Any],
+    submission_dependencies: dict[str, Any],
+    receipts: list[dict[str, Any]],
+    phase: tuple[str, str],
+    retry_generation: int,
+    runtime_kind: str,
+) -> dict[str, Any]:
+    target, role = phase
+    if runtime_kind != "herdr":
+        raise SystemExit("Incomplete submission recovery is supported only by the HERDR adapter")
+    if retry_generation != 1:
+        raise SystemExit("Incomplete submission recovery accepts only retry generation 1")
+
+    work_items = [
+        item
+        for item in submission_dependencies.get("work_items") or []
+        if isinstance(item, dict)
+        and item.get("agent") == target
+        and item.get("role") == role
+    ]
+    if len(work_items) != 1:
+        raise SystemExit("Incomplete submission recovery requires one exact routed work item")
+    work_item = work_items[0]
+
+    contract_path = directory / CONTROL_CONTRACT_REF
+    contract = read_json_strict(contract_path)
+    contract_errors = validate_control_contract(contract, task_id)
+    if contract_errors:
+        raise SystemExit("Invalid worker control contract: " + "; ".join(contract_errors))
+    digest = control_contract_digest(contract, contract_path.read_bytes())
+    contract_record = routing.get("control_contract") or {}
+    if (
+        contract_record.get("status") != "recorded"
+        or contract_record.get("ref") != CONTROL_CONTRACT_REF
+        or contract_record.get("digest") != digest
+    ):
+        raise SystemExit("Incomplete submission recovery control-contract identity mismatch")
+
+    slice_ref = str((routing.get("control_slices") or {}).get(target) or "")
+    if slice_ref != f"control-slices/{target}.json":
+        raise SystemExit("Incomplete submission recovery control slice is missing or inconsistent")
+    agent_work_item_ids = [
+        str(item.get("work_item_id") or "")
+        for item in submission_dependencies.get("work_items") or []
+        if isinstance(item, dict) and item.get("agent") == target
+    ]
+    control_slice = read_json_strict(directory / slice_ref)
+    slice_errors = validate_control_slice(
+        control_slice,
+        task_id,
+        target,
+        agent_work_item_ids,
+        digest,
+    )
+    if slice_errors or work_item.get("work_item_id") not in control_slice.get("work_item_ids", []):
+        details = slice_errors or ["selected work item is absent"]
+        raise SystemExit("Incomplete submission recovery control slice mismatch: " + "; ".join(details))
+
+    expected = [str(ref) for ref in work_item.get("expected_refs") or []]
+    identity_receipts = [
+        receipt
+        for receipt in receipts
+        if receipt.get("schema_version") == "valp-dispatch-receipt.v2"
+        and receipt.get("task_id") == task_id
+        and receipt.get("agent") == work_item.get("agent")
+        and receipt.get("role") == work_item.get("role")
+        and receipt.get("work_item_id") == work_item.get("work_item_id")
+        and receipt.get("dispatch_id") == work_item.get("dispatch_id")
+        and receipt.get("dispatch_generation") == work_item.get("dispatch_generation")
+        and receipt.get("dispatch_ref") == f"agents/{target}/dispatch.md"
+        and receipt.get("expected_refs") == expected
+    ]
+    terminal = [
+        receipt
+        for receipt in identity_receipts
+        if receipt.get("event") in TERMINAL_WORKER_RECEIPT_EVENTS
+    ]
+    if terminal:
+        raise SystemExit("Incomplete submission recovery rejects an already terminal work item")
+    prior_retries = [
+        receipt for receipt in identity_receipts if receipt.get("retry_generation") is not None
+    ]
+    if prior_retries:
+        raise SystemExit("Incomplete submission recovery was already attempted for this work item")
+    originating = [
+        receipt
+        for receipt in identity_receipts
+        if receipt.get("event") == "dispatch_submitted"
+        and receipt.get("retry_generation") is None
+        and has_concrete_runtime_submission_proof(receipt)
+        and (receipt.get("proof") or {}).get("runtime") == "HERDR"
+    ]
+    if len(originating) != 1:
+        raise SystemExit(
+            "Incomplete submission recovery requires exactly one concrete identity-bound HERDR submission"
+        )
+    complete, existing_refs, _missing_refs = herdr_expected_ref_status(directory, expected)
+    if complete:
+        return {
+            "action": "reconcile_completion",
+            "originating_submission": originating[0],
+            "existing_refs": existing_refs,
+            "work_item_id": work_item["work_item_id"],
+        }
+    if existing_refs:
+        raise SystemExit(
+            "Incomplete submission recovery requires all expected evidence to be valid or all to remain absent or invalid"
+        )
+    return {
+        "action": "retry_submission",
+        "retry_generation": retry_generation,
+        "originating_submission_receipt_id": originating[0]["receipt_id"],
+        "control_contract_digest": digest,
+        "work_item_id": work_item["work_item_id"],
+    }
 
 
 def dispatch_task(
@@ -5291,6 +5926,8 @@ def dispatch_task(
     role: str | None = None,
     wait_seconds: float | None = None,
     proof_seconds: float | None = None,
+    recover_incomplete: bool = False,
+    retry_generation: int | None = None,
 ) -> list[str]:
     for label, value in (
         ("Evidence wait", wait_seconds),
@@ -5298,6 +5935,17 @@ def dispatch_task(
     ):
         if value is not None and (not math.isfinite(value) or value < 0):
             raise SystemExit(f"{label} must be a finite non-negative number")
+    if recover_incomplete:
+        if not submit:
+            raise SystemExit("Incomplete submission recovery requires --submit")
+        if agent == "all" or role is None:
+            raise SystemExit(
+                "Incomplete submission recovery requires one explicit --agent and --role"
+            )
+        if retry_generation is None:
+            raise SystemExit("Incomplete submission recovery requires --retry-generation")
+    elif retry_generation is not None:
+        raise SystemExit("--retry-generation requires --recover-incomplete")
     root = workspace_root(root)
     directory = task_dir(root, task_id)
     routing = read_json(directory / "routing.json")
@@ -5388,7 +6036,8 @@ def dispatch_task(
         if delegation_policy.get("violations"):
             raise SystemExit("Delegated dispatch is blocked by a recorded live self-modification violation")
 
-    if submit and submission_dependencies:
+    recovery_context: dict[str, Any] | None = None
+    if submission_dependencies and (submit or not manual_mode):
         translated = 0
         if not manual_mode:
             translated = translate_legacy_herdr_receipts(directory, task_id)
@@ -5425,12 +6074,76 @@ def dispatch_task(
                 directory,
                 read_json(directory / "evidence-status.json"),
                 manual_mode=manual_mode,
+                correction_cycle=read_json(directory / "correction-cycle.json"),
             )
             if dependency_errors:
                 raise SystemExit("Dispatch blocked by unmet prerequisites: " + ", ".join(dependency_errors))
+            if submit and not recover_incomplete:
+                existing_events = [
+                    (phase, latest_phase_delivery_event(
+                        submission_dependencies,
+                        phase,
+                        receipts,
+                        task_id,
+                    ))
+                    for phase in phases
+                ]
+                incomplete = [
+                    f"{phase[1]}:{phase[0]}"
+                    for phase, event in existing_events
+                    if event in DELIVERY_RECEIPT_EVENTS
+                ]
+                if incomplete:
+                    raise SystemExit(
+                        "Resubmitting an incomplete work item requires --recover-incomplete: "
+                        + ", ".join(incomplete)
+                    )
+                terminal = [
+                    f"{phase[1]}:{phase[0]}"
+                    for phase, event in existing_events
+                    if event in TERMINAL_WORKER_RECEIPT_EVENTS
+                ]
+                if terminal:
+                    raise SystemExit(
+                        "Dispatch phase already has a terminal receipt: " + ", ".join(terminal)
+                    )
+        if recover_incomplete:
+            if len(phases) != 1:
+                raise SystemExit("Incomplete submission recovery requires one exact dispatch phase")
+            recovery_context = incomplete_submission_recovery_context(
+                directory,
+                task_id,
+                routing,
+                submission_dependencies,
+                receipts,
+                phases[0],
+                int(retry_generation or 0),
+                runtime_kind,
+            )
     if submit and read_json(directory / "automation-policy.json").get("selected_action") == "block_for_approval":
         raise SystemExit("Dispatch is blocked until approval evidence and automation policy are reconciled")
-    if submit:
+    if recovery_context and recovery_context["action"] == "reconcile_completion":
+        completion_receipt = write_herdr_completion_receipt(
+            directory,
+            task_id,
+            recovery_context["originating_submission"],
+            recovery_context["existing_refs"],
+        )
+        append_timeline_event(
+            directory,
+            "dispatch_completed",
+            f"Reconciled late expected evidence for {phases[0][0]}",
+            agent=phases[0][0],
+            evidence_refs=recovery_context["existing_refs"],
+            submission_receipt_id=recovery_context["originating_submission"]["receipt_id"],
+            completion_receipt_id=completion_receipt["receipt_id"],
+        )
+        return [f"Reconciled late expected evidence for {phases[0][1]}:{phases[0][0]}"]
+    runtime_retry = bool(
+        submit
+        and runtime_dispatch_retry_pending(directory, state, runtime_kind)
+    )
+    if submit and not runtime_retry:
         enforce_iteration_budget(directory, routing, state, phases)
 
     recorded_budgets = routing.get("dispatch_payload_budgets") or {}
@@ -5495,6 +6208,8 @@ def dispatch_task(
             budget["stop_reason"] = "dynamic model identity changed after routing"
             write_json(directory / "iteration-budget.json", budget)
         raise SystemExit("Dispatch blocked by dynamic model identity gate: " + "; ".join(model_dispatch_errors))
+    if runtime_retry:
+        resume_runtime_dispatch_retry(directory, routing, phases)
     if submit and runtime_kind in {"herdr", "langgraph", "queue"}:
         write_wait_policy_for_phases(
             directory,
@@ -5558,37 +6273,101 @@ def dispatch_task(
             continue
         if runtime_kind != "herdr":
             raise SystemExit(f"Runtime {runtime_kind} is not supported by this reference dispatch helper.")
-        command = ["herdr-loop", "--project-root", str(root), "submit-dispatch", task_id, target]
+        capability = (preflight.get("checks") or {}).get("submission_transport") or {}
+        dispatch_ref = f"agents/{target}/dispatch.md"
+        command_description = describe_herdr_submission(capability, target, dispatch_ref)
         submission_only = wait_seconds == 0
-        if not submission_only:
-            for ref in expected:
-                command.extend(["--expect", ref])
-        if wait_seconds is not None:
-            command.extend(["--wait-seconds", str(wait_seconds)])
-        if proof_seconds is not None:
-            command.extend(["--proof-seconds", str(proof_seconds)])
-        commands.append(" ".join(command))
+        commands.append(command_description)
         if submit:
-            result = subprocess.run(command, check=False)
-            translated = translate_legacy_herdr_receipts(
-                directory,
-                task_id,
-                phase=(target, target_role) if submission_only else None,
-            )
-            if translated:
-                append_timeline_event(
-                    directory,
-                    "runtime_receipts_translated",
-                    f"Translated {translated} legacy HERDR receipt(s) into v2 identity-bound records",
-                    agent=target,
+            herdr = shutil.which("herdr")
+            if not herdr:
+                raise SystemExit("HERDR submission became unavailable after preflight: herdr command not found")
+            pane_id = str(((preflight.get("agents") or {}).get(target) or {}).get("pane_id") or "")
+            if not pane_id:
+                raise SystemExit(f"HERDR submission has no addressable pane for agent {target}")
+            try:
+                proof = submit_herdr_dispatch(
+                    herdr,
+                    capability,
+                    task_id=task_id,
+                    target=target,
+                    pane_id=pane_id,
+                    dispatch_path=directory / dispatch_ref,
+                    run_command=run_command,
+                    proof_seconds=proof_seconds,
                 )
-            if result.returncode != 0:
+                submission_receipt = write_herdr_submission_receipt(
+                    directory,
+                    task_id,
+                    target,
+                    target_role,
+                    expected,
+                    proof,
+                    recovery=recovery_context,
+                )
+                if recovery_context:
+                    append_timeline_event(
+                        directory,
+                        "incomplete_submission_retried",
+                        "Resubmitted one identity-bound incomplete work item",
+                        work_item_id=recovery_context["work_item_id"],
+                        retry_generation=recovery_context["retry_generation"],
+                        originating_submission_receipt_id=recovery_context[
+                            "originating_submission_receipt_id"
+                        ],
+                        recovery_submission_receipt_id=submission_receipt["receipt_id"],
+                    )
+                if expected and not submission_only:
+                    completed, existing_refs, missing_refs = wait_for_herdr_expected_refs(
+                        directory,
+                        expected,
+                        wait_seconds,
+                    )
+                    if completed:
+                        write_herdr_completion_receipt(
+                            directory,
+                            task_id,
+                            submission_receipt,
+                            existing_refs,
+                        )
+                        append_timeline_event(
+                            directory,
+                            "dispatch_completed",
+                            f"Expected evidence completed for {target}",
+                            agent=target,
+                            evidence_refs=existing_refs,
+                        )
+                    else:
+                        append_timeline_event(
+                            directory,
+                            "dispatch_waiting",
+                            f"Evidence observation window elapsed for {target}; worker remains active",
+                            agent=target,
+                            missing_refs=missing_refs,
+                        )
+            except HerdrSubmissionError as exc:
                 budget = read_json(directory / "iteration-budget.json")
                 if budget:
                     budget["status"] = "blocked"
-                    budget["stop_reason"] = "runtime dispatch failure"
+                    if recovery_context:
+                        budget["stop_reason"] = "incomplete submission recovery failed"
+                    else:
+                        budget["stop_reason"] = (
+                            "runtime dispatch retry exhausted"
+                            if runtime_retry
+                            else "runtime dispatch failure"
+                        )
                     write_json(directory / "iteration-budget.json", budget)
-                raise subprocess.CalledProcessError(result.returncode, command)
+                append_timeline_event(
+                    directory,
+                    "dispatch_submit_failed",
+                    str(exc),
+                    agent=target,
+                    role=target_role,
+                    work_item_id=f"{target_role}:{target}",
+                    attempt="retry" if runtime_retry else "initial",
+                )
+                raise SystemExit(str(exc)) from exc
     budget = read_json(directory / "iteration-budget.json")
     if budget:
         refresh_iteration_budget(directory, routing, budget)

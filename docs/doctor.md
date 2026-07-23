@@ -67,6 +67,11 @@ does not mean a live runtime task has completed.
 Warnings do not prove the protocol is broken. For example, HERDR can be missing
 on a machine that only uses Manual Mode or a queue adapter.
 
+Missing optional HERDR remains a warning. If HERDR is installed but its
+preflight exposes no supported submission transport, the HERDR check fails:
+doctor and `valp preflight --runtime herdr` then agree that Full Mode submission
+is unavailable.
+
 ## Boundaries
 
 Doctor must not:

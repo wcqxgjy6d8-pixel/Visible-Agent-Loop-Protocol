@@ -75,6 +75,7 @@
         "work_item_id": {"type": "string", "minLength": 1},
         "dispatch_id": {"type": "string", "minLength": 1},
         "dispatch_generation": {"type": "integer", "minimum": 1},
+        "retry_generation": {"type": "integer", "minimum": 1},
         "suspension_epoch": {"type": "integer", "minimum": 1},
         "event": {"$ref": "#/$defs/event"},
         "exit_code": {"type": "integer"},

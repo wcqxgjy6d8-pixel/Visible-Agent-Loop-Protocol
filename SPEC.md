@@ -373,6 +373,15 @@ still running. A runtime process may block on file notifications, queue events,
 socket events, or bounded polling; it must not invoke the coordinator model to
 ask whether work is finished.
 
+An authored `wait-policy.json` is prepared control data, not evidence that a
+task entered deterministic suspension. Its presence alone MUST NOT claim
+deterministic wait/wake conformance or require a historical event ledger. The
+claim becomes auditable when version-2 `state.json` records a suspension, when a
+committed wait event exists, or when malformed wait-event input shows that the
+event path was used. Once any of those signals exists, missing or invalid
+`wait-events.jsonl` remains a failure and MUST NOT be fabricated, deleted, or
+hidden to change the audit result.
+
 Before entering `suspended`, the deterministic core MUST validate a closed
 `wait-policy.json`, its referenced `submission-dependencies.json`, delivery
 proof for every required work item, and the current task revision. The policy
@@ -838,6 +847,52 @@ Reference tools may expose adapter selection flags such as `auto`, `manual`,
 and evidence. A queue adapter must not fake pane fields, and a pane adapter must
 still fail preflight when terminal or display checks fail.
 
+### Provider-Neutral Coordinator Continuation
+
+A local or synthetic identifier, pane transport, CLI stdout, or user-message
+channel cannot establish provider/session invocation identity. An adapter MUST
+remain Manual/degraded until real provider/session identity and durable
+duplicate-suppression evidence exist.
+
+An accepted wake MAY create an immutable `valp-continuation-envelope.v1` on a
+typed `runtime_control` channel. The envelope binds task, suspension epoch,
+wake identity, control-contract digest, payload digest, coordinator target, and
+an adapter-owned durable boundary. User input and raw worker output are never
+continuation payloads. Wake acceptance and invocation acceptance are separate
+revision-CAS boundaries.
+
+The `suspension_id`, `wake_id`, and `wake_event_id` fields MUST be
+content-addressed identifiers in the form `sha256:` followed by 64 lowercase
+hexadecimal characters. Implementations MUST validate these identifiers before
+using any of them in artifact paths or ledger lookups. The active suspension
+epoch MUST come from the authoritative task state projection; a persisted
+continuation envelope MUST match that epoch exactly. Persisted envelopes MUST
+NOT establish, raise, or otherwise redefine the active epoch.
+
+An adapter MUST append the ordered acknowledgement chain
+`resume_pending`, `resume_received`, `digest_verified`, `resume_accepted`,
+`continuation_started`, and `resume_consumed`. The last event proves exactly one
+correlated provider invocation consumed one envelope; it does not mean that the
+VALP task is done or approved. Identical redelivery MUST return the original
+receipt byte-for-byte. A changed payload, target, provider, or control digest
+under the same idempotency key MUST fail closed and remain in the append-only
+ledger. Adapters without real provider invocation identity or durable duplicate
+suppression MUST remain Manual/degraded.
+
+Every acknowledgement MUST correlate to the exact persisted envelope, payload,
+control-contract bytes, suspension epoch, full invocation key, target tuple, and
+capability declaration. `resume_received` and later events MUST fail closed when
+`resume_pending` is absent, stale, changed, or unpersisted. Conflicts and stale
+epochs MUST produce durable rejection evidence.
+
+`continuation_started` and `resume_consumed` require an immutable, complete
+provider invocation receipt. A bare invocation identifier, VALP's own event
+ledger, or an unverified local marker is not provider duplicate-suppression
+proof. Strict audit MUST recompute event identifiers and correlate the envelope,
+payload, control contract, receipt, and capability tuple. A runtime MUST recover
+persisted pending envelopes after restart. Where exclusive locking is not
+implemented, the adapter MUST fail closed rather than append without a lock.
+
 ## 6. Local Overlays
 
 VALP separates open protocol semantics from local execution facts.
@@ -1277,6 +1332,27 @@ export queue and receipt files separately, a queue file without its matching
 receipt is prepared data, not submission proof, and MUST be reconciled before a
 worker treats it as delivered.
 
+An incomplete-submission recovery is an explicit reconciliation request under
+the same task, work item, role, dispatch ID, and dispatch generation. It is
+permitted only when exactly one matching concrete `dispatch_submitted` receipt
+exists, no conflicting terminal receipt exists, and the current worker control
+contract and agent slice preserve that identity. After those checks, the
+runtime MUST choose exactly one outcome. If every expected evidence ref is
+valid, it MUST append or idempotently replay an identity-bound
+`dispatch_completed` receipt for the originating submission without runtime
+preflight, worker submission, or a retry `dispatch_submitted` receipt. If every
+expected evidence ref remains absent or invalid, it MAY perform the bounded
+transport retry: that receipt MUST record a positive `retry_generation`, bind
+the originating submission receipt and current worker control-contract digest
+in its proof, and use a stable receipt ID for that retry generation. A partial
+evidence set MUST fail closed.
+
+The reference recovery is bounded to one retry generation. Replay MUST be
+idempotent or fail closed, changed identity MUST fail closed, and a failed
+recovery transport MUST NOT feed the ordinary automatic dispatch retry or
+permit another explicit recovery submission. The append-only ledger and the
+originating submission receipt remain unchanged.
+
 ## 10.1 Correction Cycle Evidence
 
 Runtimes may implement self-correcting loops, automatic retries, repair queues,
@@ -1380,6 +1456,22 @@ receipt. For Manual Mode, the equivalent ordering is
 `manual_result_attested` before `manual_delivery_attested`. Physical JSONL line
 order is authoritative. Timestamps are descriptive and must not be used to
 repair reversed ledger order.
+
+If the declared prerequisite generation was superseded by a correction, a
+later Full or Remote Mode `dispatch_completed` receipt MAY satisfy the same
+dependency only when all of these conditions hold: the correction cycle and a
+binding round both have outcome `fixed`; the receipt keeps the same task,
+agent, role, and `work_item_id`; its dispatch generation is greater than the
+declared generation; the fixed round records `evidence_superseded`, names every
+declared ref as rejected, keeps those refs marked `superseded`, and binds the
+append-only receipt ledger; its expected refs are replacement evidence named by
+both the fixed round and the correction cycle's final evidence; and every
+replacement ref exists and remains valid. The latest qualifying correction
+generation is used. Its completion receipt still MUST physically precede the
+dependent submission. Earlier receipts and superseded evidence remain immutable
+history; the auditor does not relabel or rewrite them. Missing, active, blocked,
+invalid, cross-work-item, stale, or reverse-ordered correction evidence fails
+closed.
 
 Reference dispatch tools must validate dependency gates before preflight, queue
 writes, subprocess submission, or any other delivery side effect. An explicit

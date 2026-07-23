@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:valp:schema:continuation-capability:v1",
+  "title": "VALP Continuation Capability",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "adapter_id", "adapter_version", "provider_id", "coordinator_surface", "mode", "proof"],
+  "properties": {
+    "schema_version": {"const": "valp-continuation-capability.v1"},
+    "adapter_id": {"type": "string", "minLength": 1},
+    "adapter_version": {"type": "string", "minLength": 1},
+    "provider_id": {"type": "string", "minLength": 1},
+    "coordinator_surface": {"type": "string", "minLength": 1},
+    "mode": {"enum": ["automatic_full", "degraded", "manual"]},
+    "proof": {
+      "type": "object", "additionalProperties": false,
+      "required": ["invocation_receipt", "duplicate_suppression", "identity_evidence_ref", "duplicate_suppression_evidence_ref"],
+      "properties": {
+        "invocation_receipt": {"type": "boolean"},
+        "duplicate_suppression": {"type": "boolean"},
+        "identity_evidence_ref": {"type": "string"},
+        "duplicate_suppression_evidence_ref": {"type": "string"}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"mode": {"const": "automatic_full"}}},
+      "then": {
+        "properties": {
+          "proof": {
+            "properties": {
+              "invocation_receipt": {"const": true},
+              "duplicate_suppression": {"const": true},
+              "identity_evidence_ref": {"minLength": 1},
+              "duplicate_suppression_evidence_ref": {"minLength": 1}
+            }
+          }
+        }
+      }
+    }
+  ]
+}

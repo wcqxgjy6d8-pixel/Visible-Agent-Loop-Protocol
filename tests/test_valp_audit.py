@@ -9,7 +9,7 @@ from jsonschema import Draft202012Validator
 
 from tests.schema_helpers import schema_validator
 
-from valp_cli.audit import FAIL, PASS, WARN, TaskAudit
+from valp_cli.audit import FAIL, PASS, SKIP, WARN, TaskAudit
 from valp_cli.submission import build_submission_dependencies
 from valp_cli.workflow import resume_suspended_task, suspend_task
 
@@ -126,6 +126,43 @@ class ValpAuditTests(unittest.TestCase):
 
             self.assertEqual(item.status, FAIL)
             self.assertIn("wait-events.jsonl", item.message)
+
+    def test_deterministic_wake_audit_skips_authored_but_unused_wait_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            task_id = "TASK-WAKE-AUDIT-UNUSED-POLICY"
+            dependencies = build_submission_dependencies(task_id, {"implementer": "codex"})
+            (task / "state.json").write_text(json.dumps({
+                "schema_version": "valp-visible-loop-state.v2",
+                "task_id": task_id,
+                "profile": "agent-runtime",
+                "status": "executing",
+                "revision": 0,
+                "selected_agents": ["codex"],
+                "role_assignments": {"implementer": "codex"},
+            }), encoding="utf-8")
+            (task / "wait-policy.json").write_text(json.dumps({
+                "schema_version": "valp-wait-policy.v1",
+                "task_id": task_id,
+                "wait_policy_id": "next-step",
+                "mode": "dependency_ready",
+                "exception_policy": "exception_short_circuit",
+                "dependency_ref": "submission-dependencies.json",
+                "required_work_items": dependencies["work_items"],
+                "exception_events": [
+                    "dispatch_blocked",
+                    "runtime_failure",
+                    "cancellation",
+                    "timeout",
+                    "user_input",
+                ],
+            }), encoding="utf-8")
+
+            item = TaskAudit(task).check_deterministic_wake()
+
+            self.assertEqual(item.status, SKIP)
+            self.assertIn("wait-policy.json", item.evidence)
 
     def test_manual_mode_wait_reaches_the_explicit_degraded_audit_warning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

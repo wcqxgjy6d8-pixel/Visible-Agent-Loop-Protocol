@@ -5772,11 +5772,12 @@ class ValpWorkflowTests(unittest.TestCase):
     def test_scan_and_route_existing_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            task_dir = publish_task(root, "TASK-ROUTE", "Research a source")
-            scan_workspace(root, "TASK-ROUTE")
+            task_dir = publish_task(root, "TASK-ROUTE", "Research a source", runtime="manual")
+            scan_workspace(root, "TASK-ROUTE", runtime="manual")
             routing = route_task(
                 root,
                 "TASK-ROUTE",
+                runtime="manual",
                 assignment_declaration=self.assignment_declaration(
                     root,
                     "TASK-ROUTE",

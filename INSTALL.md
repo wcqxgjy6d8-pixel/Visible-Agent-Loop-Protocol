@@ -18,6 +18,7 @@ multi-agent tasks.
 For working on this repository's reference CLI locally:
 
 ```bash
+python -m pip install --upgrade pip setuptools
 python -m pip install -e ".[dev]"
 valp audit examples/minimal-task
 scripts/verify-examples.sh

@@ -52,6 +52,7 @@ Linux, macOS, and Windows runners.
 For editable local CLI development:
 
 ```bash
+python -m pip install --upgrade pip setuptools
 python -m pip install -e ".[dev]"
 valp audit examples/minimal-task
 ```

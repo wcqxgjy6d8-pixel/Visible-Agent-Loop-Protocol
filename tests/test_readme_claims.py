@@ -10,6 +10,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
+EDITABLE_INSTALL_DOCS = [
+    README,
+    ROOT / "INSTALL.md",
+    ROOT / "docs" / "quickstart.md",
+]
 EXAMPLES = {
     "examples/minimal-task/": ROOT / "examples" / "minimal-task",
     "examples/full-mode-task/": ROOT / "examples" / "full-mode-task",
@@ -20,6 +25,17 @@ EXAMPLES = {
 
 
 class ReadmeClaimTests(unittest.TestCase):
+    def test_editable_install_instructions_bootstrap_packaging_tools(self) -> None:
+        bootstrap = 'python -m pip install --upgrade pip setuptools'
+        editable_install = 'python -m pip install -e ".[dev]"'
+
+        for path in EDITABLE_INSTALL_DOCS:
+            with self.subTest(path=path.relative_to(ROOT)):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn(editable_install, text)
+                self.assertIn(bootstrap, text)
+                self.assertLess(text.index(bootstrap), text.index(editable_install))
+
     def test_bundled_example_audit_counts_match_readme(self) -> None:
         readme = README.read_text(encoding="utf-8")
 

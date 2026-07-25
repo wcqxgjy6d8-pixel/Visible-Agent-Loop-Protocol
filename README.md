@@ -223,6 +223,7 @@ Windows runners for push and pull request.
 Editable local CLI install for development:
 
 ```bash
+python -m pip install --upgrade pip setuptools
 python -m pip install -e ".[dev]"
 valp audit examples/minimal-task
 ```

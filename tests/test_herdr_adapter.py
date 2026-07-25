@@ -56,7 +56,7 @@ RESPONSES = {
     ("agent", "--help"): "herdr agent wait <target> --status <state> [--timeout MS]",
     ("pane", "--help"): "herdr pane send-text <pane_id> <text>\\nherdr pane send-keys <pane_id> <key>",
     ("status", "--json"): '{"client":{"version":"0.7.4"},"server":{"version":"0.7.4"}}',
-    ("pane", "list"): '{"result":{"panes":[{"agent":"codex","pane_id":"pane-1","agent_status":"idle"}]}}',
+    ("pane", "list"): '{"result":{"panes":[{"agent":"codex","pane_id":"pane-1","agent_status":"idle","model_id":"test-model","provider":"test-provider","reasoning_mode":"high","session_id":"session-1","generation":1}]}}',
     ("pane", "process-info"): '{"result":{"process_info":{"foreground_process_group_id":41}}}',
     ("pane", "read"): '{"result":{"read":{"text":"test-model high ·"}}}',
     ("pane", "layout"): '{"result":{"layout":{"panes":[{"pane_id":"pane-1","rect":{"width":120,"height":40}}]}}',

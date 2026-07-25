@@ -36,6 +36,26 @@ class ReadmeClaimTests(unittest.TestCase):
                 self.assertIn(bootstrap, text)
                 self.assertLess(text.index(bootstrap), text.index(editable_install))
 
+    def test_dispatch_size_benchmark_measures_generated_dispatches(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "scripts/benchmark-dispatch-size.py"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        report = json.loads(result.stdout)
+        expected = {
+            "full-mode/codex",
+            "full-mode/claude",
+            "headless-queue/codex",
+            "headless-queue/claude",
+        }
+        self.assertEqual(set(report["new_files"]), expected)
+        self.assertGreater(report["new_total_chars"], 0)
+        self.assertGreater(report["reduction_chars"], 0)
+
     def test_bundled_example_audit_counts_match_readme(self) -> None:
         readme = README.read_text(encoding="utf-8")
 

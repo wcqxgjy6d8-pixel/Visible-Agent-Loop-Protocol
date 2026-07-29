@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Continuation Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "suspension_id", "suspension_epoch", "wake_id", "wake_event_id", "wake_reason", "accepted_state_revision", "control_contract_ref", "control_contract_digest", "payload_ref", "payload_digest", "continuation_generation", "target", "channel"],
+  "properties": {
+    "schema_version": {"const": "valp-continuation-envelope.v1"}, "task_id": {"type": "string", "minLength": 1},
+    "suspension_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "suspension_epoch": {"type": "integer", "minimum": 1}, "wake_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "wake_event_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "wake_reason": {"type": "string", "minLength": 1}, "accepted_state_revision": {"type": "integer", "minimum": 0}, "control_contract_ref": {"type": "string", "minLength": 1}, "control_contract_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "payload_ref": {"type": "string", "minLength": 1}, "payload_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "continuation_generation": {"type": "integer", "minimum": 1},
+    "target": {"type": "object", "additionalProperties": false, "required": ["coordinator_agent", "adapter_id", "provider_id", "durable_boundary_ref"], "properties": {"coordinator_agent": {"type": "string", "minLength": 1}, "adapter_id": {"type": "string", "minLength": 1}, "provider_id": {"type": "string", "minLength": 1}, "durable_boundary_ref": {"type": "string", "minLength": 1}}},
+    "channel": {"const": {"kind": "runtime_control", "user_input_allowed": false, "raw_worker_output_allowed": false}}
+  }
+}

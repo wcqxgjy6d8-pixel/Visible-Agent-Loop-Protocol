@@ -17,7 +17,7 @@
   "properties": {
     "schema_version": {"const": "valp-iteration-budget.v1"},
     "task_id": {"type": "string"},
-    "strategy": {"const": "minimum_capable_team"},
+    "strategy": {"const": "leader_declared_bounded_team"},
     "max_dispatch_reference_tokens": {"type": "integer", "minimum": 1},
     "max_dispatches": {"type": "integer", "minimum": 1},
     "max_reroutes": {"type": "integer", "minimum": 0},

@@ -1,0 +1,160 @@
+{
+  "schema_version": "valp-capability-passport.v1",
+  "generated_at": "2026-07-23T10:00:00Z",
+  "agent_id": "build-agent",
+  "agent_surface": "build-agent-cli",
+  "runtime_identity": {
+    "runtime": "example-runtime",
+    "adapter_class": "daemon_queue",
+    "session_id": "worker-session-7",
+    "session": {
+      "status": "known",
+      "token": "sha256:example-session",
+      "source": "runtime adapter session metadata",
+      "generation": "7"
+    }
+  },
+  "capability_layers": {
+    "official_claim": {"status": "present"},
+    "local_presence": {"status": "present"},
+    "live_callable": {"status": "present"},
+    "task_verified": {"status": "present"}
+  },
+  "official_capability_claims": [
+    {
+      "capability_id": "source_implementation",
+      "status": "claimed",
+      "source": "official product documentation",
+      "evidence_refs": ["https://example.invalid/build-agent/docs"]
+    }
+  ],
+  "local_installation": {
+    "status": "installed",
+    "version": "1.2.3",
+    "source": "build-agent --version"
+  },
+  "live_callability": {
+    "status": "pass",
+    "runtime": "example-runtime",
+    "evidence": {
+      "status": "pass",
+      "worker_id": "build-worker-1"
+    }
+  },
+  "task_verified_history": {
+    "records": [
+      {
+        "task_id": "TASK-VERIFIED-001",
+        "role": "implementer",
+        "outcome": "passed",
+        "binding_status": "current",
+        "evidence_refs": ["tasks/TASK-VERIFIED-001/evidence.md"]
+      }
+    ],
+    "qualifying_record_count": 1,
+    "binding": {
+      "agent_surface": "build-agent-cli",
+      "model_id": "model-x",
+      "provider": "relay-provider",
+      "reasoning_mode": "high",
+      "freshness": "current",
+      "session_token": "sha256:example-session",
+      "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "model_identity": {
+    "agent_surface": "build-agent-cli",
+    "provider": "relay-provider",
+    "reasoning_mode": "high",
+    "permissions": [],
+    "context": {},
+    "task_evidence": ["tasks/TASK-VERIFIED-001/evidence.md"],
+    "declared_model": {
+      "model_id": "model-x",
+      "provider": "relay-provider",
+      "reasoning_mode": "high",
+      "source": "operator declaration",
+      "timestamp": "2026-07-23T09:59:00Z",
+      "confidence": "high",
+      "freshness": "current"
+    },
+    "observed_model": {
+      "model_id": "model-x",
+      "provider": "relay-provider",
+      "reasoning_mode": "high",
+      "source": "runtime adapter metadata",
+      "timestamp": "2026-07-23T10:00:00Z",
+      "confidence": "high",
+      "freshness": "current"
+    },
+    "model_probe": {
+      "schema_version": "valp-model-probe.v1",
+      "status": "observed",
+      "source": "runtime adapter metadata",
+      "observed_at": "2026-07-23T10:00:00Z",
+      "ttl_seconds": 3600,
+      "model": {
+        "model_id": "model-x",
+        "provider": "relay-provider",
+        "reasoning_mode": "high",
+        "confidence": "high"
+      },
+      "session_identity": {
+        "status": "known",
+        "token": "sha256:example-session",
+        "source": "runtime adapter session metadata",
+        "generation": "7"
+      }
+    },
+    "freshness_evaluated_at": "2026-07-23T10:00:01Z",
+    "observation_age_seconds": 1,
+    "observation_ttl_seconds": 3600,
+    "mismatch": {
+      "status": "match",
+      "handling": "preserve",
+      "details": "Declared and observed model identities match."
+    },
+    "history_binding": {
+      "agent_surface": "build-agent-cli",
+      "model_id": "model-x",
+      "provider": "relay-provider",
+      "reasoning_mode": "high",
+      "freshness": "current",
+      "session_token": "sha256:example-session",
+      "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "history_invalidation_reasons": [],
+    "history_status": "valid",
+    "evidence_status": "strong",
+    "role_eligibility": {
+      "implementer": "eligible",
+      "final_reviewer": "eligible"
+    }
+  },
+  "skills": {
+    "reachable": ["tdd"],
+    "source": "runtime adapter live scan"
+  },
+  "mcp": {
+    "servers": ["repo-mcp"],
+    "tools": ["repo.read", "repo.search"],
+    "source": "runtime adapter live scan"
+  },
+  "permissions": {
+    "filesystem": ["workspace_read", "workspace_write"],
+    "network": [],
+    "shell": ["execute"],
+    "mutation": ["source_edit"]
+  },
+  "context": {
+    "policy": {"hard_compression_pct": 65},
+    "current": {"status": "healthy", "usage_pct": 22}
+  },
+  "known_limitations": ["release_requires_user_approval"],
+  "role_eligibility": {
+    "leader": "not_declared",
+    "implementer": "eligible",
+    "reviewer": "not_declared",
+    "researcher": "not_declared"
+  }
+}

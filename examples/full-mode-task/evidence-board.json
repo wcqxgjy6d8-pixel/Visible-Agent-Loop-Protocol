@@ -17,7 +17,7 @@
       ]
     },
     {
-      "claim": "selected agents have visible dispatches",
+      "claim": "Leader-declared Agents have visible dispatches",
       "status": "recorded",
       "required_evidence": [
         "agents/<agent>/dispatch.md",

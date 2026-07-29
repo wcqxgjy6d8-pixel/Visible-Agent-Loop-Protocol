@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -279,3 +280,34 @@ class ControlPlaneTests(unittest.TestCase):
         self.assertEqual((self.root / run_record["stdout_ref"]).read_text(encoding="utf-8").strip(), "process-adapter-ok")
         schema = json.loads((ROOT / "schemas" / "process-adapter-run.schema.json").read_text(encoding="utf-8"))
         self.assertEqual(list(Draft202012Validator(schema).iter_errors(run_record)), [])
+
+    def test_public_cli_runs_the_local_process_adapter(self) -> None:
+        self._bootstrap()
+        command = f'{sys.executable} -c "print(\'process-cli-ok\')"'
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "bin" / "valp"),
+                "adapter",
+                "process",
+                "run",
+                "PROCESS-CLI-001",
+                "--workspace",
+                str(self.workspace),
+                "--command",
+                command,
+                "--approve",
+                "--json",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr or completed.stdout)
+        result = json.loads(completed.stdout)
+        self.assertEqual(result["status"], "completed")
+        stdout_path = self.root / result["run"]["stdout_ref"]
+        self.assertEqual(stdout_path.read_text(encoding="utf-8").strip(), "process-cli-ok")

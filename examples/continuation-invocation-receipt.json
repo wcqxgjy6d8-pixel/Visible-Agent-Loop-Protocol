@@ -1,0 +1,18 @@
+{
+  "schema_version": "valp-continuation-invocation-receipt.v1",
+  "task_id": "TASK-CONTINUATION-001",
+  "suspension_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "suspension_epoch": 1,
+  "wake_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "continuation_generation": 1,
+  "idempotency_key": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "payload_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "adapter": {"id": "example-adapter", "version": "1.0"},
+  "provider": {"id": "example-provider", "invocation_id": "provider-invocation-1", "turn_id": "provider-turn-1"},
+  "durable_boundary_ref": "provider-session:example",
+  "identity_evidence_ref": "evidence/provider-identity.json",
+  "duplicate_suppression_ref": "evidence/provider-dedup.json",
+  "started_at": "2026-07-21T00:00:00Z",
+  "consumed_at": "2026-07-21T00:00:01Z",
+  "result": "consumed"
+}

@@ -50,7 +50,7 @@ requires it:
 - Context selected for this round:
   - `task.md`: active task brief
   - `automation-policy.json`
-- `routing.json`: candidate scores and selected agents
+- `routing.json`: advisory candidate scores and Leader-declared Agents
   - `skill-recommendations.json`: recommended installed skills
 - Inputs masked out:
   - old chat memory without file-backed evidence: stale context is not valid routing or completion evidence

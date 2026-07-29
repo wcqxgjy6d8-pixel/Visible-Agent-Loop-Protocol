@@ -78,7 +78,6 @@
     "verification"
   ],
   "role_requirements": [
-    "coordinator",
     "implementer",
     "reviewer"
   ],
@@ -86,6 +85,18 @@
     "coordinator": "langgraph_coordinator",
     "implementer": "langgraph_worker",
     "reviewer": "langgraph_reviewer"
+  },
+  "assignment_authority": "leader_declared",
+  "assignment_declaration": {
+    "status": "recorded",
+    "ref": "assignment-declaration.json",
+    "leader_agent": "langgraph_coordinator",
+    "selected_by": "user",
+    "selection_ref": "example:user-selected-langgraph-leader"
+  },
+  "assignment_validation": {
+    "status": "pass",
+    "ref": "assignment-validation.json"
   },
   "model_role_gate": {
     "enforced": false,
@@ -95,9 +106,8 @@
     "reason": "High-risk model identity requirements are satisfied or not applicable."
   },
   "team_selection": {
-    "strategy": "minimum_capable_team",
+    "strategy": "leader_declared_valp_validated",
     "required_roles": [
-      "coordinator",
       "implementer",
       "reviewer"
     ],
@@ -105,8 +115,7 @@
       "langgraph_coordinator",
       "langgraph_reviewer",
       "langgraph_worker"
-    ],
-    "supplemental_requested_agents": []
+    ]
   },
   "submission_dependencies": {
     "status": "recorded",
@@ -133,23 +142,13 @@
   },
   "coordinator_selection": {
     "selected_agent": "langgraph_coordinator",
-    "selection_rule": "Selected from current capability evidence, local overlay hints, runtime availability, context policy, and task profile. The open protocol does not name a universal leader."
+    "selection_rule": "The user selected the LangGraph coordinator as Leader; VALP validated the declared assignments."
   },
   "selected_agents": [
     "langgraph_coordinator",
     "langgraph_reviewer",
     "langgraph_worker"
   ],
-  "requested_agents": [
-    "langgraph_coordinator",
-    "langgraph_worker",
-    "langgraph_reviewer"
-  ],
-  "requested_agent_roles": {
-    "langgraph_coordinator": "coordinator",
-    "langgraph_worker": "implementer",
-    "langgraph_reviewer": "reviewer"
-  },
   "agent_match_reasons": {
     "langgraph_coordinator": [
       "coordination",
@@ -784,8 +783,8 @@
       "max_chars": 3000,
       "max_reference_tokens": 750,
       "token_estimator": "ceil(chars/4)",
-      "actual_chars": 2949,
-      "actual_reference_tokens": 738,
+      "actual_chars": 2359,
+      "actual_reference_tokens": 590,
       "dispatch_ref": "agents/langgraph_coordinator/dispatch.md",
       "skill_slice_ref": "skill-slices/langgraph_coordinator.json"
     },
@@ -794,8 +793,8 @@
       "max_chars": 2400,
       "max_reference_tokens": 600,
       "token_estimator": "ceil(chars/4)",
-      "actual_chars": 2275,
-      "actual_reference_tokens": 569,
+      "actual_chars": 2259,
+      "actual_reference_tokens": 565,
       "dispatch_ref": "agents/langgraph_reviewer/dispatch.md",
       "skill_slice_ref": "skill-slices/langgraph_reviewer.json"
     },
@@ -804,8 +803,8 @@
       "max_chars": 2800,
       "max_reference_tokens": 700,
       "token_estimator": "ceil(chars/4)",
-      "actual_chars": 2729,
-      "actual_reference_tokens": 683,
+      "actual_chars": 2323,
+      "actual_reference_tokens": 581,
       "dispatch_ref": "agents/langgraph_worker/dispatch.md",
       "skill_slice_ref": "skill-slices/langgraph_worker.json"
     }

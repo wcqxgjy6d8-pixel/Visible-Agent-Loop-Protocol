@@ -17,8 +17,11 @@ The following require explicit user approval:
 ## Auto Visible Mode
 
 Auto Visible Mode is automatic intake, not automatic permission. A trigger
-policy or watcher may publish and route a task, but it must stop before
-high-risk work unless explicit approval has been recorded.
+policy or watcher may publish a task and refresh non-mutating Doctor facts. It
+cannot select a Leader, author Agent assignments, or replace a blocked Agent.
+Only after a user-selected Leader has written a valid assignment declaration
+may automation validate the route and continue. It must stop before high-risk
+work unless explicit approval has been recorded.
 
 For high-risk signals, the task evidence should record `block_for_approval` and
 the exact scope that was not executed. Silence, background watcher state, or a

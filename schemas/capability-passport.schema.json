@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/capability-passport.v1.json",
+  "title": "VALP Installation Capability Passport",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "agent_id",
+    "agent_surface",
+    "runtime_identity",
+    "capability_layers",
+    "official_capability_claims",
+    "local_installation",
+    "live_callability",
+    "task_verified_history",
+    "model_identity",
+    "skills",
+    "mcp",
+    "permissions",
+    "context",
+    "known_limitations",
+    "role_eligibility"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-capability-passport.v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "agent_id": {"type": "string", "minLength": 1},
+    "agent_surface": {"type": "string", "minLength": 1},
+    "runtime_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime", "adapter_class", "session_id", "session"],
+      "properties": {
+        "runtime": {"type": "string", "minLength": 1},
+        "adapter_class": {"type": "string", "minLength": 1},
+        "session_id": {"type": "string", "minLength": 1},
+        "session": {"$ref": "#/$defs/sessionIdentity"}
+      }
+    },
+    "capability_layers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["official_claim", "local_presence", "live_callable", "task_verified"],
+      "properties": {
+        "official_claim": {"$ref": "#/$defs/layerStatus"},
+        "local_presence": {"$ref": "#/$defs/layerStatus"},
+        "live_callable": {"$ref": "#/$defs/layerStatus"},
+        "task_verified": {"$ref": "#/$defs/layerStatus"}
+      }
+    },
+    "official_capability_claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["capability_id", "status", "source", "evidence_refs"],
+        "properties": {
+          "capability_id": {"type": "string", "minLength": 1},
+          "status": {"type": "string", "minLength": 1},
+          "source": {"type": "string", "minLength": 1},
+          "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        },
+        "additionalProperties": true
+      }
+    },
+    "local_installation": {
+      "type": "object",
+      "required": ["status", "version", "source"],
+      "properties": {
+        "status": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": true
+    },
+    "live_callability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "runtime", "evidence"],
+      "properties": {
+        "status": {"enum": ["pass", "warn", "fail", "not_applicable", "unknown"]},
+        "runtime": {"type": "string", "minLength": 1},
+        "evidence": {"type": "object"}
+      }
+    },
+    "task_verified_history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["records", "qualifying_record_count", "binding"],
+      "properties": {
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["binding_status"],
+            "properties": {
+              "binding_status": {"enum": ["current", "mismatch", "unbound"]}
+            },
+            "additionalProperties": true
+          }
+        },
+        "qualifying_record_count": {"type": "integer", "minimum": 0},
+        "binding": {"$ref": "#/$defs/historyBinding"}
+      }
+    },
+    "model_identity": {"$ref": "#/$defs/modelIdentity"},
+    "skills": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reachable", "source"],
+      "properties": {
+        "reachable": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "source": {"type": "string", "minLength": 1}
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["servers", "tools", "source"],
+      "properties": {
+        "servers": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "tools": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "source": {"type": "string", "minLength": 1}
+      }
+    },
+    "permissions": {"$ref": "#/$defs/permissions"},
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy", "current"],
+      "properties": {
+        "policy": {"type": "object"},
+        "current": {"type": "object"}
+      }
+    },
+    "known_limitations": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "role_eligibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leader", "implementer", "reviewer", "researcher"],
+      "properties": {
+        "leader": {"$ref": "#/$defs/passportRoleStatus"},
+        "implementer": {"$ref": "#/$defs/passportRoleStatus"},
+        "reviewer": {"$ref": "#/$defs/passportRoleStatus"},
+        "researcher": {"$ref": "#/$defs/passportRoleStatus"}
+      }
+    }
+  },
+  "$defs": {
+    "layerStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {"enum": ["present", "degraded", "inactive", "unknown"]}
+      }
+    },
+    "passportRoleStatus": {"enum": ["eligible", "blocked", "not_declared"]},
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["filesystem", "network", "shell", "mutation"],
+      "properties": {
+        "filesystem": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "network": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "shell": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "mutation": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_id", "provider", "reasoning_mode", "source", "timestamp", "confidence", "freshness"],
+      "properties": {
+        "model_id": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "reasoning_mode": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1},
+        "timestamp": {"type": "string", "minLength": 1},
+        "confidence": {"enum": ["high", "medium", "low", "unknown"]},
+        "freshness": {"enum": ["current", "stale", "unknown"]}
+      }
+    },
+    "probeModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_id", "provider", "reasoning_mode", "confidence"],
+      "properties": {
+        "model_id": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "reasoning_mode": {"type": "string", "minLength": 1},
+        "confidence": {"enum": ["high", "medium", "low", "unknown"]}
+      }
+    },
+    "sessionIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "token", "source", "generation"],
+      "properties": {
+        "status": {"enum": ["known", "unknown"]},
+        "token": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1},
+        "generation": {"type": "string", "minLength": 1}
+      }
+    },
+    "modelProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "status", "source", "observed_at", "ttl_seconds", "model", "session_identity"],
+      "properties": {
+        "schema_version": {"const": "valp-model-probe.v1"},
+        "status": {"enum": ["observed", "unsupported", "unavailable", "error"]},
+        "source": {"type": "string", "minLength": 1},
+        "observed_at": {"type": "string", "minLength": 1},
+        "ttl_seconds": {"type": "integer", "minimum": 60, "maximum": 86400},
+        "model": {"$ref": "#/$defs/probeModel"},
+        "session_identity": {"$ref": "#/$defs/sessionIdentity"}
+      }
+    },
+    "historyBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_surface", "model_id", "provider", "reasoning_mode", "freshness", "session_token", "fingerprint"],
+      "properties": {
+        "agent_surface": {"type": "string", "minLength": 1},
+        "model_id": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "reasoning_mode": {"type": "string", "minLength": 1},
+        "freshness": {"enum": ["current", "stale", "unknown"]},
+        "session_token": {"type": "string", "minLength": 1},
+        "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "modelIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent_surface",
+        "provider",
+        "reasoning_mode",
+        "permissions",
+        "context",
+        "task_evidence",
+        "declared_model",
+        "observed_model",
+        "model_probe",
+        "freshness_evaluated_at",
+        "observation_age_seconds",
+        "observation_ttl_seconds",
+        "mismatch",
+        "history_binding",
+        "history_invalidation_reasons",
+        "history_status",
+        "evidence_status",
+        "role_eligibility"
+      ],
+      "properties": {
+        "agent_surface": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "reasoning_mode": {"type": "string", "minLength": 1},
+        "permissions": {"type": "array", "items": {"type": "string"}},
+        "context": {"type": "object"},
+        "task_evidence": {"type": "array", "items": {"type": "string"}},
+        "declared_model": {"$ref": "#/$defs/model"},
+        "observed_model": {"$ref": "#/$defs/model"},
+        "model_probe": {"$ref": "#/$defs/modelProbe"},
+        "freshness_evaluated_at": {"type": "string", "minLength": 1},
+        "observation_age_seconds": {"type": ["integer", "null"]},
+        "observation_ttl_seconds": {"type": "integer", "minimum": 60, "maximum": 86400},
+        "mismatch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "handling", "details"],
+          "properties": {
+            "status": {"enum": ["match", "mismatch", "unknown", "not_applicable"]},
+            "handling": {"enum": ["preserve", "downgrade", "invalidate", "block", "not_applicable"]},
+            "details": {"type": "string", "minLength": 1}
+          }
+        },
+        "history_binding": {"$ref": "#/$defs/historyBinding"},
+        "history_invalidation_reasons": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "history_status": {"enum": ["valid", "downgraded", "invalidated"]},
+        "evidence_status": {"enum": ["strong", "degraded", "unknown", "invalid"]},
+        "role_eligibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["implementer", "final_reviewer"],
+          "properties": {
+            "implementer": {"enum": ["eligible", "blocked"]},
+            "final_reviewer": {"enum": ["eligible", "blocked"]}
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"evidence_status": {"const": "strong"}},
+            "required": ["evidence_status"]
+          },
+          "then": {
+            "properties": {
+              "observed_model": {
+                "properties": {"freshness": {"const": "current"}},
+                "required": ["freshness"]
+              },
+              "model_probe": {
+                "properties": {
+                  "status": {"const": "observed"},
+                  "session_identity": {
+                    "properties": {"status": {"const": "known"}},
+                    "required": ["status"]
+                  }
+                },
+                "required": ["status", "session_identity"]
+              },
+              "mismatch": {
+                "properties": {"status": {"enum": ["match", "not_applicable"]}},
+                "required": ["status"]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

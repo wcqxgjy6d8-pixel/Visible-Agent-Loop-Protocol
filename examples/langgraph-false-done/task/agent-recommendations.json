@@ -2,7 +2,7 @@
   "schema_version": "valp-agent-recommendations.v1",
   "task_id": "VALP-NON-HERDR-E2E-001",
   "status": "resolved",
-  "summary": "All selected-agent recommendations were reviewed. Coordinator and reviewer returned not_required; the worker's fail-closed recommendation was accepted inside adapter scope.",
+  "summary": "All recommendations from Leader-declared Agents were reviewed. Coordinator and reviewer returned not_required; the worker's fail-closed recommendation was accepted inside adapter scope.",
   "complexity_policy": {
     "max_recommendation_rounds": 2,
     "max_new_dispatches_without_user_approval": 1,

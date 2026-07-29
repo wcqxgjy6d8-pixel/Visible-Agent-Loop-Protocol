@@ -2,7 +2,7 @@
   "schema_version": "valp-agent-recommendations.v1",
   "task_id": "TASK-EXAMPLE-001",
   "status": "resolved",
-  "summary": "The coordinator reviewed selected-agent recommendations and bounded them to this synthetic example's scope.",
+  "summary": "The coordinator reviewed recommendations from Leader-declared Agents and bounded them to this synthetic example's scope.",
   "complexity_policy": {
     "max_recommendation_rounds": 2,
     "max_new_dispatches_without_user_approval": 1,

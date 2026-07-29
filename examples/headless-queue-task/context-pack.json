@@ -29,7 +29,7 @@
     },
     {
       "ref": "routing.json",
-      "reason": "selected agents and routing basis"
+      "reason": "Leader-declared Agents and validation basis"
     },
     {
       "ref": "automation-policy.json",

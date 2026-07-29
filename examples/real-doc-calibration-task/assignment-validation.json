@@ -1,0 +1,12 @@
+{
+  "schema_version": "valp-assignment-validation.v1",
+  "task_id": "REAL-DOC-CALIBRATION-2026-07-06",
+  "declaration_ref": "assignment-declaration.json",
+  "authority": "leader_declared",
+  "status": "pass",
+  "validated_at": "2026-07-23T10:00:01Z",
+  "blockers": [],
+  "validated_assignments": {
+    "documentation_calibrator": "codex"
+  }
+}

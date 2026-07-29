@@ -1,26 +1,23 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/agent-capabilities.v1.json",
   "title": "VALP Agent Capabilities",
   "type": "object",
   "required": ["schema_version", "updated_at", "agents"],
   "properties": {
-    "schema_version": {
-      "const": "valp-agent-capabilities.v1"
-    },
-    "updated_at": {
-      "type": "string"
-    },
-    "source": {
-      "type": "string"
-    },
-    "skill_recommendation_backends": {
-      "type": "object"
-    },
-    "provider_matrix": {
-      "type": "object"
-    },
-    "local_overlay": {
-      "type": "object"
+    "schema_version": {"const": "valp-agent-capabilities.v1"},
+    "updated_at": {"type": "string", "minLength": 1},
+    "source": {"type": "string", "minLength": 1},
+    "skill_recommendation_backends": {"type": "object"},
+    "provider_matrix": {"type": "object"},
+    "local_overlay": {"type": "object"},
+    "runtime_preflight": {"type": "object"},
+    "last_valp_scan_at": {"type": "string", "minLength": 1},
+    "capabilities_source_ref": {"type": ["string", "null"]},
+    "local_overlay_ref": {"type": ["string", "null"]},
+    "continuation_capabilities": {
+      "type": "array",
+      "items": {"$ref": "urn:valp:schema:continuation-capability:v1"}
     },
     "routing_feedback_refs": {
       "type": "array",
@@ -32,19 +29,77 @@
         "type": "object",
         "properties": {
           "active": {"type": "boolean"},
+          "agent_surface": {"type": "string", "minLength": 1},
           "role": {"type": "array", "items": {"type": "string"}},
           "mcp_servers": {"type": "array", "items": {"type": "string"}},
+          "mcp_tools": {"type": "array", "items": {"type": "string"}},
           "skills": {"type": "array", "items": {"type": "string"}},
+          "skills_source": {"type": "string"},
+          "mcp_source": {"type": "string"},
           "strengths": {"type": "array", "items": {"type": "string"}},
           "capability_profile": {"type": "object"},
           "routing_hints": {"type": "array", "items": {"type": "string"}},
           "recent_feedback": {"type": "array", "items": {"type": "object"}},
           "must_not_do": {"type": "array", "items": {"type": "string"}},
           "context_policy": {"type": "object"},
-          "provider": {"type": "object"},
+          "current_context": {"type": "object"},
+          "provider": {"type": ["object", "string"]},
           "runtime": {"type": "object"},
-          "model_identity": {"type": "object"}
+          "permissions": {"$ref": "#/$defs/permissions"},
+          "official_capability_claims": {
+            "type": "array",
+            "items": {"type": "object"}
+          },
+          "installation": {"type": "object"},
+          "task_verified_history": {
+            "type": "array",
+            "items": {"type": "object"}
+          },
+          "model_identity": {"$ref": "#/$defs/declaredModelIdentity"}
         }
+      }
+    }
+  },
+  "$defs": {
+    "permissions": {
+      "type": "object",
+      "properties": {
+        "filesystem": {"type": "array", "items": {"type": "string"}},
+        "network": {"type": "array", "items": {"type": "string"}},
+        "shell": {"type": "array", "items": {"type": "string"}},
+        "mutation": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "modelDeclaration": {
+      "oneOf": [
+        {"type": "string", "minLength": 1},
+        {
+          "type": "object",
+          "properties": {
+            "model_id": {"type": "string", "minLength": 1},
+            "provider": {"type": "string", "minLength": 1},
+            "reasoning_mode": {"type": "string", "minLength": 1},
+            "source": {"type": "string", "minLength": 1},
+            "timestamp": {"type": "string", "minLength": 1},
+            "confidence": {"enum": ["high", "medium", "low", "unknown"]},
+            "freshness": {"enum": ["current", "stale", "unknown"]}
+          },
+          "required": ["model_id"]
+        }
+      ]
+    },
+    "declaredModelIdentity": {
+      "type": "object",
+      "properties": {
+        "agent_surface": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "reasoning_mode": {"type": "string", "minLength": 1},
+        "declared_model": {"$ref": "#/$defs/modelDeclaration"},
+        "observed_model": {"$ref": "#/$defs/modelDeclaration"},
+        "history_binding": {"type": "object"},
+        "permissions": {"type": "array", "items": {"type": "string"}},
+        "context": {"type": "object"},
+        "task_evidence": {"type": "array", "items": {"type": "string"}}
       }
     }
   }

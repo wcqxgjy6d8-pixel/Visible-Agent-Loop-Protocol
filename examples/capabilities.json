@@ -1,0 +1,72 @@
+{
+  "schema_version": "valp-agent-capabilities.v1",
+  "updated_at": "2026-07-23T10:00:00Z",
+  "source": "example installation registry plus runtime adapter observations",
+  "agents": {
+    "build-agent": {
+      "active": true,
+      "agent_surface": "build-agent-cli",
+      "role": ["implementation", "verification"],
+      "skills": ["tdd"],
+      "skills_source": "runtime adapter live scan",
+      "mcp_servers": ["repo-mcp"],
+      "mcp_tools": ["repo.read", "repo.search"],
+      "mcp_source": "runtime adapter live scan",
+      "permissions": {
+        "filesystem": ["workspace_read", "workspace_write"],
+        "network": [],
+        "shell": ["execute"],
+        "mutation": ["source_edit"]
+      },
+      "context_policy": {
+        "hard_compression_pct": 65
+      },
+      "current_context": {
+        "status": "healthy",
+        "usage_pct": 22
+      },
+      "official_capability_claims": [
+        {
+          "capability_id": "source_implementation",
+          "status": "claimed",
+          "source": "official product documentation",
+          "evidence_refs": ["https://example.invalid/build-agent/docs"]
+        }
+      ],
+      "installation": {
+        "status": "installed",
+        "version": "1.2.3",
+        "source": "build-agent --version"
+      },
+      "task_verified_history": [
+        {
+          "task_id": "TASK-VERIFIED-001",
+          "role": "implementer",
+          "outcome": "passed",
+          "binding": {
+            "agent_surface": "build-agent-cli",
+            "model_id": "model-x",
+            "provider": "relay-provider",
+            "reasoning_mode": "high",
+            "session_token": "sha256:example-session"
+          }
+        }
+      ],
+      "model_identity": {
+        "agent_surface": "build-agent-cli",
+        "provider": "relay-provider",
+        "reasoning_mode": "high",
+        "declared_model": {
+          "model_id": "model-x",
+          "provider": "relay-provider",
+          "reasoning_mode": "high",
+          "source": "operator declaration",
+          "timestamp": "2026-07-23T09:59:00Z",
+          "confidence": "high"
+        }
+      },
+      "strengths": ["source edits", "command verification"],
+      "must_not_do": ["release_without_user_approval"]
+    }
+  }
+}

@@ -1,5 +1,10 @@
 # Visible Dispatch Process Proof
 
+> Historical process evidence from 2026-07-06. This clip predates the
+> Doctor/Leader authority contract. It proves receipt and fail-closed dispatch
+> behavior only; its automatic Agent-selection flow is legacy behavior and is
+> not the current VALP assignment model.
+
 This page records a short public process proof for VALP's live dispatch path.
 It responds to a specific credibility gap: the repository should show more than
 schemas, fixtures, and written rules.
@@ -19,7 +24,7 @@ Direct video link:
 ## What The Clip Shows
 
 - `valp publish` creates task `VALP-INTEGRITY-AUDIT-20260706`.
-- `valp dispatch` prepares selected-agent dispatches.
+- The legacy runtime prepares dispatches for its then-selected Agents.
 - HERDR receives a visible worker brief for the `hermes` pane.
 - VALP records missing expected evidence as blocked instead of done.
 - Later panes show agent evidence being produced.
@@ -78,7 +83,7 @@ The next stronger artifact should be a sanitized full task folder for a live
 Full Mode run, with:
 
 - preflight output;
-- routing and selected agents;
+- the user-selected Leader and Leader-declared assignments;
 - dispatch receipts with runtime submission proof;
 - expected evidence files;
 - review and verification evidence;

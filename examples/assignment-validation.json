@@ -1,0 +1,13 @@
+{
+  "schema_version": "valp-assignment-validation.v1",
+  "task_id": "TASK-001",
+  "declaration_ref": "assignment-declaration.json",
+  "authority": "leader_declared",
+  "status": "pass",
+  "validated_at": "2026-07-23T10:00:01Z",
+  "blockers": [],
+  "validated_assignments": {
+    "implementer": "build-agent",
+    "reviewer": "review-agent"
+  }
+}

@@ -2,7 +2,13 @@
 
 Task: VALP-NON-HERDR-E2E-001
 Profile: agent-runtime
-Payload budget: role=implementer max_chars=2800 max_reference_tokens=700 actual_chars=2729 estimator=ceil(chars/4)
+Payload budget: recorded in `routing.json`.
+
+## VALP Control Contract (Load First)
+
+Load `control-contract.json` first; slice `control-slices/langgraph_worker.json`; mismatch blocks.
+
+{"schema_version":"valp-control-slice.v1","task_id":"VALP-NON-HERDR-E2E-001","agent":"langgraph_worker","work_item_ids":["implementer:langgraph_worker"],"control_contract_ref":"control-contract.json","control_contract_digest":"sha256:b4538e48f631e2e6c05fb8db41ba1f9094cd90eb31a2545913295bce1bd1c26c","priority_class":"highest_runtime_control","load_before":["planning","skills","tool_execution","immediate_response"],"missing_or_invalid":"block"}
 
 ## Project Root
 
@@ -12,13 +18,7 @@ cd "/workspace/Visible-Agent-Loop-Protocol"
 
 ## Role
 
-Primary role: `implementer`. Capability match: implementation; verification; implementation; artifact generation.
-
-## Worker Control Contract
-
-- Load `control-contract.json` and `control-slices/langgraph_worker.json` before planning or execution.
-- Required digest: `sha256:b4538e48f631e2e6c05fb8db41ba1f9094cd90eb31a2545913295bce1bd1c26c`.
-- Missing or mismatched control evidence blocks execution.
+`implementer`: implementation and verification.
 
 ## Task Brief
 
@@ -33,7 +33,6 @@ The coordinator/leader owns dispatch precision; load these refs as needed:
 - `.herdr-loop/tasks/VALP-NON-HERDR-E2E-001/iteration-budget.json`
 - `.herdr-loop/tasks/VALP-NON-HERDR-E2E-001/skill-slices/langgraph_worker.json`
 - Gate contracts: `submission-dependencies.json`, `delegation-policy.json`
-- More refs: `automation-policy.json`, `routing.json`, `visible-routing.md`, `context-selection.json`, `mask-list.json`, `evidence-board.json`
 
 ## Payload Budget
 
@@ -41,21 +40,13 @@ The coordinator/leader owns dispatch precision; load these refs as needed:
 
 ## Visible Attention Slice
 
-- Loop layer: `developer_feedback_loop`
-- Your attention head(s): implementation
-- Design contract: `missing`
-- Role context from `context-pack.json`:
-- project: Load the active task and project operating rules from selected task-local refs; do not rely on hidden chat context.
-- task_scope: Stay inside the task brief, expected evidence refs, visible routing, and permission boundary recorded for this task.
-- Full selection and masks: `visible-routing.md`
+- Implementation slice: `visible-routing.md`, `context-pack.json`.
 
 
 ## Permission Boundary
 
-- Honor approval gates; cite evidence for runtime facts.
+- Honor approval gates; write only expected evidence and cite runtime proof.
 - Do not write skills, plugins, memory, MCP configuration, or agent configuration while delegated.
-- Scoped repository edits need permission and must not be live-loaded.
-- Write expected evidence only unless source edits are permitted.
 
 ## Expected Evidence
 
@@ -66,10 +57,12 @@ The coordinator/leader owns dispatch precision; load these refs as needed:
 
 - Use only the provider-reachable skill slice for this dispatch.
 
-## Evidence Claim Rule
-
-- Cite task-local proof for build, test, and runtime claims.
-
 ## Required Response
 
-Write expected evidence with blockers, confidence, and `## Recommendations`.
+Include blockers, confidence, `## Recommendations`, and:
+
+```text
+control_contract_ref: control-contract.json
+control_contract_digest: sha256:b4538e48f631e2e6c05fb8db41ba1f9094cd90eb31a2545913295bce1bd1c26c
+control_contract_status: honored
+```

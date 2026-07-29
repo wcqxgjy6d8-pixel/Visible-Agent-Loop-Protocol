@@ -4,14 +4,15 @@ import json
 import shutil
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from . import __version__
 from .audit import WARN as AUDIT_WARN, TaskAudit, resolve_task_dir
-from .workflow import collect_runtime_preflight
+from .model_identity import model_identity_for
+from .workflow import collect_runtime_preflight, load_local_capabilities, load_local_overlay
 
 
 PASS = "pass"
@@ -38,6 +39,7 @@ class DoctorReport:
     warn_count: int
     fail_count: int
     checks: list[DoctorCheck]
+    capability_passports: list[dict[str, Any]] = field(default_factory=list)
 
 
 def now_iso() -> str:
@@ -79,6 +81,7 @@ def make_check(
 
 def collect_doctor_report(root: Path, task_id: str | None = None) -> DoctorReport:
     workspace = root.resolve()
+    generated_at = now_iso()
     checks: list[DoctorCheck] = []
     checks.extend(git_checks(workspace))
     checks.extend(install_checks(workspace))
@@ -87,6 +90,7 @@ def collect_doctor_report(root: Path, task_id: str | None = None) -> DoctorRepor
     checks.extend(runtime_checks())
     if task_id:
         checks.append(task_audit_check(workspace, task_id))
+    capability_passports = commission_capability_passports(workspace, evaluated_at=generated_at)
 
     pass_count = sum(1 for check in checks if check.status == PASS)
     warn_count = sum(1 for check in checks if check.status == WARN)
@@ -94,13 +98,205 @@ def collect_doctor_report(root: Path, task_id: str | None = None) -> DoctorRepor
     status = FAIL if fail_count else WARN if warn_count else PASS
     return DoctorReport(
         workspace=str(workspace),
-        generated_at=now_iso(),
+        generated_at=generated_at,
         status=status,
         pass_count=pass_count,
         warn_count=warn_count,
         fail_count=fail_count,
         checks=checks,
+        capability_passports=capability_passports,
     )
+
+
+def commission_capability_passports(root: Path, *, evaluated_at: str) -> list[dict[str, Any]]:
+    capabilities = load_local_capabilities(root)
+    agents = capabilities.get("agents") or {}
+    overlay = load_local_overlay(root)
+    overlay_profiles = overlay.get("agent_capability_profiles") or {}
+    agent_ids = sorted(str(agent_id) for agent_id in agents)
+    preflight = collect_runtime_preflight(agent_ids, runtime="auto")
+    runtime_agents = preflight.get("agents") or {}
+    passports: list[dict[str, Any]] = []
+
+    for agent_id in agent_ids:
+        info = agents.get(agent_id) or {}
+        agent_preflight = runtime_agents.get(agent_id) or {}
+        sessions = agent_preflight.get("sessions")
+        if isinstance(sessions, list) and sessions:
+            session_preflights = []
+            for session in sessions:
+                if not isinstance(session, dict):
+                    continue
+                merged = {key: value for key, value in agent_preflight.items() if key != "sessions"}
+                merged.update(session)
+                session_preflights.append(merged)
+        else:
+            session_preflights = [agent_preflight]
+        for session_preflight in session_preflights:
+            passports.append(
+                build_capability_passport(
+                    agent_id,
+                    info,
+                    overlay_profiles.get(agent_id) or {},
+                    capability_source=str(capabilities.get("source") or "unknown"),
+                    runtime_preflight=preflight,
+                    agent_preflight=session_preflight,
+                    evaluated_at=evaluated_at,
+                )
+            )
+    return passports
+
+
+def build_capability_passport(
+    agent_id: str,
+    info: dict[str, Any],
+    overlay_profile: dict[str, Any],
+    *,
+    capability_source: str,
+    runtime_preflight: dict[str, Any],
+    agent_preflight: dict[str, Any],
+    evaluated_at: str,
+) -> dict[str, Any]:
+    model_identity = model_identity_for(
+        agent_id,
+        info,
+        overlay_profile,
+        runtime_probe=agent_preflight.get("model_probe"),
+        evaluated_at=evaluated_at,
+    )
+    declared_roles = {str(role).strip().lower() for role in info.get("role") or []}
+    live_status = str(agent_preflight.get("status") or "unknown")
+
+    def role_status(claims: set[str], *, model_role: str | None = None) -> str:
+        if not declared_roles.intersection(claims):
+            return "not_declared"
+        if not info.get("active", True) or live_status not in {"pass", "warn"}:
+            return "blocked"
+        if model_role and model_identity["role_eligibility"].get(model_role) != "eligible":
+            return "blocked"
+        return "eligible"
+
+    discovery = (
+        agent_preflight.get("capability_discovery")
+        if isinstance(agent_preflight.get("capability_discovery"), dict)
+        else {}
+    )
+    discovery_source = str(discovery.get("source") or capability_source)
+    discovered_permissions = discovery.get("permissions")
+    permissions = (
+        discovered_permissions
+        if isinstance(discovered_permissions, dict)
+        else info.get("permissions") if isinstance(info.get("permissions"), dict) else {}
+    )
+    official_claims = [
+        dict(claim)
+        for claim in info.get("official_capability_claims") or []
+        if isinstance(claim, dict)
+    ]
+    installation = dict(info.get("installation") or {})
+    cli_record = agent_preflight.get("cli") if isinstance(agent_preflight.get("cli"), dict) else {}
+    if not installation:
+        installation = {
+            "status": "present" if info.get("active", True) else "inactive",
+            "version": str(cli_record.get("version_output") or "unknown"),
+            "source": capability_source,
+        }
+    history_records: list[dict[str, Any]] = []
+    current_binding = model_identity["history_binding"]
+    binding_fields = ("agent_surface", "model_id", "provider", "reasoning_mode", "session_token")
+    for raw_record in info.get("task_verified_history") or []:
+        if not isinstance(raw_record, dict):
+            continue
+        record = dict(raw_record)
+        binding = record.get("binding") if isinstance(record.get("binding"), dict) else {}
+        if not all(field in binding for field in binding_fields):
+            binding_status = "unbound"
+        elif all(binding.get(field) == current_binding.get(field) for field in binding_fields):
+            binding_status = "current"
+        else:
+            binding_status = "mismatch"
+        record["binding_status"] = binding_status
+        history_records.append(record)
+    qualifying_history = [
+        record
+        for record in history_records
+        if record["binding_status"] == "current"
+        and str(record.get("outcome") or "").lower() in {"pass", "passed", "verified", "accepted"}
+    ]
+    return {
+        "schema_version": "valp-capability-passport.v1",
+        "generated_at": evaluated_at,
+        "agent_id": agent_id,
+        "agent_surface": model_identity["agent_surface"],
+        "runtime_identity": {
+            "runtime": runtime_preflight.get("runtime") or "unknown",
+            "adapter_class": runtime_preflight.get("adapter_class") or "unknown",
+            "session_id": str(agent_preflight.get("session_id") or "unknown"),
+            "session": model_identity["model_probe"]["session_identity"],
+        },
+        "capability_layers": {
+            "official_claim": {"status": "present" if official_claims else "unknown"},
+            "local_presence": {
+                "status": "present"
+                if str(installation.get("status") or "").lower() in {"installed", "present", "active"}
+                else "inactive" if str(installation.get("status") or "").lower() == "inactive" else "unknown"
+            },
+            "live_callable": {
+                "status": "present" if live_status == "pass" else "degraded" if live_status == "warn" else "unknown"
+            },
+            "task_verified": {"status": "present" if qualifying_history else "unknown"},
+        },
+        "official_capability_claims": official_claims,
+        "local_installation": installation,
+        "live_callability": {
+            "status": live_status,
+            "runtime": str(runtime_preflight.get("runtime") or "unknown"),
+            "evidence": dict(agent_preflight),
+        },
+        "task_verified_history": {
+            "records": history_records,
+            "qualifying_record_count": len(qualifying_history),
+            "binding": current_binding,
+        },
+        "model_identity": model_identity,
+        "skills": {
+            "reachable": [str(skill) for skill in discovery.get("skills", info.get("skills") or [])],
+            "source": discovery_source if "skills" in discovery else str(info.get("skills_source") or capability_source),
+        },
+        "mcp": {
+            "servers": [str(server) for server in discovery.get("mcp_servers", info.get("mcp_servers") or [])],
+            "tools": [str(tool) for tool in discovery.get("mcp_tools", info.get("mcp_tools") or [])],
+            "source": discovery_source
+            if "mcp_servers" in discovery or "mcp_tools" in discovery
+            else str(info.get("mcp_source") or capability_source),
+        },
+        "permissions": {
+            "filesystem": [str(item) for item in permissions.get("filesystem") or []],
+            "network": [str(item) for item in permissions.get("network") or []],
+            "shell": [str(item) for item in permissions.get("shell") or []],
+            "mutation": [str(item) for item in permissions.get("mutation") or []],
+        },
+        "context": {
+            "policy": dict(discovery.get("context_policy", info.get("context_policy") or {})),
+            "current": dict(discovery.get("current_context", info.get("current_context") or {})),
+        },
+        "known_limitations": [
+            str(item)
+            for item in discovery.get("known_limitations", info.get("must_not_do") or [])
+        ],
+        "role_eligibility": {
+            "leader": role_status({"leader", "coordination", "coordinator", "state"}),
+            "implementer": role_status(
+                {"implementation", "implementer", "verification"},
+                model_role="implementer",
+            ),
+            "reviewer": role_status(
+                {"review", "reviewer", "code_review", "risk_review"},
+                model_role="final_reviewer",
+            ),
+            "researcher": role_status({"research", "researcher"}),
+        },
+    }
 
 
 def git_checks(root: Path) -> list[DoctorCheck]:
@@ -316,12 +512,18 @@ def runtime_checks() -> list[DoctorCheck]:
 
     herdr = collect_runtime_preflight(runtime="herdr")
     status = herdr.get("status")
+    submission = (herdr.get("checks") or {}).get("submission_transport") or {}
+    doctor_status = PASS if status == PASS else FAIL if status == FAIL else WARN
+    submission_mode = submission.get("mode") or "unknown"
     checks.append(
         make_check(
             "runtime_herdr",
             "HERDR reference runtime is available",
-            PASS if status == PASS else WARN,
-            f"HERDR preflight status: {status}; command={herdr_path}.",
+            doctor_status,
+            (
+                f"HERDR preflight status: {status}; submission mode: {submission_mode}; "
+                f"command={herdr_path}."
+            ),
             ["adapter_class=" + str(herdr.get("adapter_class"))],
             None if status == PASS else "Run bin/valp preflight --runtime herdr for detailed pane/runtime diagnostics.",
         )
@@ -364,6 +566,7 @@ def render_text_summary(report: DoctorReport) -> str:
         f"VALP doctor: {report.status.upper()}",
         f"Workspace: {report.workspace}",
         f"Summary: pass={report.pass_count} warn={report.warn_count} fail={report.fail_count}",
+        f"Capability passports: {len(report.capability_passports)}",
         "",
     ]
     for check in report.checks:
@@ -406,6 +609,58 @@ def render_markdown_report(report: DoctorReport) -> str:
             lines.append("")
             lines.append(f"Suggested action: {check.suggestion}")
         lines.append("")
+    lines.extend(["## Capability Passports", ""])
+    if not report.capability_passports:
+        lines.extend(["No Agent surfaces were discovered.", ""])
+    for passport in report.capability_passports:
+        agent_id = str(passport.get("agent_id") or "unknown")
+        surface = str(passport.get("agent_surface") or "unknown")
+        identity = passport.get("model_identity") if isinstance(passport.get("model_identity"), dict) else {}
+        declared = identity.get("declared_model") if isinstance(identity.get("declared_model"), dict) else {}
+        observed = identity.get("observed_model") if isinstance(identity.get("observed_model"), dict) else {}
+        probe = identity.get("model_probe") if isinstance(identity.get("model_probe"), dict) else {}
+        session = probe.get("session_identity") if isinstance(probe.get("session_identity"), dict) else {}
+        runtime_identity = passport.get("runtime_identity") if isinstance(passport.get("runtime_identity"), dict) else {}
+        layers = passport.get("capability_layers") if isinstance(passport.get("capability_layers"), dict) else {}
+        skills = passport.get("skills") if isinstance(passport.get("skills"), dict) else {}
+        mcp = passport.get("mcp") if isinstance(passport.get("mcp"), dict) else {}
+        permissions = passport.get("permissions") if isinstance(passport.get("permissions"), dict) else {}
+        context = passport.get("context") if isinstance(passport.get("context"), dict) else {}
+        limitations = [str(item) for item in passport.get("known_limitations") or []]
+        roles = passport.get("role_eligibility") if isinstance(passport.get("role_eligibility"), dict) else {}
+        layer_summary = ", ".join(
+            f"{name}={str((record or {}).get('status') or 'unknown')}"
+            for name, record in layers.items()
+            if isinstance(record, dict)
+        ) or "unknown"
+        permission_summary = "; ".join(
+            f"{name}={','.join(str(item) for item in values) or 'none'}"
+            for name, values in permissions.items()
+            if isinstance(values, list)
+        ) or "unknown"
+        lines.extend(
+            [
+                f"### `{agent_id}` on `{surface}`",
+                "",
+                f"- Runtime/session: `{runtime_identity.get('runtime') or 'unknown'}` / `{runtime_identity.get('session_id') or 'unknown'}`",
+                f"- Capability layers: `{layer_summary}`",
+                f"- Evidence status: `{identity.get('evidence_status') or 'unknown'}`",
+                f"- Declared model: `{declared.get('model_id') or 'unknown'}` via `{declared.get('provider') or 'unknown'}`; reasoning `{declared.get('reasoning_mode') or 'unknown'}`",
+                f"- Observed model: `{observed.get('model_id') or 'unknown'}` via `{observed.get('provider') or 'unknown'}`; reasoning `{observed.get('reasoning_mode') or 'unknown'}`; freshness `{observed.get('freshness') or 'unknown'}`",
+                f"- Model session: `{session.get('status') or 'unknown'}`; generation `{session.get('generation') or 'unknown'}`; TTL `{probe.get('ttl_seconds') or 'unknown'}` seconds",
+                f"- Skills: `{', '.join(str(item) for item in skills.get('reachable') or []) or 'none observed'}`",
+                f"- MCP servers: `{', '.join(str(item) for item in mcp.get('servers') or []) or 'none observed'}`",
+                f"- MCP tools: `{', '.join(str(item) for item in mcp.get('tools') or []) or 'none observed'}`",
+                f"- Permissions: `{permission_summary}`",
+                f"- Context: `{json.dumps(context.get('current') or {}, sort_keys=True)}`",
+                f"- Known limitations: `{', '.join(limitations) or 'none observed'}`",
+                f"- Leader: `{roles.get('leader') or 'unknown'}`",
+                f"- Implementer: `{roles.get('implementer') or 'unknown'}`",
+                f"- Reviewer: `{roles.get('reviewer') or 'unknown'}`",
+                f"- Researcher: `{roles.get('researcher') or 'unknown'}`",
+                "",
+            ]
+        )
     return "\n".join(lines).rstrip() + "\n"
 
 

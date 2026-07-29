@@ -1,0 +1,19 @@
+{
+  "schema_version": "valp-assignment-declaration.v1",
+  "declaration_id": "decl-TASK-QUEUE-001-1",
+  "task_id": "TASK-QUEUE-001",
+  "declared_at": "2026-07-23T10:00:00Z",
+  "leader": {
+    "agent_id": "queue-leader",
+    "selected_by": "user",
+    "selection_ref": "example:user-selected-queue-leader"
+  },
+  "assignments": {
+    "implementer": "codex",
+    "reviewer": "claude"
+  },
+  "reasons": {
+    "implementer": "Leader-declared queue worker assignment.",
+    "reviewer": "Leader-declared queue review assignment."
+  }
+}

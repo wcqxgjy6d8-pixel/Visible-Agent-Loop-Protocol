@@ -1,7 +1,7 @@
 {
   "schema_version": "valp-iteration-budget.v1",
   "task_id": "VALP-NON-HERDR-E2E-001",
-  "strategy": "minimum_capable_team",
+  "strategy": "leader_declared_bounded_team",
   "max_dispatch_reference_tokens": 5900,
   "max_dispatches": 5,
   "max_reroutes": 1,

@@ -67,8 +67,9 @@ understand request
 - Do not hide recommendations from the agent that is expected to use them.
 - Do not pretend a missing skill is installed.
 
-`auto-load` and `auto-run` in this table describe how a selected agent may use a
-skill after routing. They do not mean the whole VALP task should auto-trigger.
+`auto-load` and `auto-run` in this table describe how a Leader-declared Agent
+may use a skill after assignment validation. They do not mean the whole VALP
+task should auto-trigger.
 Task triggering is controlled separately by Auto Visible Mode trigger policy.
 
 ## Optional Backends
@@ -153,7 +154,7 @@ which recommender ran
 which runtime work items were scored
 which installed skills matched
 which agent library owns the skill
-whether the selected agent is allowed to use it
+whether the Leader-declared Agent is allowed to use it
 ```
 
 If the skill is missing, surface it as a capability gap or future improvement.

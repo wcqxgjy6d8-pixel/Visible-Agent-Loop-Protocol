@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
 import sqlite3
 from pathlib import Path
 
@@ -17,6 +19,18 @@ from .task_control import TASK_STATUSES, init_task, task_state, transition_task
 from .process_adapter import run_process
 from .langgraph_adapter import LangGraphAdapterError, resume_langgraph_run, submit_langgraph_run
 from .workflow import RUNTIME_CHOICES, collect_runtime_preflight, dispatch_task, publish_task, read_json, resume_suspended_task, route_task, scan_workspace, wait_for_task
+
+
+def split_worker_command(command: str) -> list[str]:
+    parts = shlex.split(command, posix=os.name != "nt")
+    if os.name != "nt":
+        return parts
+    return [
+        part[1:-1]
+        if len(part) >= 2 and part[0] == part[-1] and part[0] in {'"', "'"}
+        else part
+        for part in parts
+    ]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,20 +53,13 @@ notes:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    publish = sub.add_parser("publish", help="Create a VALP task and auto-route by default")
+    publish = sub.add_parser("publish", help="Create a VALP task and wait for Leader-declared assignments")
     publish.add_argument("task_id", help="Task id")
     publish.add_argument("--workspace", default=".", help="Workspace root")
     publish.add_argument("--prompt", help="Task request")
     publish.add_argument("--prompt-file", help="Read task request from a file")
     publish.add_argument("--profile", help="Override auto profile classification")
-    publish.add_argument(
-        "--include-agent",
-        action="append",
-        default=[],
-        help="Explicitly include an available agent as a supplemental routed role",
-    )
     publish.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Runtime adapter to record and preflight")
-    publish.add_argument("--no-route", action="store_true", help="Only create task.md/state.json")
     publish.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     scan = sub.add_parser("scan", help="Scan local capabilities and overlay into a workspace")
@@ -61,16 +68,11 @@ notes:
     scan.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Runtime adapter to preflight")
     scan.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
-    route = sub.add_parser("route", help="Route an existing VALP task")
+    route = sub.add_parser("route", help="Validate and record Leader-declared assignments")
     route.add_argument("task_id", help="Task id")
     route.add_argument("--workspace", default=".", help="Workspace root")
     route.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Runtime adapter to record and preflight")
-    route.add_argument(
-        "--include-agent",
-        action="append",
-        default=None,
-        help="Add an available agent to the existing task's requested supplemental roles",
-    )
+    route.add_argument("--assignments", required=True, help="Leader-authored assignment declaration JSON")
     route.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     dispatch = sub.add_parser("dispatch", help="Print dispatch instructions or submit through the selected reference adapter")
@@ -85,6 +87,16 @@ notes:
     dispatch.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Override the runtime adapter recorded in routing.json")
     dispatch.add_argument("--wait-seconds", type=float, help="Non-negative HERDR evidence wait timeout for submitted dispatches")
     dispatch.add_argument("--proof-seconds", type=float, help="Non-negative HERDR submission proof timeout for submitted dispatches")
+    dispatch.add_argument(
+        "--recover-incomplete",
+        action="store_true",
+        help="Resubmit one explicitly selected HERDR work item whose proven submission produced no evidence",
+    )
+    dispatch.add_argument(
+        "--retry-generation",
+        type=int,
+        help="Explicit incomplete-submission retry generation; the bounded reference path accepts only 1",
+    )
     dispatch.add_argument("--submit", action="store_true", help="Actually submit through the selected reference adapter when supported")
 
     preflight = sub.add_parser("preflight", help="Check selected runtime adapter readiness")
@@ -109,14 +121,17 @@ notes:
     wait.add_argument("--poll-interval", type=float, default=0.25, help="Runtime polling interval in seconds")
     wait.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
-    resume = sub.add_parser("resume", help="Resume a suspended coordinator from an explicit external event")
+    resume = sub.add_parser(
+        "resume",
+        help="Resume a suspension or recover an accepted timeout from a late completion receipt",
+    )
     resume.add_argument("task_id", help="Task id")
     resume.add_argument("--workspace", default=".", help="Workspace root")
     resume.add_argument(
         "--event",
-        choices=["user_input", "runtime_failure", "cancellation"],
+        choices=["receipt", "user_input", "runtime_failure", "cancellation"],
         required=True,
-        help="External event that resumes coordinator turns",
+        help="External event, or receipt for an identity-bound late completion recovery",
     )
     resume.add_argument(
         "--ref",
@@ -259,7 +274,12 @@ notes:
     process_sub = process.add_subparsers(dest="process_command", required=True)
     process_run = process_sub.add_parser("run", help="Dry-run or execute one addressable local worker")
     process_run.add_argument("task_id")
-    process_run.add_argument("--command", required=True, help="Worker command parsed with shell-like quoting, without a shell")
+    process_run.add_argument(
+        "--command",
+        dest="worker_command",
+        required=True,
+        help="Worker command parsed with shell-like quoting, without a shell",
+    )
     process_run.add_argument("--timeout", type=float, default=30.0)
     process_run.add_argument("--approve", action="store_true", help="Approve actual worker execution")
     process_run.add_argument("--workspace", default=".", help="Workspace/control root parent")
@@ -409,17 +429,15 @@ def main(argv: list[str] | None = None) -> int:
             args.task_id,
             prompt_from_args(args),
             profile=args.profile,
-            route=not args.no_route,
             runtime=args.runtime,
-            include_agents=args.include_agent,
         )
-        result = {"task_id": args.task_id, "task_dir": str(directory), "routed": not args.no_route}
+        result = {"task_id": args.task_id, "task_dir": str(directory), "routed": False}
         if args.json:
             print(json.dumps(result, indent=2, ensure_ascii=False))
         else:
             print(f"Published VALP task: {args.task_id}")
             print(f"Task dir: {directory}")
-            print("Routed: " + ("yes" if not args.no_route else "no"))
+            print("Routed: no (awaiting Leader-declared assignments)")
             visible = directory / "visible-routing.md"
             if visible.exists():
                 print()
@@ -435,18 +453,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "route":
-        if args.include_agent:
-            task_state_path = Path(args.workspace).resolve() / ".herdr-loop" / "tasks" / args.task_id / "state.json"
-            task_state = read_json(task_state_path) or {}
-            current = list(task_state.get("requested_agents") or [])
-            task_state["requested_agents"] = list(dict.fromkeys(current + args.include_agent))
-            task_state_path.write_text(json.dumps(task_state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        routing = route_task(Path(args.workspace), args.task_id, runtime=args.runtime)
+        declaration = read_json(Path(args.assignments))
+        if not declaration:
+            raise SystemExit(f"Assignment declaration is missing or invalid JSON: {args.assignments}")
+        routing = route_task(
+            Path(args.workspace),
+            args.task_id,
+            runtime=args.runtime,
+            assignment_declaration=declaration,
+        )
         if args.json:
             print(json.dumps(routing, indent=2, ensure_ascii=False))
         else:
-            print(f"Routed VALP task: {args.task_id}")
-            print("Selected agents: " + ", ".join(routing.get("selected_agents") or []))
+            print(f"Validated Leader assignments for VALP task: {args.task_id}")
+            print("Declared agents: " + ", ".join(routing.get("selected_agents") or []))
             visible_ref = ((routing.get("visible_attention") or {}).get("visible_routing")) or "visible-routing.md"
             visible = Path(args.workspace).resolve() / ".herdr-loop" / "tasks" / args.task_id / visible_ref
             if visible.exists():
@@ -464,6 +484,8 @@ def main(argv: list[str] | None = None) -> int:
             role=args.role,
             wait_seconds=args.wait_seconds,
             proof_seconds=args.proof_seconds,
+            recover_incomplete=args.recover_incomplete,
+            retry_generation=args.retry_generation,
         )
         if args.submit:
             print(f"Submitted dispatch for task {args.task_id}")
@@ -700,10 +722,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "adapter" and args.adapter_command == "process" and args.process_command == "run":
-        import shlex
         root = installation_root(Path(args.workspace), Path(args.root) if args.root else None)
         try:
-            result = run_process(root, args.task_id, shlex.split(args.command), timeout_seconds=args.timeout, approve=args.approve)
+            result = run_process(
+                root,
+                args.task_id,
+                split_worker_command(args.worker_command),
+                timeout_seconds=args.timeout,
+                approve=args.approve,
+            )
         except ControlPlaneError as error:
             raise SystemExit(f"{error.code}: {error}") from error
         if args.json:

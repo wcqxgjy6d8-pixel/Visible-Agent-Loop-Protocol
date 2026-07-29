@@ -52,6 +52,7 @@ Linux, macOS, and Windows runners.
 For editable local CLI development:
 
 ```bash
+python -m pip install --upgrade pip setuptools
 python -m pip install -e ".[dev]"
 valp audit examples/minimal-task
 ```
@@ -77,9 +78,10 @@ gates. It does not prove Full Mode support on every operating system; Full Mode
 still requires a compatible runtime adapter on the user's local or remote host.
 
 If you run `bin/valp publish ...` without a compatible runtime, the CLI can
-still create a routed task folder using a generic Manual Mode operator. That
-task is not done yet. It will fail `valp audit` until manual result evidence and
-a final synthesis are added.
+still create an unrouted task folder. It does not invent a generic operator or
+select an Agent. The user must select a Leader, and that Leader must declare
+Manual Mode assignments before `valp route --assignments` can create dispatch
+evidence.
 
 ## Path B: Try Full Mode With HERDR
 
@@ -94,9 +96,10 @@ or another installer that manages paths for the user:
 
 ```text
 install check
-  -> valp doctor
+  -> valp doctor capability passports
+  -> user selects Leader
   -> runtime preflight
-  -> publish/dispatch dry run
+  -> publish / Leader declaration / route / dispatch dry run
   -> user opt-in for real submit or Auto Visible Mode
 ```
 
@@ -105,9 +108,10 @@ a fixed Desktop checkout path. A broken symlink, stale wrapper, missing Python
 dependency, or missing runtime should be shown as a doctor/preflight result, not
 as an agent task failure.
 
-A dry-run task is only an environment check. It may write routing and dispatch
-files, but it should still fail audit until a real dispatch produces expected
-evidence and final synthesis.
+A dry-run task is only an environment check. `publish` itself writes no routing
+or dispatch files. After the Leader declaration passes validation, the dry run
+may write them, but it should still fail audit until a real dispatch produces
+expected evidence and final synthesis.
 
 ### 1. Pick Your Platform Path
 
@@ -183,11 +187,45 @@ With the reference CLI:
 bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug and verify it"
 ```
 
-`publish` runs local `scan` and `route` by default. It writes:
+`publish` creates the task and stops before routing. It writes:
 
 ```text
 .herdr-loop/tasks/TASK-001/task.md
 .herdr-loop/tasks/TASK-001/state.json
+```
+
+The CLI prints `routed: false`. This is intentional: VALP does not select the
+Leader or any Agent.
+
+### 5. Doctor, Select The Leader, And Declare Assignments
+
+Commission capability passports before assignment:
+
+```bash
+bin/valp doctor --workspace /path/to/workspace --json
+```
+
+Doctor records one passport per addressable Agent surface/session. Inspect the
+observed model and provider, session freshness, Skills, MCP, permissions,
+context, limitations, and role eligibility. A product name is not model
+evidence.
+
+The user explicitly chooses the Leader. That Leader decomposes the task and
+writes a declaration like
+[examples/assignment-declaration.json](../examples/assignment-declaration.json).
+Validate it with:
+
+```bash
+bin/valp scan --workspace /path/to/workspace --task TASK-001
+bin/valp route TASK-001 --workspace /path/to/workspace \
+  --assignments /path/to/assignment-declaration.json
+```
+
+Successful validation writes:
+
+```text
+.herdr-loop/tasks/TASK-001/assignment-declaration.json
+.herdr-loop/tasks/TASK-001/assignment-validation.json
 .herdr-loop/tasks/TASK-001/routing.json
 .herdr-loop/tasks/TASK-001/automation-policy.json
 .herdr-loop/tasks/TASK-001/skill-recommendations.json
@@ -208,9 +246,10 @@ by whether it pasted the whole conversation; the full context belongs in
 task-local evidence such as `task.md`, `routing.json`, `context-pack.json`, and
 `skill-recommendations.json`.
 
-This is the start of the loop, not the end. The task should fail audit until the
-selected agents or manual operator produce the expected evidence and the receipt
-ledger is advanced to a completion state.
+This is the start of the loop, not the end. `selected_agents` in these files
+means the unique Agents declared by the Leader. The task should fail audit until
+those Agents or a manual operator produce expected evidence and the receipt
+ledger reaches a completion state.
 
 That first failure is expected. A newly published task has dispatch files, but
 not completed receipts, expected evidence, or final synthesis yet. Typical
@@ -227,7 +266,7 @@ Summary: pass=8 warn=2 fail=5
 The exact counts can vary by runtime adapter and task profile. Treat this as a
 normal "work has not finished" state, not as a broken installation.
 
-### 5. Scan And Route
+### 6. What Route Validation Records
 
 Record:
 
@@ -240,24 +279,18 @@ skills and MCP availability
 visible attention map, selected context, masks, and evidence board
 skill recommendations surfaced into dispatch prompts
 permission boundaries
-selected agents
-routing reasons
+user-selected Leader and selection ref
+Leader-declared role assignments and reasons
+assignment validation status and blockers
 candidate confidence
-rejected high-relevance candidates, if relevant
 missing capabilities
 ```
 
-Do not route by habit. Local capability profiles are hints, not fixed
-assignments.
+Local capability profiles and candidate scores are hints for the Leader, not
+VALP selection authority. If validation blocks, VALP reports the gap and stops;
+the Leader must author the next declaration.
 
-To rerun routing explicitly:
-
-```bash
-bin/valp scan --workspace /path/to/workspace --task TASK-001
-bin/valp route TASK-001 --workspace /path/to/workspace
-```
-
-### 6. Preflight
+### 7. Preflight
 
 You can diagnose the workspace at any time:
 
@@ -281,7 +314,7 @@ minimum size, CLI probe result, and restart/update-needed status when available.
 For headless runtimes, the adapter should record equivalent job/session facts
 instead of pane dimensions.
 
-### 7. Dispatch And Require Receipts
+### 8. Dispatch And Require Receipts
 
 Valid Full Mode dispatch receipt states:
 
@@ -301,14 +334,16 @@ For Full Mode and Remote Mode, the same agent also needs a prior
 local sub-agent result is useful as analysis evidence, but it is not HERDR/live
 dispatch proof.
 
-To see the HERDR reference-adapter submit commands:
+To see the detected HERDR packaged-adapter plan:
 
 ```bash
 bin/valp dispatch TASK-001 --workspace /path/to/workspace
 ```
 
 For Manual Mode tasks, the same command prints manual copy instructions instead
-of HERDR submit commands.
+of a HERDR adapter plan. For HERDR tasks, the plan names the detected
+`agent_prompt` or `pane_send_text_enter` transport. It fails closed if neither
+path is available.
 
 To actually submit through the local HERDR adapter:
 
@@ -337,8 +372,8 @@ bin/valp wait TASK-001 --workspace /path/to/workspace \
   --timeout 300 --execution-timeout 3600
 ```
 
-The zero evidence-wait window makes the HERDR call submission-only: it returns
-after pane delivery proof and does not wait for expected evidence. The generated
+The zero evidence-wait window makes the packaged HERDR call submission-only: it returns
+after runtime delivery proof and does not wait for expected evidence. The generated
 wait policy still carries the exact expected refs, and `valp wait` owns later
 evidence observation and the completion receipt.
 
@@ -367,16 +402,29 @@ The `--ref` file must be a closed task-local `valp-exception-wake.v1` artifact
 bound to the current task, suspension id, epoch, event, principal, and reason;
 see `examples/exception-wake.json` for the shape.
 
+If the protocol execution deadline already produced an accepted timeout wake,
+a later identity-bound completion uses the receipt ledger instead:
+
+```bash
+bin/valp resume TASK-001 --workspace /path/to/workspace \
+  --event receipt --ref dispatch-receipts.jsonl#<line>
+```
+
+This recovery preserves the timeout wake and fails closed unless the completion
+matches the timed-out work item, valid evidence, and original concrete runtime
+submission.
+
 Suspension is non-terminal. It does not satisfy evidence, review, approval,
 recommendation-resolution, synthesis, or audit gates.
 
-### 8. Verify, Review, Record
+### 9. Verify, Review, Record
 
 A task is done only when:
 
 ```text
 runtime adapter and routing are recorded
-selected agent context policies are recorded
+user-selected Leader declaration and VALP validation agree
+Leader-declared Agent context policies are recorded
 provider matrix and runtime preflight are recorded
 skill recommendations are recorded when available
 dispatch receipts satisfy gates
@@ -430,9 +478,10 @@ Start conservatively:
 ```text
 1. Keep the new install default as manual.
 2. Add a project or local overlay trigger policy.
-3. Let matching requests publish and route visibly.
-4. Dispatch only when runtime preflight and approval gates allow it.
-5. Require a final report and `valp audit` before Done.
+3. Let matching requests publish only or refresh capability facts.
+4. Require an explicit user-selected Leader and Leader-authored declaration.
+5. Validate, then dispatch only when runtime preflight and approval gates allow it.
+6. Require a final report and `valp audit` before Done.
 ```
 
 Example local overlay fragment:
@@ -447,7 +496,7 @@ Example local overlay fragment:
       "task asks for multi-agent collaboration",
       "task asks for visible evidence or audit"
     ],
-    "default_action": "publish_and_route",
+    "default_action": "publish_only",
     "high_risk_action": "block_for_approval"
   }
 }
@@ -465,5 +514,6 @@ how far automation may proceed, whether approval is required, and where the user
 can inspect routing, skill recommendations, dispatch receipts, final report, and
 audit evidence.
 
-Do not use Auto Visible Mode as a hidden autopilot. High-risk actions still
-require explicit user approval before execution.
+Do not use Auto Visible Mode as a hidden Agent selector or autopilot. It cannot
+choose the Leader, author assignments, or replace a blocked Agent. High-risk
+actions still require explicit user approval before execution.

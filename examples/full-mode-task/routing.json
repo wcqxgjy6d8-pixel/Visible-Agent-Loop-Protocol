@@ -56,7 +56,7 @@
   "local_overlay": {
     "used": true,
     "ref": ".herdr-loop/local-overlay.json",
-    "note": "Local agent profiles were used as hints only; current runtime evidence selected the route."
+    "note": "Local Agent profiles were used as hints only; current runtime evidence supported validation of the Leader's declaration."
   },
   "capabilities_needed": [
     "implementation",
@@ -64,14 +64,24 @@
     "code_review"
   ],
   "role_requirements": [
-    "coordinator",
     "implementer",
     "reviewer"
   ],
   "role_assignments": {
-    "coordinator": "codex",
     "implementer": "codex",
     "reviewer": "claude"
+  },
+  "assignment_authority": "leader_declared",
+  "assignment_declaration": {
+    "status": "recorded",
+    "ref": "assignment-declaration.json",
+    "leader_agent": "leader-surface",
+    "selected_by": "user",
+    "selection_ref": "example:user-selected-leader-surface"
+  },
+  "assignment_validation": {
+    "status": "pass",
+    "ref": "assignment-validation.json"
   },
   "iteration_budget": {
     "status": "recorded",
@@ -82,8 +92,8 @@
     "claude": "skill-slices/claude.json"
   },
   "coordinator_selection": {
-    "selected_agent": "codex",
-    "selection_rule": "Selected from current capability evidence; the open protocol does not name a universal leader."
+    "selected_agent": "leader-surface",
+    "selection_rule": "The user selected a distinct Leader surface; VALP validated the declared worker assignments."
   },
   "selected_agents": [
     "codex",
@@ -151,7 +161,7 @@
   },
   "routing_confidence": {
     "overall": "high",
-    "reason": "Selected agents match implementation, verification, and read-only review evidence gates."
+    "reason": "Leader-declared Agents satisfy implementation, verification, and read-only review evidence gates."
   },
   "rejected_candidates": [
     {

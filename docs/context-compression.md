@@ -51,8 +51,8 @@ until compression is complete and state is revalidated.
 
 ## Dispatch Gate
 
-Context policy is not passive metadata. Before dispatch, the router or runtime
-adapter must check whether the selected agent is already at or above
+Context policy is not passive metadata. Before dispatch, the validator or
+runtime adapter must check whether the Leader-declared Agent is already at or above
 `hard_compression_pct` or explicitly marked `compression_required`.
 
 If so:
@@ -82,8 +82,8 @@ The complete generated dispatch has strict role-specific ceilings:
 The portable reference-token estimator is `ceil(chars / 4)`. It is a
 deterministic budget proxy, not a provider-tokenizer claim. Adapters with exact
 tokenizers enforce the lower limit. `routing.json` records configured and
-actual dispatch sizes; `context-pack.json` records each selected agent's role
-budget.
+actual dispatch sizes; `context-pack.json` records each Leader-declared Agent's
+role budget.
 
 Dispatch should contain:
 

@@ -16,8 +16,12 @@ The two must be mapped. They are not the same object.
 ## VALP State Machine
 
 ```text
+Doctor capability passport commissioning (installation preflight)
+  -> explicit user Leader selection (authority precondition)
+  ->
 new
   -> published
+  -> Leader authors assignment-declaration.json
   -> scanning_capabilities
   -> scanning_context
   -> loading_local_overlay
@@ -25,11 +29,12 @@ new
   -> classifying_task
   -> selecting_profile
   -> decomposing_tasks
+  -> Leader authors assignment-declaration.json
   -> recommending_skills
   -> building_provider_matrix
-  -> scoring_routes
-  -> routing_capabilities
-  -> routing_squad
+  -> scoring_routes (advisory evidence only)
+  -> routing_capabilities (validate declared assignments)
+  -> routing_squad (validate declared squad, if used)
   -> dispatching
   -> suspended
   -> planned
@@ -43,6 +48,17 @@ new
   -> recording
   -> done | blocked | failed | cancelled
 ```
+
+The user, not the protocol, selects the Leader. The Leader authors
+`assignment-declaration.json`. VALP may move from validation to dispatch only
+when `assignment-validation.json` passes. A validation blocker returns control
+to the same Leader; VALP cannot fill, remove, or replace an Agent assignment.
+
+Doctor commissioning and user Leader selection are authority preconditions, not
+task states. The current task-state schemas keep `scoring_routes` and
+`routing_capabilities` for compatibility. In a conforming new task those names
+describe scoring and validation over Leader-declared assignments, not VALP
+Agent selection.
 
 ## Common Runtime Queue State
 
@@ -102,6 +118,13 @@ not the replay authority. Receipt and timeout wakeups are detected by `valp
 wait`. Runtime failure, cancellation, and user input each require a closed
 `valp-exception-wake.v1` source artifact bound to the current task, suspension
 id, and epoch. External events use:
+
+The root wait policy may be generated before any suspension occurs. Policy
+presence alone is therefore not a deterministic-wake claim. Audit applicability
+starts with a v2 suspension projection, a committed wait event, or malformed
+wait-event input. Once applicable, a missing or invalid event ledger fails; an
+operator must not reconstruct, remove, or hide historical events to change the
+result.
 
 The reference dispatch helper writes a phase-specific root wait policy before
 submission. During suspension, the reference wait bridge may observe expected
@@ -183,9 +206,16 @@ owned the fix, which evidence was replaced, and whether the final outcome was
 `fixed`, `blocked`, `escalated`, or `cancelled`. Only `fixed` can satisfy Done
 Criteria.
 
+A fixed `evidence_superseded` round may bind a later completion generation to
+the same submission dependency. The original refs stay superseded, while the
+replacement refs must be named by the fixed round and final correction outcome,
+remain valid, and belong to the same task, agent, role, and work item. Receipt
+line order remains authoritative: the replacement completion must precede the
+dependent reviewer submission.
+
 ## Recommendation Resolution
 
-After selected agents produce evidence or review output, the coordinator must
+After Leader-declared Agents produce evidence or review output, the coordinator must
 resolve meaningful next-step suggestions before recording Done.
 
 This is not an unlimited loop. The coordinator should record a task-local
@@ -214,8 +244,11 @@ verification, review, or final-synthesis updates. `scoped_followup` records
 valid work outside the current task. `bounded_no_action` is only for duplicate,
 already-satisfied, non-actionable, or complexity-increasing recommendations.
 
-The important invariant is: no selected-agent recommendation disappears into
+The important invariant is: no declared-Agent recommendation disappears into
 the leader's private judgment.
+
+Here `merged` means consolidated into the current task decision. It does not
+mean a repository or hosting-platform merge.
 
 ## Session Resume
 
@@ -238,8 +271,11 @@ retries may resume when the provider supports it and context policy allows it.
 
 A runtime can finish a runtime work item without finishing a VALP task.
 
-VALP is done only when receipts, expected evidence, review, approval gates, and
-agent-recommendation resolution, and final synthesis are recorded.
+VALP is done only when the Leader declaration and VALP validation agree,
+receipts, expected evidence, review, approval gates, Agent-recommendation
+resolution, and final synthesis are recorded. The general protocol then returns
+the audited result to the user; repository hosting or publication is a separate
+user-controlled workflow.
 
 ## Routing Feedback State
 

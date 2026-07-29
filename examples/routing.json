@@ -36,29 +36,34 @@
     "code_review"
   ],
   "role_requirements": [
-    "coordinator",
     "implementer",
     "reviewer"
   ],
   "role_assignments": {
-    "coordinator": "local-coordinator",
     "implementer": "build-agent",
     "reviewer": "review-agent"
   },
+  "assignment_authority": "leader_declared",
+  "assignment_declaration": {
+    "status": "recorded",
+    "ref": "assignment-declaration.json",
+    "leader_agent": "leader-surface",
+    "selected_by": "user",
+    "selection_ref": "user-message:leader-selection"
+  },
+  "assignment_validation": {
+    "status": "pass",
+    "ref": "assignment-validation.json"
+  },
   "coordinator_selection": {
-    "selected_agent": "local-coordinator",
-    "selection_rule": "Selected from current capability evidence; the open protocol does not name a universal leader."
+    "selected_agent": "leader-surface",
+    "selection_rule": "The user selected the Leader; VALP validated the Leader's declaration without selecting an Agent."
   },
   "selected_agents": [
-    "local-coordinator",
     "build-agent",
     "review-agent"
   ],
   "agent_match_reasons": {
-    "local-coordinator": [
-      "coordination",
-      "gates"
-    ],
     "build-agent": [
       "implementation",
       "verification"

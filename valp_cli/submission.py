@@ -78,6 +78,11 @@ def deterministic_receipt_ledger_errors(
         generation = receipt.get("dispatch_generation")
         if type(generation) is not int or generation < 1:
             errors.append(f"line {line_number} has an invalid dispatch_generation")
+        retry_generation = receipt.get("retry_generation")
+        if retry_generation is not None and (
+            type(retry_generation) is not int or retry_generation < 1
+        ):
+            errors.append(f"line {line_number} has an invalid retry_generation")
         suspension_epoch = receipt.get("suspension_epoch")
         if suspension_epoch is not None and (
             type(suspension_epoch) is not int or suspension_epoch < 1
@@ -272,6 +277,7 @@ def unmet_dependencies_for_phases(
     task_dir: Path,
     evidence_status: dict[str, Any],
     manual_mode: bool = False,
+    correction_cycle: dict[str, Any] | None = None,
 ) -> list[str]:
     requested = set(phases)
     errors: list[str] = []
@@ -294,26 +300,20 @@ def unmet_dependencies_for_phases(
             document,
             str(dependency.get("prerequisite_work_item_id") or ""),
         )
-        latest = _latest_terminal_receipt(
+        latest = _latest_qualifying_prerequisite_receipt(
             receipts,
             str(dependency.get("prerequisite_agent") or ""),
             refs,
+            "manual_result_attested" if manual_mode else "dispatch_completed",
+            task_dir,
+            evidence_status,
+            correction_cycle or {},
             task_id=str(document.get("task_id") or ""),
             identity=prerequisite_identity,
             strict_identity=strict_identity,
         )
-        if not _receipt_matches(
-            latest,
-            "dispatch_completed",
-            refs,
-            task_id=str(document.get("task_id") or ""),
-            identity=prerequisite_identity,
-            strict_identity=strict_identity,
-        ):
+        if not latest:
             errors.append(str(dependency.get("id") or "unknown") + " completion receipt")
-            continue
-        missing = [ref for ref in refs if not _valid_evidence_ref(task_dir, ref, evidence_status)]
-        errors.extend(f"{dependency.get('id', 'unknown')} evidence {ref}" for ref in missing)
     return errors
 
 
@@ -323,6 +323,7 @@ def dependency_order_errors(
     task_dir: Path,
     evidence_status: dict[str, Any],
     manual_mode: bool,
+    correction_cycle: dict[str, Any] | None = None,
 ) -> list[str]:
     prerequisite_event = "manual_result_attested" if manual_mode else "dispatch_completed"
     dependent_event = "manual_delivery_attested" if manual_mode else "dispatch_submitted"
@@ -368,26 +369,19 @@ def dependency_order_errors(
                     f"at line {index + 1}"
                 )
                 continue
-            latest = _latest_terminal_receipt(
+            latest = _latest_qualifying_prerequisite_receipt(
                 receipts[:index],
                 str(dependency.get("prerequisite_agent") or ""),
                 prerequisite_refs,
-                task_id=str(document.get("task_id") or ""),
-                identity=prerequisite_identity,
-                strict_identity=strict_identity,
-            )
-            valid_refs = all(
-                _valid_evidence_ref(task_dir, ref, evidence_status)
-                for ref in prerequisite_refs
-            )
-            if not _receipt_matches(
-                latest,
                 prerequisite_event,
-                prerequisite_refs,
+                task_dir,
+                evidence_status,
+                correction_cycle or {},
                 task_id=str(document.get("task_id") or ""),
                 identity=prerequisite_identity,
                 strict_identity=strict_identity,
-            ) or not valid_refs:
+            )
+            if not latest:
                 errors.append(
                     f"{dependency.get('id', 'unknown')} was not satisfied before receipt line {index + 1}"
                 )
@@ -418,6 +412,138 @@ def _latest_terminal_receipt(
         ):
             latest = receipt
     return latest
+
+
+def _latest_qualifying_prerequisite_receipt(
+    receipts: list[dict[str, Any]],
+    agent: str,
+    required_refs: list[str],
+    event: str,
+    task_dir: Path,
+    evidence_status: dict[str, Any],
+    correction_cycle: dict[str, Any],
+    task_id: str = "",
+    identity: dict[str, Any] | None = None,
+    strict_identity: bool = False,
+) -> dict[str, Any]:
+    latest = _latest_terminal_receipt(
+        receipts,
+        agent,
+        required_refs,
+        task_id=task_id,
+        identity=identity,
+        strict_identity=strict_identity,
+    )
+    if (
+        _receipt_matches(
+            latest,
+            event,
+            required_refs,
+            task_id=task_id,
+            identity=identity,
+            strict_identity=strict_identity,
+        )
+        and all(_valid_evidence_ref(task_dir, ref, evidence_status) for ref in required_refs)
+    ):
+        return latest
+    if not strict_identity or not identity:
+        return {}
+    return _latest_fixed_correction_receipt(
+        receipts,
+        agent,
+        event,
+        required_refs,
+        task_dir,
+        evidence_status,
+        correction_cycle,
+        task_id,
+        identity,
+    )
+
+
+def _latest_fixed_correction_receipt(
+    receipts: list[dict[str, Any]],
+    agent: str,
+    event: str,
+    required_refs: list[str],
+    task_dir: Path,
+    evidence_status: dict[str, Any],
+    correction_cycle: dict[str, Any],
+    task_id: str,
+    identity: dict[str, Any],
+) -> dict[str, Any]:
+    if (
+        correction_cycle.get("schema_version") != "valp-correction-cycle.v1"
+        or correction_cycle.get("task_id") != task_id
+        or correction_cycle.get("status") != "fixed"
+        or correction_cycle.get("final_outcome") != "fixed"
+    ):
+        return {}
+    if not required_refs or not all(
+        _evidence_status_value(evidence_status, ref) == "superseded"
+        for ref in required_refs
+    ):
+        return {}
+    final_refs = {str(ref) for ref in correction_cycle.get("final_evidence_refs") or []}
+    binding_rounds = [
+        round_item
+        for round_item in correction_cycle.get("rounds") or []
+        if isinstance(round_item, dict)
+        and round_item.get("status") == "fixed"
+        and round_item.get("trigger") == "evidence_superseded"
+        and set(required_refs).issubset(
+            {str(ref) for ref in round_item.get("rejected_refs") or []}
+        )
+        and "dispatch-receipts.jsonl"
+        in {str(ref) for ref in round_item.get("receipt_refs") or []}
+    ]
+    if not binding_rounds:
+        return {}
+
+    requested_generation = identity.get("dispatch_generation")
+    if type(requested_generation) is not int:
+        return {}
+    latest_by_generation: dict[int, tuple[int, dict[str, Any]]] = {}
+    for index, receipt in enumerate(receipts):
+        generation = receipt.get("dispatch_generation")
+        if (
+            receipt.get("schema_version") != "valp-dispatch-receipt.v2"
+            or receipt.get("task_id") != task_id
+            or receipt.get("agent") != agent
+            or receipt.get("agent") != identity.get("agent")
+            or receipt.get("role") != identity.get("role")
+            or receipt.get("work_item_id") != identity.get("work_item_id")
+            or receipt.get("event") not in TERMINAL_RECEIPT_EVENTS
+            or type(generation) is not int
+            or generation <= requested_generation
+            or not isinstance(receipt.get("dispatch_id"), str)
+            or not receipt.get("dispatch_id")
+            or receipt.get("dispatch_id") == identity.get("dispatch_id")
+        ):
+            continue
+        replacement_refs = {str(ref) for ref in receipt.get("expected_refs") or []}
+        if (
+            not replacement_refs
+            or not replacement_refs.issubset(final_refs)
+            or not any(
+                replacement_refs.issubset(
+                    {str(ref) for ref in round_item.get("evidence_refs") or []}
+                )
+                for round_item in binding_rounds
+            )
+            or not all(
+                _valid_evidence_ref(task_dir, ref, evidence_status)
+                for ref in replacement_refs
+            )
+        ):
+            continue
+        latest_by_generation[generation] = (index, receipt)
+    candidates = [
+        (generation, index, receipt)
+        for generation, (index, receipt) in latest_by_generation.items()
+        if receipt.get("event") == event
+    ]
+    return max(candidates, default=(0, -1, {}), key=lambda item: (item[0], item[1]))[2]
 
 
 def _receipt_matches(
@@ -477,13 +603,18 @@ def _valid_evidence_ref(
         return False
     if not candidate.is_file() or candidate.stat().st_size == 0:
         return False
-    records = evidence_status.get("evidence") or evidence_status.get("items") or {}
-    if isinstance(records, dict):
-        record = records.get(ref) or {}
-        status = record.get("status") if isinstance(record, dict) else record
-        if str(status or "valid").lower() in INVALID_EVIDENCE_STATUSES:
-            return False
+    if _evidence_status_value(evidence_status, ref) in INVALID_EVIDENCE_STATUSES:
+        return False
     return True
+
+
+def _evidence_status_value(evidence_status: dict[str, Any], ref: str) -> str:
+    records = evidence_status.get("evidence") or evidence_status.get("items") or {}
+    if not isinstance(records, dict):
+        return "valid"
+    record = records.get(ref) or {}
+    status = record.get("status") if isinstance(record, dict) else record
+    return str(status or "valid").lower()
 
 
 def _safe_task_ref(ref: str) -> bool:

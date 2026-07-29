@@ -2,12 +2,14 @@
 
 Profiles adapt the generic protocol to a domain.
 
-The protocol kernel remains the same. Profiles define gates, likely agents,
+The protocol kernel remains the same. Profiles define gates, likely roles,
 evidence types, and approval risks.
 
-Likely roles are defaults for routing, not fixed assignments. The runtime must
-still scan local overlays, tools, skills, context policy, permission boundaries,
-and expected evidence before selecting agents.
+Likely roles are requirements and assignment hints for the Leader, not fixed
+assignments and not VALP selections. Doctor scans local overlays, tools, skills,
+the active model/session, context policy, and permission boundaries. The user
+selects the Leader; that Leader declares the Agents; VALP validates the
+declaration against the profile and current evidence.
 
 ## Core Profiles
 

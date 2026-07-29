@@ -7,15 +7,15 @@ Design contract: not_applicable
 
 ## Attention Heads
 
-- state_gate: codex (score 0.89, selected)
+- state_gate: queue-leader (score n/a, user_selected_leader)
 - implementation: codex (score 0.89, selected)
 - ux_review: claude (score 0.84, selected)
-- prototype: none (score n/a, not_selected)
+- prototype: none (score n/a, not_declared)
 
 ## Selected Context
 
 - `task.md`: active task brief
-- `routing.json`: candidate scores and selected agents
+- `routing.json`: advisory candidate scores and Leader-declared Agents
 - `skill-recommendations.json`: recommended installed skills
 
 ## Context Pack
@@ -37,5 +37,5 @@ Design contract: not_applicable
 ## Evidence Board
 
 - routing decision is visible: recorded
-- selected agents have visible dispatches: recorded
+- Leader-declared Agents have visible dispatches: recorded
 - runtime or build success: verified

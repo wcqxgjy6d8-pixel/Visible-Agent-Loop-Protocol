@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/assignment-validation.v1.json",
+  "title": "VALP Assignment Validation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "declaration_ref",
+    "authority",
+    "status",
+    "validated_at",
+    "blockers",
+    "validated_assignments"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-assignment-validation.v1"},
+    "task_id": {"type": "string", "minLength": 1},
+    "declaration_ref": {"const": "assignment-declaration.json"},
+    "authority": {"const": "leader_declared"},
+    "status": {"enum": ["pass", "blocked"]},
+    "validated_at": {"type": "string", "format": "date-time"},
+    "blockers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "validated_assignments": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"type": "string", "minLength": 1},
+      "additionalProperties": {"type": "string", "minLength": 1}
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "pass"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {"blockers": {"maxItems": 0}}
+      },
+      "else": {
+        "properties": {"blockers": {"minItems": 1}}
+      }
+    }
+  ]
+}

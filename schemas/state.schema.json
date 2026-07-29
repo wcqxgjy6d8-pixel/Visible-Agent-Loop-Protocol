@@ -20,7 +20,32 @@
       "type": "array",
       "items": {"type": "string"}
     },
-    "role_assignments": {"type": "object"},
+    "role_assignments": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "assignment_authority": {"const": "leader_declared"},
+    "assignment_declaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "ref", "leader_agent", "selected_by", "selection_ref"],
+      "properties": {
+        "status": {"const": "recorded"},
+        "ref": {"const": "assignment-declaration.json"},
+        "leader_agent": {"type": "string", "minLength": 1},
+        "selected_by": {"const": "user"},
+        "selection_ref": {"type": "string", "minLength": 1}
+      }
+    },
+    "assignment_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "ref"],
+      "properties": {
+        "status": {"enum": ["pass", "blocked"]},
+        "ref": {"const": "assignment-validation.json"}
+      }
+    },
     "model_role_gate": {
       "type": "object",
       "required": ["enforced", "status", "blocked_roles", "fallback_modes", "reason"],

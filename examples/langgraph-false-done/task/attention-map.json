@@ -4,30 +4,31 @@
   "profile": "agent-runtime",
   "loop_layer": "developer_feedback_loop",
   "generated_at": "2026-07-20T06:39:05Z",
+  "leader_agent": "langgraph_coordinator",
   "heads": {
     "state_gate": {
       "selected": "langgraph_coordinator",
       "candidate": "role:coordinator",
       "score": 0.8,
-      "status": "selected"
+      "status": "user_selected_leader"
     },
     "implementation": {
       "selected": "langgraph_worker",
       "candidate": "role:implementer",
       "score": 0.78,
-      "status": "selected"
+      "status": "leader_declared"
     },
     "ux_review": {
       "selected": "langgraph_reviewer",
       "candidate": "role:reviewer",
       "score": 0.8,
-      "status": "selected"
+      "status": "leader_declared"
     },
     "prototype": {
       "selected": null,
       "candidate": "role:prototype",
       "score": null,
-      "status": "not_selected"
+      "status": "not_declared"
     }
   },
   "selected_agents": [

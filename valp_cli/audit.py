@@ -8,6 +8,13 @@ from dataclasses import dataclass, asdict
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .control_contract import (
+    CONTROL_CONTRACT_REF,
+    control_contract_digest,
+    validate_control_contract,
+    validate_control_slice,
+)
+from .continuation import SUCCESS_EVENTS, digest as continuation_digest, file_digest as continuation_file_digest, idempotency_key as continuation_idempotency_key
 from .delegation import validate_delegation_policy
 from .model_identity import model_aware_provider_errors, model_aware_role_errors
 from .risk import classify_approval_risks
@@ -97,6 +104,8 @@ class TaskAudit:
         self.jsonl_errors: dict[str, list[str]] = {}
         self.state = self._load_json("state.json")
         self.routing = self._load_json("routing.json")
+        self.assignment_declaration = self._load_json("assignment-declaration.json")
+        self.assignment_validation = self._load_json("assignment-validation.json")
         self.feedback = self._load_json("routing-feedback.json")
         self.automation_policy = self._load_json("automation-policy.json")
         self.context_pack = self._load_json("context-pack.json")
@@ -114,6 +123,7 @@ class TaskAudit:
         self.mask_list = self._load_json("mask-list.json")
         self.evidence_board = self._load_json("evidence-board.json")
         self.correction_cycle = self._load_json("correction-cycle.json")
+        self.control_contract = self._load_json(CONTROL_CONTRACT_REF)
         self.receipts = self._load_jsonl("dispatch-receipts.jsonl")
         self.routing_history = self._load_jsonl("routing-history.jsonl")
         self.wait_events = self._load_jsonl("wait-events.jsonl")
@@ -127,9 +137,11 @@ class TaskAudit:
     def run(self) -> AuditReport:
         items = [
             self.check_profile_and_routing(),
+            self.check_assignment_authority(),
             self.check_runtime_adapter_and_state_mapping(),
             self.check_state_status_vocabulary(),
             self.check_deterministic_wake(),
+            self.check_continuation_ledger(),
             self.check_local_overlay(),
             self.check_selected_agents_and_context(),
             self.check_provider_matrix(),
@@ -139,6 +151,7 @@ class TaskAudit:
             self.check_iteration_budget(),
             self.check_delegation_policy(),
             self.check_visible_attention(),
+            self.check_control_contract(),
             self.check_context_pack(),
             self.check_skill_recommendations(),
             self.check_squad_routing(),
@@ -178,6 +191,160 @@ class TaskAudit:
             items=items,
         )
 
+    def check_continuation_ledger(self) -> AuditItem:
+        """Validate continuation evidence when a task opts into the kernel."""
+        path = self.task_dir / "continuations" / "events.jsonl"
+        if not path.exists():
+            return self._skip("continuation", "Continuation ledger is identity-bound and append-only", "Task has no continuation ledger", [])
+        evidence = self._existing(["continuations/events.jsonl"])
+        try:
+            events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        except (OSError, json.JSONDecodeError) as exc:
+            return self._fail("continuation", "Continuation ledger is identity-bound and append-only", f"Cannot read continuation ledger: {exc}", evidence)
+        errors: list[str] = []
+        task_id = str(self.state.get("task_id") or self.routing.get("task_id") or "")
+        for index, event in enumerate(events, 1):
+            if event.get("event_sequence") != index or event.get("task_id") != task_id:
+                errors.append(f"event {index} has invalid sequence or task identity")
+            if event.get("channel") != "runtime_control":
+                errors.append(f"event {index} is not runtime_control")
+            unsigned = dict(event)
+            observed_event_id = unsigned.pop("event_id", None)
+            if observed_event_id != continuation_digest(unsigned):
+                errors.append(f"event {index} has an invalid event_id digest")
+
+        pending_events = [event for event in events if event.get("event") == "resume_pending"]
+        success_events = [event for event in events if event.get("event") in SUCCESS_EVENTS]
+        if success_events and not pending_events:
+            errors.append("continuation success events bypass persisted resume_pending")
+
+        capability_path = self.task_dir / "continuations" / "capability.json"
+        capability: dict[str, Any] = {}
+        if capability_path.is_file():
+            try:
+                capability = json.loads(capability_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                errors.append("continuation capability is malformed")
+
+        for pending in pending_events:
+            wake_id = str(pending.get("wake_id") or "")
+            artifact_dir = self.task_dir / "continuations" / wake_id.removeprefix("sha256:")
+            envelope_path = artifact_dir / "envelope.json"
+            payload_path = artifact_dir / "payload.json"
+            try:
+                envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+                payload = json.loads(payload_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                errors.append(f"{wake_id}: persisted envelope or payload is missing/malformed")
+                continue
+            envelope_digest = continuation_digest(envelope)
+            key = continuation_idempotency_key(envelope)
+            if pending.get("envelope_digest") != envelope_digest or pending.get("idempotency_key") != key:
+                errors.append(f"{wake_id}: resume_pending does not bind the persisted envelope")
+            if continuation_digest(payload) != envelope.get("payload_digest"):
+                errors.append(f"{wake_id}: persisted payload digest does not match envelope")
+            payload_ref = str(envelope.get("payload_ref") or "")
+            if not self._is_safe_task_ref(payload_ref) or (self.task_dir / payload_ref).resolve() != payload_path.resolve():
+                errors.append(f"{wake_id}: envelope payload_ref is unsafe or mismatched")
+            control_ref = str(envelope.get("control_contract_ref") or "")
+            control_path = self.task_dir / control_ref
+            if (
+                not self._is_safe_task_ref(control_ref)
+                or not control_path.is_file()
+                or continuation_file_digest(control_path) != envelope.get("control_contract_digest")
+            ):
+                errors.append(f"{wake_id}: control contract digest is missing or mismatched")
+
+            expected_bindings = {
+                "task_id": envelope.get("task_id"),
+                "suspension_id": envelope.get("suspension_id"),
+                "suspension_epoch": envelope.get("suspension_epoch"),
+                "wake_id": envelope.get("wake_id"),
+                "wake_event_id": envelope.get("wake_event_id"),
+                "continuation_generation": envelope.get("continuation_generation"),
+                "idempotency_key": key,
+                "envelope_digest": envelope_digest,
+                "payload_digest": envelope.get("payload_digest"),
+                "control_contract_digest": envelope.get("control_contract_digest"),
+                "target": envelope.get("target"),
+            }
+            correlated = [
+                event for event in success_events
+                if event.get("idempotency_key") == key
+            ]
+            for event in correlated:
+                if any(event.get(field) != value for field, value in expected_bindings.items()):
+                    errors.append(f"{wake_id}: {event.get('event')} is not correlated to the envelope")
+            names = [str(event.get("event")) for event in correlated]
+            if names != list(SUCCESS_EVENTS[: len(names)]):
+                errors.append(f"{wake_id}: acknowledgement chain is incomplete or out of order")
+
+            if "resume_consumed" not in names:
+                continue
+            started = next((event for event in correlated if event.get("event") == "continuation_started"), {})
+            consumed = next((event for event in correlated if event.get("event") == "resume_consumed"), {})
+            receipt_ref = str(consumed.get("invocation_receipt_ref") or "")
+            if not self._is_safe_task_ref(receipt_ref):
+                errors.append(f"{wake_id}: invocation receipt ref is unsafe")
+                continue
+            receipt_path = self.task_dir / receipt_ref
+            try:
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                errors.append(f"{wake_id}: invocation receipt is missing or malformed")
+                continue
+            receipt_digest = continuation_digest(receipt)
+            if any(
+                event.get("invocation_receipt_ref") != receipt_ref
+                or event.get("invocation_receipt_digest") != receipt_digest
+                or event.get("invocation_id") != (receipt.get("provider") or {}).get("invocation_id")
+                for event in (started, consumed)
+            ):
+                errors.append(f"{wake_id}: provider receipt event correlation is invalid")
+            receipt_bindings = {
+                "task_id": envelope.get("task_id"),
+                "suspension_id": envelope.get("suspension_id"),
+                "suspension_epoch": envelope.get("suspension_epoch"),
+                "wake_id": envelope.get("wake_id"),
+                "continuation_generation": envelope.get("continuation_generation"),
+                "idempotency_key": key,
+                "payload_digest": envelope.get("payload_digest"),
+                "durable_boundary_ref": (envelope.get("target") or {}).get("durable_boundary_ref"),
+                "result": "consumed",
+            }
+            if any(receipt.get(field) != value for field, value in receipt_bindings.items()):
+                errors.append(f"{wake_id}: provider invocation receipt is not envelope-correlated")
+
+            target = envelope.get("target") or {}
+            proof = capability.get("proof") or {}
+            adapter = receipt.get("adapter") or {}
+            provider = receipt.get("provider") or {}
+            capability_valid = (
+                capability.get("mode") == "automatic_full"
+                and capability.get("adapter_id") == target.get("adapter_id") == adapter.get("id")
+                and capability.get("adapter_version") == adapter.get("version")
+                and capability.get("provider_id") == target.get("provider_id") == provider.get("id")
+                and capability.get("coordinator_surface") == target.get("coordinator_agent")
+                and proof.get("invocation_receipt") is True
+                and proof.get("duplicate_suppression") is True
+                and receipt.get("identity_evidence_ref") == proof.get("identity_evidence_ref")
+                and receipt.get("duplicate_suppression_ref") == proof.get("duplicate_suppression_evidence_ref")
+            )
+            if not capability_valid:
+                errors.append(f"{wake_id}: capability, target, and provider receipt do not correlate")
+            for ref in (receipt.get("identity_evidence_ref"), receipt.get("duplicate_suppression_ref")):
+                ref = str(ref or "")
+                if not self._is_safe_task_ref(ref) or not (self.task_dir / ref).is_file():
+                    errors.append(f"{wake_id}: provider evidence ref is missing or unsafe")
+
+        known_pending_keys = {event.get("idempotency_key") for event in pending_events}
+        for event in success_events:
+            if event.get("idempotency_key") not in known_pending_keys:
+                errors.append(f"event {event.get('event_sequence')} has no correlated resume_pending")
+        if errors:
+            return self._fail("continuation", "Continuation ledger is identity-bound and append-only", "; ".join(errors[:4]), evidence)
+        return self._pass("continuation", "Continuation ledger is identity-bound and append-only", f"Validated {len(events)} continuation events", evidence)
+
     def check_state_status_vocabulary(self) -> AuditItem:
         if self.state.get("schema_version") != "valp-visible-loop-state.v2":
             return self._skip(
@@ -210,6 +377,136 @@ class TaskAudit:
             return self._fail("profile_routing", "Profile and routing are recorded", "routing.json/state.json has no profile", evidence)
         return self._pass("profile_routing", "Profile and routing are recorded", f"Profile recorded: {profile}", evidence)
 
+    def check_assignment_authority(self) -> AuditItem:
+        evidence = self._existing(
+            [
+                "assignment-declaration.json",
+                "assignment-validation.json",
+                "routing.json",
+                "state.json",
+            ]
+        )
+        claimed = bool(
+            self.assignment_declaration
+            or self.assignment_validation
+            or self.routing.get("assignment_authority")
+            or self.routing.get("assignment_declaration")
+            or self.routing.get("assignment_validation")
+            or self.state.get("assignment_authority")
+            or self.state.get("assignment_declaration")
+            or self.state.get("assignment_validation")
+        )
+        if not claimed:
+            return self._skip(
+                "assignment_authority",
+                "User-selected Leader authority and declared assignments are consistent",
+                "Legacy task does not claim the Leader-declared assignment contract",
+                evidence,
+            )
+
+        declaration = self.assignment_declaration
+        validation = self.assignment_validation
+        errors: list[str] = []
+        if not declaration:
+            errors.append("assignment-declaration.json is missing or invalid")
+        if not validation:
+            errors.append("assignment-validation.json is missing or invalid")
+        if errors:
+            return self._fail(
+                "assignment_authority",
+                "User-selected Leader authority and declared assignments are consistent",
+                "; ".join(errors),
+                evidence,
+            )
+
+        task_id = str(self.state.get("task_id") or self.routing.get("task_id") or "")
+        leader = declaration.get("leader") if isinstance(declaration.get("leader"), dict) else {}
+        assignments = declaration.get("assignments") if isinstance(declaration.get("assignments"), dict) else {}
+        reasons = declaration.get("reasons") if isinstance(declaration.get("reasons"), dict) else {}
+        leader_agent = str(leader.get("agent_id") or "")
+
+        if declaration.get("schema_version") != "valp-assignment-declaration.v1":
+            errors.append("assignment declaration schema_version is invalid")
+        allowed_declaration_fields = {
+            "schema_version",
+            "declaration_id",
+            "task_id",
+            "declared_at",
+            "leader",
+            "assignments",
+            "reasons",
+        }
+        if set(declaration) != allowed_declaration_fields:
+            errors.append("assignment declaration fields do not match the closed contract")
+        if set(leader) != {"agent_id", "selected_by", "selection_ref"}:
+            errors.append("Leader fields do not match the closed contract")
+        if not declaration.get("declaration_id") or not declaration.get("declared_at"):
+            errors.append("assignment declaration identity or timestamp is missing")
+        if not task_id or declaration.get("task_id") != task_id:
+            errors.append("assignment declaration task_id does not match task state")
+        if leader.get("selected_by") != "user" or not leader_agent or not leader.get("selection_ref"):
+            errors.append("Leader is not bound to explicit user-selection evidence")
+        if not assignments:
+            errors.append("Leader declaration has no assignments")
+        if assignments.get("coordinator") and assignments.get("coordinator") != leader_agent:
+            errors.append("declared coordinator does not match the user-selected Leader")
+        missing_reasons = [role for role in assignments if not str(reasons.get(role) or "").strip()]
+        if missing_reasons:
+            errors.append("assignment reasons are missing for: " + ", ".join(sorted(missing_reasons)))
+        if set(reasons) != set(assignments):
+            errors.append("assignment reason roles differ from declared roles")
+
+        if validation.get("schema_version") != "valp-assignment-validation.v1":
+            errors.append("assignment validation schema_version is invalid")
+        if validation.get("task_id") != task_id:
+            errors.append("assignment validation task_id does not match task state")
+        if validation.get("declaration_ref") != "assignment-declaration.json":
+            errors.append("assignment validation declaration_ref is invalid")
+        if validation.get("authority") != "leader_declared":
+            errors.append("assignment validation authority is not leader_declared")
+        if validation.get("status") != "pass" or validation.get("blockers"):
+            errors.append("assignment validation did not pass cleanly")
+        if validation.get("validated_assignments") != assignments:
+            errors.append("validated assignments differ from the Leader declaration")
+
+        declared_agents = {str(agent) for agent in assignments.values() if str(agent)}
+        for source_name, source in (("routing", self.routing), ("state", self.state)):
+            if source.get("assignment_authority") != "leader_declared":
+                errors.append(f"{source_name} assignment_authority is not leader_declared")
+            marker = source.get("assignment_declaration") if isinstance(source.get("assignment_declaration"), dict) else {}
+            if marker.get("status") != "recorded" or marker.get("ref") != "assignment-declaration.json":
+                errors.append(f"{source_name} assignment declaration marker is invalid")
+            if marker.get("leader_agent") != leader_agent or marker.get("selected_by") != "user":
+                errors.append(f"{source_name} Leader marker differs from the declaration")
+            if marker.get("selection_ref") != leader.get("selection_ref"):
+                errors.append(f"{source_name} Leader selection_ref differs from the declaration")
+            validation_marker = source.get("assignment_validation") if isinstance(source.get("assignment_validation"), dict) else {}
+            if validation_marker != {"status": "pass", "ref": "assignment-validation.json"}:
+                errors.append(f"{source_name} assignment validation marker is invalid")
+            if source.get("role_assignments") != assignments:
+                errors.append(f"{source_name} role assignments differ from the declaration")
+            selected_agents = [str(agent) for agent in source.get("selected_agents") or []]
+            if len(selected_agents) != len(set(selected_agents)) or set(selected_agents) != declared_agents:
+                errors.append(f"{source_name} selected_agents is not the Leader-declared Agent projection")
+
+        coordinator = self.routing.get("coordinator_selection")
+        if not isinstance(coordinator, dict) or coordinator.get("selected_agent") != leader_agent:
+            errors.append("routing coordinator selection does not match the user-selected Leader")
+
+        if errors:
+            return self._fail(
+                "assignment_authority",
+                "User-selected Leader authority and declared assignments are consistent",
+                "; ".join(errors[:8]),
+                evidence,
+            )
+        return self._pass(
+            "assignment_authority",
+            "User-selected Leader authority and declared assignments are consistent",
+            f"Validated user-selected Leader {leader_agent} and {len(assignments)} declared role assignment(s)",
+            evidence,
+        )
+
     def check_runtime_adapter_and_state_mapping(self) -> AuditItem:
         evidence = self._existing(["routing.json", "state.json"])
         runtime = self.routing.get("runtime_adapter") or self.state.get("runtime_adapter")
@@ -238,7 +535,14 @@ class TaskAudit:
             ]
         )
         suspension = self.state.get("suspension") or {}
-        claimed = bool(self.wait_policy or self.wait_events or self.state.get("schema_version") == "valp-visible-loop-state.v2" and suspension)
+        claimed = bool(
+            self.wait_events
+            or self.jsonl_errors.get("wait-events.jsonl")
+            or (
+                self.state.get("schema_version") == "valp-visible-loop-state.v2"
+                and (suspension or self.state.get("status") == "suspended")
+            )
+        )
         if not claimed:
             return self._skip(
                 "deterministic_wake",
@@ -783,13 +1087,13 @@ class TaskAudit:
         agents = self._selected_agents()
         policies = self.routing.get("selected_agent_context_policies") or self.state.get("context_policies") or {}
         if not agents:
-            return self._fail("selected_agents_context", "Selected agents and context policies are recorded", "No selected_agents recorded", evidence)
+            return self._fail("selected_agents_context", "Leader-declared Agents and context policies are recorded", "No selected_agents compatibility projection recorded", evidence)
         missing = [agent for agent in agents if agent not in policies]
         if missing:
             return self._fail(
                 "selected_agents_context",
-                "Selected agents and context policies are recorded",
-                f"Selected agents recorded, but context policy missing for: {', '.join(missing)}",
+                "Leader-declared Agents and context policies are recorded",
+                f"Leader-declared Agents recorded, but context policy missing for: {', '.join(missing)}",
                 evidence,
             )
         required = {"soft_warning_pct", "hard_compression_pct", "emergency_stop_pct"}
@@ -801,7 +1105,7 @@ class TaskAudit:
         if incomplete:
             return self._fail(
                 "selected_agents_context",
-                "Selected agents and context policies are recorded",
+                "Leader-declared Agents and context policies are recorded",
                 "Context policy missing threshold fields for: " + ", ".join(incomplete),
                 evidence,
             )
@@ -818,11 +1122,11 @@ class TaskAudit:
         if compressed_needed:
             return self._fail(
                 "selected_agents_context",
-                "Selected agents and context policies are recorded",
+                "Leader-declared Agents and context policies are recorded",
                 "Compression required before dispatch: " + ", ".join(compressed_needed),
                 evidence,
             )
-        return self._pass("selected_agents_context", "Selected agents and context policies are recorded", "Selected agents and context policies found", evidence)
+        return self._pass("selected_agents_context", "Leader-declared Agents and context policies are recorded", "Leader-declared Agents and context policies found", evidence)
 
     def check_provider_matrix(self) -> AuditItem:
         evidence = self._existing(["routing.json", "state.json"])
@@ -1119,6 +1423,141 @@ class TaskAudit:
             evidence,
         )
 
+    def check_control_contract(self) -> AuditItem:
+        routing_marker = self.routing.get("control_contract") or {}
+        state_marker = self.state.get("control_contract") or {}
+        slice_refs = self.routing.get("control_slices") or self.state.get("control_slices") or {}
+        selected_agents = self._selected_agents()
+        required = bool(routing_marker or state_marker or slice_refs) or (
+            self.state.get("schema_version") == "valp-visible-loop-state.v2"
+            and bool(selected_agents)
+        )
+        slice_evidence_refs = [str(ref) for ref in slice_refs.values()] if isinstance(slice_refs, dict) else []
+        evidence = self._existing(
+            [
+                CONTROL_CONTRACT_REF,
+                "routing.json",
+                "state.json",
+                "context-pack.json",
+                *slice_evidence_refs,
+                *[f"agents/{agent}/dispatch.md" for agent in selected_agents],
+            ]
+        )
+        if not required:
+            return self._skip(
+                "control_contract",
+                "Workers load the immutable highest-priority control contract before execution",
+                "Legacy task without a generated worker control contract",
+                evidence,
+            )
+        if not self.control_contract:
+            return self._fail(
+                "control_contract",
+                "Workers load the immutable highest-priority control contract before execution",
+                "Missing or invalid control-contract.json",
+                evidence,
+            )
+
+        task_id = str(self.state.get("task_id") or self.routing.get("task_id") or "")
+        digest = control_contract_digest(
+            self.control_contract,
+            (self.task_dir / CONTROL_CONTRACT_REF).read_bytes(),
+        )
+        expected_marker = {
+            "status": "recorded",
+            "ref": CONTROL_CONTRACT_REF,
+            "digest": digest,
+            "priority_class": "highest_runtime_control",
+        }
+        failures = validate_control_contract(self.control_contract, task_id)
+        if routing_marker != expected_marker or state_marker != expected_marker:
+            failures.append("routing/state control contract markers are missing or mismatched")
+        if not isinstance(slice_refs, dict) or set(slice_refs) != set(selected_agents):
+            failures.append("control slice refs do not cover exactly the Leader-declared Agents")
+
+        work_items_by_agent: dict[str, list[str]] = {}
+        for item in self.submission_dependencies.get("work_items") or []:
+            if not isinstance(item, dict):
+                continue
+            agent = str(item.get("agent") or "")
+            work_item_id = str(item.get("work_item_id") or "")
+            if agent and work_item_id:
+                work_items_by_agent.setdefault(agent, []).append(work_item_id)
+
+        for agent in selected_agents:
+            slice_ref = str(slice_refs.get(agent) or "") if isinstance(slice_refs, dict) else ""
+            if not slice_ref or not self._is_safe_task_ref(slice_ref):
+                failures.append(f"missing or unsafe control slice ref for {agent}")
+                continue
+            control_slice = self._load_json(slice_ref)
+            failures.extend(
+                f"{agent}: {error}"
+                for error in validate_control_slice(
+                    control_slice,
+                    task_id,
+                    agent,
+                    work_items_by_agent.get(agent) or [],
+                    digest,
+                )
+            )
+            dispatch = self._read_text(f"agents/{agent}/dispatch.md")
+            compact_slice = json.dumps(control_slice, ensure_ascii=False, separators=(",", ":"))
+            headings = [line.strip() for line in dispatch.splitlines() if line.startswith("## ")]
+            if compact_slice not in dispatch:
+                failures.append(f"{agent}: dispatch does not contain the exact compact control slice")
+            if not headings or headings[0] != "## VALP Control Contract (Load First)":
+                failures.append(f"{agent}: control contract is not the first dispatch section")
+
+        context_items = self.context_pack.get("items") or []
+        if (
+            not context_items
+            or not isinstance(context_items[0], dict)
+            or not isinstance(context_items[0].get("evidence_refs"), list)
+            or not context_items[0]["evidence_refs"]
+            or context_items[0]["evidence_refs"][0] != CONTROL_CONTRACT_REF
+        ):
+            failures.append("context pack does not load the control contract first")
+
+        terminal_events = {"dispatch_completed", "manual_result_attested"}
+        for item in self.submission_dependencies.get("work_items") or []:
+            if not isinstance(item, dict):
+                continue
+            matching_receipts = [
+                receipt
+                for receipt in self.receipts
+                if self._receipt_matches_work_item_identity(receipt, item)
+                or self._receipt_matches_manual_work_item(receipt, item)
+            ]
+            if not matching_receipts or matching_receipts[-1].get("event") not in terminal_events:
+                continue
+            agent = str(item.get("agent") or "")
+            acknowledgement_lines = [
+                "control_contract_ref: control-contract.json",
+                f"control_contract_digest: {digest}",
+                "control_contract_status: honored",
+            ]
+            agent_evidence = "\n".join(
+                self._read_text(str(ref))
+                for ref in item.get("expected_refs") or []
+                if str(ref).startswith(f"agents/{agent}/")
+            )
+            if not agent_evidence or any(line not in agent_evidence for line in acknowledgement_lines):
+                failures.append(f"{agent}: completed work item lacks the identity-bound control acknowledgement")
+
+        if failures:
+            return self._fail(
+                "control_contract",
+                "Workers load the immutable highest-priority control contract before execution",
+                "; ".join(list(dict.fromkeys(failures))[:8]),
+                evidence,
+            )
+        return self._pass(
+            "control_contract",
+            "Workers load the immutable highest-priority control contract before execution",
+            f"Validated immutable contract and {len(selected_agents)} provider-neutral control slices",
+            evidence,
+        )
+
     def check_context_pack(self) -> AuditItem:
         evidence = self._existing(["context-pack.json", "context-selection.json", "routing.json", "state.json"])
         required = self._agent_recommendations_required() or bool(self.routing.get("context_pack") or self.state.get("context_pack") or self.context_pack)
@@ -1409,8 +1848,8 @@ class TaskAudit:
         if failed:
             return self._fail("dispatch_receipts", "Dispatch receipts satisfy the required gates", "; ".join(failed), evidence)
         if manual_mode:
-            return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is manual_result_attested or dispatch_completed for selected agents", evidence)
-        return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is dispatch_completed for selected agents and runtime submission proof exists", evidence)
+            return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is manual_result_attested or dispatch_completed for Leader-declared Agents", evidence)
+        return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is dispatch_completed for Leader-declared Agents and runtime submission proof exists", evidence)
 
     def check_submission_dependencies(self) -> AuditItem:
         evidence = self._existing(["submission-dependencies.json", "dispatch-receipts.jsonl", "routing.json", "state.json"])
@@ -1452,6 +1891,7 @@ class TaskAudit:
                 self.task_dir,
                 self.evidence_status,
                 manual_mode=runtime.get("class") == "manual",
+                correction_cycle=self.correction_cycle,
             )
         if errors:
             return self._fail(

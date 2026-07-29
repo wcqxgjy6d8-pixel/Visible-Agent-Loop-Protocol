@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Continuation Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "event_sequence", "event", "task_id",
+    "suspension_id", "suspension_epoch", "wake_id", "wake_event_id",
+    "continuation_generation", "idempotency_key", "envelope_digest",
+    "payload_digest", "control_contract_digest", "target", "channel",
+    "event_id"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-continuation-event.v1"},
+    "event_sequence": {"type": "integer", "minimum": 1},
+    "event": {"enum": ["resume_pending", "resume_received", "digest_verified", "resume_accepted", "continuation_started", "resume_consumed", "continuation_rejected", "continuation_failed", "continuation_superseded"]},
+    "task_id": {"type": "string", "minLength": 1},
+    "suspension_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "suspension_epoch": {"type": "integer", "minimum": 1},
+    "wake_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "wake_event_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "continuation_generation": {"type": "integer", "minimum": 1},
+    "idempotency_key": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "envelope_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "payload_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "control_contract_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "target": {"type": "object"},
+    "channel": {"const": "runtime_control"},
+    "event_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "reason": {"type": "string", "minLength": 1},
+    "replacement_generation": {"type": "integer", "minimum": 2},
+    "invocation_id": {"type": "string", "minLength": 1},
+    "invocation_receipt_ref": {"type": "string", "minLength": 1},
+    "invocation_receipt_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"event": {"enum": ["continuation_started", "resume_consumed"]}}},
+      "then": {"required": ["invocation_id", "invocation_receipt_ref", "invocation_receipt_digest"]}
+    },
+    {
+      "if": {"properties": {"event": {"enum": ["continuation_rejected", "continuation_failed", "continuation_superseded"]}}},
+      "then": {"required": ["reason"]}
+    }
+  ]
+}

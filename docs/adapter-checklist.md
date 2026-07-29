@@ -53,7 +53,7 @@ evidence.
 
 ## 4. Expected Evidence
 
-For each selected agent, record:
+For each Leader-declared Agent, record:
 
 - exact expected evidence paths;
 - who owns each path;
@@ -99,7 +99,7 @@ does not override VALP approval gates.
 
 ## 7. Recommendation Resolution
 
-If selected workers return recommendations:
+If Leader-declared workers return recommendations:
 
 - collect them in task-local evidence;
 - record whether each meaningful recommendation was adopted, merged, bounded,
@@ -113,8 +113,10 @@ Before claiming compatibility, run a small task through this sequence:
 
 ```text
 publish task
-scan capabilities
-route selected agents
+refresh capability passports
+record the user-selected Leader
+Leader writes assignment declaration
+validate declared assignments
 write concise dispatch
 submit through runtime
 record dispatch_submitted proof

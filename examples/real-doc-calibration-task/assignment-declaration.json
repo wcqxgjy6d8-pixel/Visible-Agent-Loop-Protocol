@@ -1,0 +1,17 @@
+{
+  "schema_version": "valp-assignment-declaration.v1",
+  "declaration_id": "decl-REAL-DOC-CALIBRATION-2026-07-06-1",
+  "task_id": "REAL-DOC-CALIBRATION-2026-07-06",
+  "declared_at": "2026-07-23T10:00:00Z",
+  "leader": {
+    "agent_id": "documentation-leader",
+    "selected_by": "user",
+    "selection_ref": "example:user-selected-documentation-leader"
+  },
+  "assignments": {
+    "documentation_calibrator": "codex"
+  },
+  "reasons": {
+    "documentation_calibrator": "Leader-declared documentation assignment."
+  }
+}

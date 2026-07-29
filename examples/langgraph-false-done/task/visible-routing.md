@@ -7,10 +7,10 @@ Design contract: missing
 
 ## Attention Heads
 
-- state_gate: langgraph_coordinator (score 0.8, selected)
+- state_gate: langgraph_coordinator (score 0.8, user_selected_leader)
 - implementation: langgraph_worker (score 0.78, selected)
 - ux_review: langgraph_reviewer (score 0.8, selected)
-- prototype: none (score n/a, not_selected)
+- prototype: none (score n/a, not_declared)
 
 ## Selected Context
 
@@ -39,5 +39,5 @@ Design contract: missing
 ## Evidence Board
 
 - routing decision is visible: recorded
-- selected agents have visible dispatches: needs_dispatch_completion
+- Leader-declared Agents have visible dispatches: needs_dispatch_completion
 - runtime or build success: not_yet_claimed

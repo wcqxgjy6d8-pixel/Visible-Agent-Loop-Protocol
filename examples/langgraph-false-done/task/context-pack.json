@@ -53,8 +53,9 @@
   "items": [
     {
       "section": "project",
-      "summary": "Load the active task and project operating rules from selected task-local refs; do not rely on hidden chat context.",
+      "summary": "Load and validate the immutable highest-runtime-control contract first, then load the active task and project rules; block on missing or mismatched control evidence.",
       "evidence_refs": [
+        "control-contract.json",
         "task.md"
       ],
       "recipient_agents": [

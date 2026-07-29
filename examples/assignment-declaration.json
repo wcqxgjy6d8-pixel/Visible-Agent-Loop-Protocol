@@ -1,0 +1,19 @@
+{
+  "schema_version": "valp-assignment-declaration.v1",
+  "declaration_id": "decl-TASK-001-1",
+  "task_id": "TASK-001",
+  "declared_at": "2026-07-23T10:00:00Z",
+  "leader": {
+    "agent_id": "leader-surface",
+    "selected_by": "user",
+    "selection_ref": "user-message:leader-selection"
+  },
+  "assignments": {
+    "implementer": "build-agent",
+    "reviewer": "review-agent"
+  },
+  "reasons": {
+    "implementer": "The Leader assigned implementation after reviewing current capability passports.",
+    "reviewer": "The Leader assigned independent review after reviewing current capability passports."
+  }
+}

@@ -34,19 +34,22 @@ user task or runtime signal
   -> write automation-policy.json
   -> publish VALP task when policy allows
   -> record trigger-policy.json
-  -> scan runtime, tools, skills, and context
-  -> run skill recommendation when available
-  -> build context-pack.json
-  -> write visible routing and dispatches
+  -> refresh Doctor capability passports when allowed
+  -> stop until the user has selected a Leader
+  -> wait for the Leader's assignment-declaration.json
+  -> validate the declaration against runtime, model, tools, skills, and context
+  -> write context-pack.json and visible dispatches only after validation passes
   -> execute only within approval boundaries
   -> verify, review, and record final report
   -> write routing-feedback.json and learning-feedback.json
   -> audit the task evidence
 ```
 
-The task may proceed automatically only as far as the evidence and approval
-gates allow. If the trigger policy chooses `publish_only` or
-`block_for_approval`, the runtime must stop there.
+The default action is `publish_only`. Auto Visible Mode cannot select the
+Leader, author the Leader's declaration, or substitute another Agent when
+validation blocks. After a valid declaration exists, the task may proceed
+automatically only as far as evidence and approval gates allow. If the trigger
+policy chooses `publish_only` or `block_for_approval`, the runtime stops there.
 
 `trigger-policy.json` explains why the task entered VALP. `automation-policy.json`
 explains how far it may proceed automatically and which stop conditions apply.
@@ -69,7 +72,7 @@ Minimum fields:
   "matched_signal": "task mentions VALP multi-agent visible collaboration",
   "rule_ref": "AGENTS.md#valp",
   "risk_classification": "low",
-  "selected_action": "publish_route_and_dispatch",
+  "selected_action": "publish_only",
   "approval_required": false,
   "visible_refs": {
     "task": ".herdr-loop/tasks/TASK-001/task.md",
@@ -108,8 +111,9 @@ privacy
 external_private_data
 ```
 
-A runtime may still publish and route the task, but it must stop before the
-high-risk action and record `block_for_approval`.
+A runtime may still publish the task and refresh non-mutating capability facts,
+but it must stop before Leader assignment, routing, or the high-risk action and
+record `block_for_approval`.
 
 ## Final Report
 
@@ -120,7 +124,9 @@ task id
 trigger mode and matched rule
 risk classification and approval status
 unexecuted high-risk scope when `block_for_approval` is selected
-selected agents and why they were selected
+user-selected Leader and selection reference
+Leader-declared Agents and assignment reasons
+VALP assignment validation result
 skill recommendations used or skipped
 dispatch receipt status
 expected evidence paths
@@ -138,6 +144,9 @@ did, which agents participated, and what evidence proves the result.
 
 Auto Visible Mode does not:
 
+- select the Leader or any task Agent;
+- author or rewrite `assignment-declaration.json`;
+- replace an Agent whose declaration is blocked;
 - run hidden agent votes;
 - bypass approval gates;
 - treat inserted text as delivery;

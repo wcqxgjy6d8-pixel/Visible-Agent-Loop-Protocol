@@ -54,10 +54,11 @@ except ImportError as exc:
 
 root = Path(".")
 suspension_schema = json.loads((root / "schemas" / "suspension.schema.json").read_text(encoding="utf-8"))
-schema_registry = Registry().with_resource(
-    suspension_schema["$id"],
-    Resource.from_contents(suspension_schema),
-)
+continuation_capability_schema = json.loads((root / "schemas" / "continuation-capability.schema.json").read_text(encoding="utf-8"))
+schema_registry = Registry().with_resources([
+    (suspension_schema["$id"], Resource.from_contents(suspension_schema)),
+    (continuation_capability_schema["$id"], Resource.from_contents(continuation_capability_schema)),
+])
 
 def validator_for(schema_name):
     schema = json.loads((root / "schemas" / schema_name).read_text(encoding="utf-8"))
@@ -65,8 +66,12 @@ def validator_for(schema_name):
 
 schema_by_name = {
     "attention-map.json": "attention-map.schema.json",
+    "assignment-declaration.json": "assignment-declaration.schema.json",
+    "assignment-validation.json": "assignment-validation.schema.json",
     "automation-policy.json": "automation-policy.schema.json",
     "agent-recommendations.json": "agent-recommendations.schema.json",
+    "capabilities.json": "capabilities.schema.json",
+    "capability-passport.json": "capability-passport.schema.json",
     "context-pack.json": "context-pack.schema.json",
     "context-selection.json": "context-selection.schema.json",
     "correction-cycle.json": "correction-cycle.schema.json",
@@ -89,6 +94,10 @@ schema_by_name = {
     "trigger-policy.json": "trigger-policy.schema.json",
     "wait-policy.json": "wait-policy.schema.json",
     "wake-result.json": "wake-result.schema.json",
+    "continuation-envelope.json": "continuation-envelope.schema.json",
+    "continuation-capability.json": "continuation-capability.schema.json",
+    "continuation-event.json": "continuation-event.schema.json",
+    "continuation-invocation-receipt.json": "continuation-invocation-receipt.schema.json",
 }
 validators = {
     schema_name: validator_for(schema_name)
@@ -134,7 +143,7 @@ if errors:
 PY
 
 echo "==> Running unit tests"
-"$PYTHON_BIN" -m unittest tests/test_adapter_starter.py tests/test_catalog.py tests/test_control_plane.py tests/test_github_workflow.py tests/test_langgraph_adapter.py tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py tests/test_schema_examples.py
+"$PYTHON_BIN" -m unittest tests/test_adapter_starter.py tests/test_catalog.py tests/test_continuation.py tests/test_control_plane.py tests/test_github_workflow.py tests/test_herdr_adapter.py tests/test_langgraph_adapter.py tests/test_readme_claims.py tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py tests/test_schema_examples.py
 
 echo "==> Running v0.3 draft core conformance"
 "$PYTHON_BIN" -m valp_cli conformance --profile core-writer

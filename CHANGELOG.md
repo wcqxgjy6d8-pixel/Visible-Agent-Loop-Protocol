@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Redesigns Doctor and routing authority: Doctor commissions per-surface/session
+  capability passports, the user selects the Leader, the Leader declares task
+  assignments, and VALP validates without choosing or replacing Agents.
+- Changes `valp publish` to task creation only and requires
+  `valp route --assignments <declaration>` before routing/dispatch artifacts are
+  generated.
 - Adds a public Pages explainer, `docs/when-agent-done-is-not-done.md`, for the
   shortest PASS -> FAIL -> PASS audit demo.
 - Adds a terminal-style hero demo asset to show PASS -> FAIL -> PASS before a
@@ -55,6 +61,9 @@
   support.
 
 ## 0.2.0-draft
+
+The entries in this section describe the historical pre-Leader-declaration
+behavior and are retained as release history, not as current routing authority.
 
 - Adds local coordinator commands: `valp publish`, `valp scan`, `valp route`,
   and `valp dispatch`.

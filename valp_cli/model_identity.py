@@ -159,6 +159,7 @@ def model_identity_for(
     }
     declared_id = declared["model_id"]
     observed_id = observed["model_id"]
+    declared_known = declared_id != UNKNOWN_MODEL
     mismatch_fields: list[str] = []
     if declared_id != UNKNOWN_MODEL and observed_id != UNKNOWN_MODEL and declared_id != observed_id:
         mismatch_fields.append("model_id")
@@ -174,7 +175,11 @@ def model_identity_for(
         and declared["reasoning_mode"] != observed["reasoning_mode"]
     ):
         mismatch_fields.append("reasoning_mode")
-    if declared_id == UNKNOWN_MODEL or observed_id == UNKNOWN_MODEL:
+    if not declared_known and observed_id != UNKNOWN_MODEL:
+        mismatch_status = "not_applicable"
+        mismatch_handling = "preserve"
+        mismatch_details = "No model was declared; the current runtime observation is authoritative."
+    elif declared_id == UNKNOWN_MODEL or observed_id == UNKNOWN_MODEL:
         mismatch_status = "unknown"
         mismatch_handling = "downgrade"
         mismatch_details = "Declared or observed model identity is unknown."
@@ -200,9 +205,12 @@ def model_identity_for(
     elif (
         observed["confidence"] != "high"
         or observed["freshness"] != "current"
-        or declared["confidence"] != "high"
         or probe_status != "observed"
         or not session_known
+        or (
+            declared_known
+            and (declared["confidence"] != "high" or mismatch_status != "match")
+        )
     ):
         evidence_status = "degraded"
         history_status = "invalidated" if runtime_probe is not None and not session_known else "downgraded"
@@ -242,9 +250,11 @@ def model_identity_for(
         history_status = "invalidated"
 
     high_risk_eligible = (
-        probe_status == "observed"
+        evidence_status == "strong"
+        and probe_status == "observed"
         and observed_id != UNKNOWN_MODEL
         and observed["freshness"] == "current"
+        and mismatch_status in {"match", "not_applicable"}
         and session_known
     )
     role_status = "eligible" if high_risk_eligible else "blocked"
@@ -421,9 +431,11 @@ def model_aware_provider_errors(matrix: dict[str, Any]) -> list[str]:
             expected_role_status = (
                 "eligible"
                 if (
-                    probe_status == "observed"
+                    status == "strong"
+                    and probe_status == "observed"
                     and observed.get("model_id") not in {None, "", UNKNOWN_MODEL}
                     and observed.get("freshness") == "current"
+                    and (identity.get("mismatch") or {}).get("status") in {"match", "not_applicable"}
                     and session.get("status") == "known"
                     and session.get("token") not in {None, "", UNKNOWN_MODEL}
                 )
@@ -439,7 +451,7 @@ def model_aware_provider_errors(matrix: dict[str, Any]) -> list[str]:
             observed.get("model_id") == UNKNOWN_MODEL
             or observed.get("confidence") != "high"
             or observed.get("freshness") != "current"
-            or (identity.get("mismatch") or {}).get("status") != "match"
+            or (identity.get("mismatch") or {}).get("status") not in {"match", "not_applicable"}
             or (dynamic_required and probe_status != "observed")
             or (dynamic_required and session.get("status") != "known")
             or (dynamic_required and session.get("token") in {None, "", UNKNOWN_MODEL})

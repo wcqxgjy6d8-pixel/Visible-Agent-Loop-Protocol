@@ -74,7 +74,7 @@ useful parts of worker output.
 
 VALP catch:
 
-- Selected-agent recommendations must be resolved in
+- Recommendations from Leader-declared Agents must be resolved in
   `agent-recommendations.json`.
 - The coordinator controls scope: adoption means explicit disposition, not
   unlimited expansion.

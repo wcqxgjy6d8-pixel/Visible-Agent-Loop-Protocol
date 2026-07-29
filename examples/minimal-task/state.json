@@ -17,6 +17,21 @@
   "selected_agents": [
     "manual-reviewer"
   ],
+  "role_assignments": {
+    "reviewer": "manual-reviewer"
+  },
+  "assignment_authority": "leader_declared",
+  "assignment_declaration": {
+    "status": "recorded",
+    "ref": "assignment-declaration.json",
+    "leader_agent": "manual-leader",
+    "selected_by": "user",
+    "selection_ref": "example:user-selected-manual-leader"
+  },
+  "assignment_validation": {
+    "status": "pass",
+    "ref": "assignment-validation.json"
+  },
   "context_policies": {
     "manual-reviewer": {
       "soft_warning_pct": 60,

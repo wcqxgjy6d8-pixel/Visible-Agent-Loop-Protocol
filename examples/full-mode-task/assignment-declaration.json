@@ -1,0 +1,19 @@
+{
+  "schema_version": "valp-assignment-declaration.v1",
+  "declaration_id": "decl-TASK-EXAMPLE-001-1",
+  "task_id": "TASK-EXAMPLE-001",
+  "declared_at": "2026-07-23T10:00:00Z",
+  "leader": {
+    "agent_id": "leader-surface",
+    "selected_by": "user",
+    "selection_ref": "example:user-selected-leader-surface"
+  },
+  "assignments": {
+    "implementer": "codex",
+    "reviewer": "claude"
+  },
+  "reasons": {
+    "implementer": "Leader-declared implementation assignment.",
+    "reviewer": "Leader-declared independent review assignment."
+  }
+}

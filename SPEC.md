@@ -1,6 +1,10 @@
 # Visible Agent Loop Protocol Specification
 
-Version: 0.2.0-draft
+Version: 0.3.0-draft
+
+Status: normative documentation target. The stable public release remains
+`0.2.0`; the layered architecture in Section 21 is not an implementation or
+runtime-conformance claim.
 
 ## 1. Purpose
 
@@ -1408,16 +1412,24 @@ Rules:
 
 - `dispatch_written` means the dispatch file exists and was surfaced.
 - `dispatch_inserted` means text entered an input box. It is not delivery.
-- `dispatch_submitted` means submission was attempted and proven by runtime
-state or equivalent proof.
-- `dispatch_completed` means expected evidence exists.
-- `dispatch_blocked` means submission or completion could not be proven.
+- `dispatch_submitted` means a Full or Remote Adapter proved both causal
+  invocation and acknowledgement of the exact submitted payload. A transport
+  observation alone is not submission.
+- `dispatch_completed` means a prior valid submission, a process-bound terminal
+  observation, and content-bound expected evidence all exist for the same
+  Attempt.
+- `dispatch_blocked` means submission or completion could not be proven; it
+  MUST NOT claim an external runtime stopped unless matching runtime proof
+  exists.
 - `manual_result_attested` means a human coordinator attests that expected
-  evidence exists in a Manual Mode task.
+  evidence exists in a Manual Mode task. The attestation is identity-, scope-,
+  revision-, and digest-bound and is never runtime proof.
 
 Legacy receipts identify an agent-level event and remain readable for existing
-tasks. A deterministic receipt uses `valp-dispatch-receipt.v2` and MUST also
-record:
+tasks. Protocol `0.2` deterministic receipts use
+`valp-dispatch-receipt.v2`. Protocol `0.3` writers use
+`valp-dispatch-receipt.v3`, preserve the fields below, and additionally bind an
+Attempt ID, mode, payload digest, and the proof records required by Section 21:
 
 ```text
 receipt_id
@@ -1426,6 +1438,7 @@ event_sequence
 agent
 role
 work_item_id
+attempt_id
 dispatch_id
 dispatch_generation
 expected_refs
@@ -1438,12 +1451,15 @@ repaired from agent name, timestamp, file presence, or coordinator intent.
 If expected evidence is declared, gates require `dispatch_completed`.
 
 For Full Mode and Remote Mode, `dispatch_completed` is not valid by itself. The
-receipt ledger must also contain a prior `dispatch_submitted` receipt for that
-Leader-declared Agent with concrete runtime submission proof, such as a runtime
-submission id, queue id, hosted run id, pane/session submission proof, or
-equivalent adapter proof. A dry-run command, local sub-agent result,
-simulation, manually fabricated completion receipt, or copied review file cannot
-be upgraded into Full Mode completion.
+receipt ledger MUST contain a prior `dispatch_submitted` receipt for the same
+Task, Work Item, Attempt, dispatch ID, and generation. Submission requires a
+process-bound invocation proof and a content-bound payload acknowledgement.
+Completion additionally requires process-bound terminal observation and
+content-bound expected evidence. Remote Mode carries the remote proof issuer,
+host identity, observation sequence, and evidence location. A dry-run command,
+terminal insertion, local sub-agent result, simulation, manual attestation,
+manually fabricated completion receipt, or copied review file cannot be
+upgraded into Full or Remote completion.
 
 A concrete proof identity or ref MUST be a non-empty adapter-issued string,
 either directly or inside a typed structured adapter record. Boolean flags,
@@ -2251,24 +2267,39 @@ everyone and finishes alone."
 
 ## 17. Schema And Protocol Versioning
 
-The protocol version and JSON schema versions are related but independent.
+The protocol, blueprint/RFC, Reference System, schema, and Adapter ABI versions
+are related but evolve independently.
 
 Protocol version describes the human-readable VALP contract: lifecycle,
 receipts, adapter duties, evidence gates, approval gates, and Done Criteria.
 Schema version describes one machine-readable artifact shape, such as routing,
 state, receipts, or visible attention evidence.
 
-Rules:
+The Protocol `0.3` compatibility target is:
 
-- A schema version may remain `v1` while the protocol draft moves from
-  `0.1.0-draft` to `0.2.0-draft`, as long as that artifact shape stays
-  backward-compatible.
-- Additive fields should be accepted by older readers when possible.
-- Readers should preserve or ignore unknown fields instead of failing, unless
-  the unknown field changes a safety gate.
-- Breaking artifact changes require a new schema version.
-- A task folder should record the schema version for each machine-readable
-  artifact it writes.
+| Surface | Accepted line | Compatibility rule |
+|---|---|---|
+| Blueprint | `RFC-0001/1.x` | `1.0` defines Protocol `0.3`; editorial clarifications may increment the RFC minor version without changing protocol semantics |
+| Protocol | `>=0.3.0,<0.4.0` | Reference System `0.3.x` reads and writes this line |
+| Legacy protocol input | `0.2.0-draft` | Reference System `0.3.x` may read it only through a declared compatibility and migration path; it never writes new `0.2` task state |
+| State schema | read `valp-visible-loop-state.v1`, `.v2`, and `.v3`; write `.v3` | migration creates a new projection and preserves original bytes |
+| Receipt schema | read legacy, `valp-dispatch-receipt.v2`, and `.v3`; write `.v3` | new Attempt and proof semantics require v3 or digest-bound reconciliation evidence |
+| New core schemas | `v1` | Task, State, Work Item, Attempt, Event, Result, Proof, Evidence Descriptor, Dimension Policy Evidence, Dimension Gate Result, Dependency Edge, Manual Attestation, Cancellation Event, and Claim Result begin at v1 |
+| Reference System | `>=0.3.0,<0.4.0` | writes Protocol `0.3` artifacts only |
+| Adapter ABI | `>=1.0,<2.0` | minor additions are capability-negotiated; a major mismatch blocks |
+
+Every System and Adapter handshake MUST publish exact `protocol_read`,
+`protocol_write`, `schema_read`, `schema_write`, and `adapter_abi` ranges. A
+writer emits one exact schema version and MUST NOT rewrite an append-only ledger
+in place.
+
+Unknown optional fields MAY be preserved by a compatible reader. An unknown
+required field, closed enum value, authority rule, proof requirement, receipt
+meaning, or Done condition is safety-relevant and MUST fail with
+`VALP-E-MIGRATION-UNSUPPORTED`. A readable legacy receipt cannot satisfy a new
+Attempt, proof-kind, cancellation, or partial-result gate merely because it can
+be parsed; it requires content-digest-bound reconciliation that preserves the
+original receipt.
 
 ## 18. Evidence Store
 
@@ -2418,3 +2449,239 @@ The reference CLI command `valp audit` maps these bullets into executable audit
 items. The CLI is not required by the protocol, but it is the reference quality
 gate for checking whether a recorded task evidence folder satisfies the Done
 Criteria.
+
+## 21. Layered Architecture And Kernel Boundary
+
+This section defines the normative Protocol `0.3` architecture target. It
+preserves the authority, receipt, evidence, review, approval, and audit gates in
+Sections 1-20 while assigning each behavior to one owning layer. Documentation
+of the target does not prove that a schema, reducer, Adapter, runtime, or
+platform implements it.
+
+### 21.1 Five layers
+
+VALP has exactly five top-level layers:
+
+```text
+00 Human Intent And Authority Boundary
+01 Reference System
+02 Protocol Kernel
+03 Adapter Boundary
+04 External Runtime And Ecosystem
+```
+
+Layer 00 has separate Intent and Authority lanes. Intent owns the goal,
+non-goals, scope, acceptance criteria, declared evidence expectations, and
+explicit interruption or redirection. Authority owns explicit Installation
+Leader selection, high-risk approvals, privacy and export boundaries, explicit
+scope expansion, and governed Leader replacement. The System MAY record and
+validate those decisions but MUST NOT take ownership of them. Authority MUST
+NOT be inferred from focus, product name, pane label, current directory,
+window position, or private reasoning.
+
+The first installation records an explicit user-selected Leader principal,
+session binding, and epoch. Daily reopen or recovery SHOULD reuse a still-valid
+binding without repeating selection. Convenience MUST NOT bypass identity or
+epoch proof. Mandatory approval gates remain bound to the exact action,
+identity, digest, and policy version. Bounded authorization leases are deferred
+and MUST NOT replace a required approval.
+
+Layer 01, the Reference System, is the second of the five layers, following
+Layer 00. It owns effects and operation through five subdomains:
+
+- Control: Doctor, capability passports, intake, Leader lifecycle, scans,
+  assignment validation, and visible routing advice.
+- Execution: Work Item creation, dependency frontiers, dispatch, bounded retry,
+  wait/wake, cancellation, interruption, and redirection.
+- State: append-only ledgers, locks, sequence allocation, revision CAS,
+  projection, replay, handoff, restart recovery, and idempotency records.
+- Experience and observation: CLI, application, and API surfaces; visible
+  attention; Evidence Board; status, blockers, and four-dimensional reports.
+- Lifecycle: installation, migration, update staging, rollback, compatibility
+  negotiation, and preservation of local user state.
+
+The System MAY read files, obtain time, call runtimes, and perform approved side
+effects. Every gate-bearing state change MUST be proposed to the Kernel as an
+Event plus Evidence and accepted as a Result before the System presents it as
+protocol truth.
+
+Layer 02, the Protocol Kernel, owns truth conditions. Layer 03 translates
+replaceable runtimes into typed observations and proof. Layer 04 contains the
+replaceable Agents, models, Providers, tools, skills, repositories, runtimes,
+platforms, and operating contexts. HERDR is one reference Adapter and is not
+the protocol kernel.
+
+### 21.2 Pure Kernel and canonical Result
+
+The normative Kernel model is:
+
+```text
+reduce(State, Event, EvidenceSet) -> Result
+```
+
+Equal canonical inputs under the same protocol version MUST produce equal
+output. The Kernel MUST NOT read files, obtain wall-clock time, call a runtime,
+model, tool, or network, allocate external identity, inspect a UI, or perform a
+side effect. Time, identity, runtime status, content digests, and other
+observations enter only as typed Events and Evidence.
+
+The core entities are `Task`, `State`, `WorkItem`, `Attempt`, `Event`,
+`Evidence`, `Receipt`, `Claim`, and `Result`. Installation ID, Leader epoch,
+Task ID, Work Item ID, Attempt ID, dispatch ID and generation, suspension epoch,
+Event ID, and receipt sequence are distinct identities and MUST NOT substitute
+for one another.
+
+A Result contains exactly one mutually exclusive variant:
+
+- `accepted`: the next State plus emitted obligations and audit facts;
+- `no_op`: unchanged State, bound by ID and digest to the prior accepted Result
+  for the same canonical Event and Evidence input;
+- `rejected`: unchanged State plus a deterministic closed error code.
+
+Only `accepted` increments the State revision or emits side-effect obligations.
+An identical duplicate is `no_op`; a same-identity duplicate with different
+canonical content is `rejected` and fails closed.
+
+Task status is closed to:
+
+```text
+published routing_validation dispatching executing verifying reviewing fixing
+approval_required recording done blocked failed cancelled
+```
+
+Work Item status is closed to:
+
+```text
+pending eligible submitted running completed partial degraded blocked failed
+cancelled skipped
+```
+
+Work Item `requirement` is exactly `required`, `optional`, or `soft`. Attempt
+status is exactly `created`, `submitted`, `running`, `completed`, `failed`,
+`cancelled`, or `fenced`. Claim result is exactly `pass`, `fail`, `unknown`,
+`partial`, `degraded`, or `not_applicable`. Unknown closed-vocabulary values
+fail with `VALP-E-UNKNOWN-ENUM-VALUE`.
+
+### 21.3 Attempts, replay, and control changes
+
+Replay applies accepted Results to rebuild State. It MUST NOT call an Agent,
+LLM, tool, Adapter, or runtime. Any operation that can produce a different
+external output is a new Attempt with a new Attempt ID, even when the Work Item
+and payload are unchanged.
+
+An authorized cancellation fences the exact Task, Work Item, or Attempt
+identity and generation. Late output remains immutable evidence but cannot
+silently revive the cancelled scope. Runtime cancellation is a System or
+Adapter obligation and remains unknown until matching proof exists.
+
+Explicit user interruption suspends automatic progression without satisfying
+missing evidence. A change to goal, scope, approach, or acceptance criteria is
+an authorized Redirect with a new intent version. Work that no longer applies
+is cancelled, superseded, or moved to a scoped follow-up; it is not erased.
+Identity-bound Interrupt and Redirect machine contracts are required before
+their Stage 3 implementation. Prose alone does not authorize implementation.
+
+### 21.4 Adapter proof contract
+
+An Adapter declares support for `probe`, `submit`, `observe`, `cancel`,
+`resume`, and `prove`. Unsupported operations are explicit capability results.
+An Adapter MUST NOT invent protocol State or Done semantics.
+
+Proof kinds are closed and complementary:
+
+| Kind | Proves |
+|---|---|
+| `process_bound` | causal invocation or terminal observation bound to a process, run, thread, or job identity |
+| `content_bound` | exact payload or output digest, identity tuple, sequence, and acknowledgement |
+| `manual_attested` | a named human attests exact content and scope under declared authority |
+| `transport_only` | text, pane content, notification, or prepared data exists without causal invocation proof |
+
+Full and Remote submission require process-bound invocation plus content-bound
+payload acknowledgement. Completion additionally requires process-bound
+terminal observation and content-bound expected evidence. Remote Mode uses the
+same truth conditions and additionally binds the remote proof issuer, host,
+observation sequence, and evidence location. `transport_only` never submits.
+
+Manual Mode uses identity-, authority-, revision-, prior-receipt-, digest-,
+statement-, time-, and validity-bound attestations. Revocation is append-only;
+conflicting attestations fail closed until authorized adjudication. Manual
+attestation is never relabeled as Full or Remote runtime proof and cannot
+satisfy an independent approval or review role when role separation is
+required.
+
+Composite Adapters append provenance for every segment. Each record binds
+input and output identity, Adapter identity and ABI, proof kind, evidence refs,
+observation sequence, and failure or acknowledgement. A weak or missing
+segment limits the final claim; strong downstream proof MUST NOT hide weak
+upstream transport.
+
+### 21.5 Dependencies, dimensions, and Done
+
+Dependency kinds are closed to `hard`, `soft`, and `optional`. A hard failure
+blocks the dependent Work Item, a soft failure permits a declared degraded
+path, and an optional failure may be recorded and skipped when the frozen Done
+policy permits it.
+
+The top-level Task completion Claim MUST be `pass` before Task state becomes
+`done`. A top-level `partial`, `degraded`, `fail`, or `unknown` result never
+means Done. A required Work Item that is failed, blocked, cancelled, skipped,
+partial, degraded, or unknown blocks Done. Optional skips and degraded soft
+objectives may remain only when predeclared by the frozen Done policy and made
+visible in final synthesis.
+
+A Done policy that permits a degraded soft Work Item MUST bind that exact
+`work_item_id` to one declared dimension and at least one supported floor rule.
+Only `requirement: soft` Work Items may appear. Missing, duplicate, unknown,
+required, or optional Work Item bindings; absent dimensions; empty rule sets;
+unknown metrics; and unsupported operators fail Task validation. Relaxing Done
+policy, optionality, dependencies, or floors after failure requires an
+authorized Redirect, a new intent version, supersession or cancellation of
+invalidated work, and fresh evaluation.
+
+Quality, Experience, Cost, and Stability are independent. Quality is always a
+required dimension. A policy source is a System input, not a Kernel dependency:
+
+```text
+System reads authorized policy source
+  -> parses and canonicalizes the complete policy payload
+  -> materializes immutable Task-, intent-, dimension-, and digest-bound Evidence
+Kernel validates policy, scope, applicability, operators, and input Evidence
+  -> computes the Dimension Gate Result deterministically
+```
+
+A System- or Adapter-authored `pass` is untrusted. Missing policy payload,
+digest or scope mismatch, unsupported policy operator or version, missing rule
+input, and invalid applicability fail closed. No aggregate score replaces any
+required dimension. Faithful source canonicalization is a System audit
+obligation; an external auditor may independently canonicalize the authorized
+source and compare its canonical payload and policy digest. No raw
+`source_digest` field is defined until byte-level source identity semantics are
+specified.
+
+### 21.6 Evidence, delivery, and traceability
+
+Evidence descriptors bind content digest, safe ref, provenance, observed time,
+freshness policy, confidence, scope, fault class, review status,
+supersession, and conflict. Fault class is closed to `none`, `transient`,
+`capability`, `permission`, `configuration`, `protocol`, and `unknown`.
+Historical evidence remains immutable. Routing and learning may use accepted
+evidence as a prior but MUST still require fresh task observation.
+
+Reference System budgets independently cover context and payload, iteration,
+cost, dispatch and verification latency, deadline, ledger growth and replay,
+lock contention, durable append, and cache validity. Cache MUST NOT bypass
+authority, approval, or evidence gates.
+
+Delivery proceeds in bounded stages: canonical entities and pure reducer first;
+asynchronous recovery and Composite Adapters second; experience, interruption,
+and evidence-quality learning third; cross-platform and organizational parity
+only after matching conformance and runtime evidence. Every implementation
+change MUST preserve a visible path from RFC section to SPEC section, schema or
+closed enum, reducer behavior or Adapter obligation, positive fixture, negative
+fixture, and reliability evidence where applicable.
+
+The public decision traceability and implementation boundary are documented in
+[RFC 0002](docs/rfcs/0002-layered-architecture.md). Until the corresponding
+schemas, reducer, migrations, Adapter conformance, negative tests, independent
+review, and strict audit pass, these Protocol `0.3` semantics remain a
+normative documentation target rather than a runtime-support claim.

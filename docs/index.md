@@ -38,17 +38,28 @@ not a hosted production platform.
 
 ## Protocol 0.3 Layered Architecture
 
-The Protocol `0.3` documentation target now separates VALP into five explicit
-layers: the Human Intent And Authority Boundary, Reference System, pure Protocol
-Kernel, Adapter Boundary, and External Runtime And Ecosystem. The
+The public RFC 0002 package comprises `SPEC.md`, this documentation index, the
+project status page, and RFC 0002. It separates the Protocol `0.3` target into
+five explicit layers: the Human Intent And
+Authority Boundary, Reference System, pure Protocol Kernel, Adapter Boundary,
+and External Runtime And Ecosystem. The
 [specification](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SPEC.md#21-layered-architecture-and-kernel-boundary)
 defines the normative ownership and proof boundaries; [RFC 0002](rfcs/0002-layered-architecture.md)
 records public D01-D19 traceability and the staged implementation boundary.
 
-This is a docs/spec-only architecture slice. It does not claim that the new
-core schemas, reducer, v3 state and receipt records, migrations, Adapter
-conformance, or cross-platform runtime proofs are implemented. The stable
-public release remains `0.2.0`.
+Pure Protocol Kernel Slice 1 implements only the `published` ->
+`routing_validation` transition, with its canonical identities, closed enums,
+State and `accepted` / `no_op` / `rejected` Result contract, deterministic
+duplicate behavior, and ordered `ReplayEntry(Event, EvidenceSet, accepted
+Result)` reducer re-execution with complete canonical Result equality from a
+validated Genesis Root. The machine contract and negative tests reject bare
+State roots, impossible genesis revision/history combinations, changed replay
+inputs, non-accepted Results, and tampered Results. Authenticated Checkpoint
+Root suffix replay remains deferred to Stage 2. Slice 1 is not the complete
+Protocol Kernel or complete third-layer implementation. No broader transition
+graph, v3 receipt writes, migrations, Adapter conformance, cross-platform
+parity, or release support is claimed. The stable public release remains
+`0.2.0`.
 
 ## v0.3 Draft Implementation
 

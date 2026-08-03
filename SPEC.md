@@ -2279,12 +2279,12 @@ The Protocol `0.3` compatibility target is:
 
 | Surface | Accepted line | Compatibility rule |
 |---|---|---|
-| Blueprint | `RFC-0001/1.x` | `1.0` defines Protocol `0.3`; editorial clarifications may increment the RFC minor version without changing protocol semantics |
+| Blueprint | `Blueprint-0001/1.x` | `1.0` defines Protocol `0.3`; a Blueprint is a frozen design-source identifier, distinct from the public RFC series; editorial clarifications may increment the Blueprint minor version without changing protocol semantics |
 | Protocol | `>=0.3.0,<0.4.0` | Reference System `0.3.x` reads and writes this line |
 | Legacy protocol input | `0.2.0-draft` | Reference System `0.3.x` may read it only through a declared compatibility and migration path; it never writes new `0.2` task state |
 | State schema | read `valp-visible-loop-state.v1`, `.v2`, and `.v3`; write `.v3` | migration creates a new projection and preserves original bytes |
 | Receipt schema | read legacy, `valp-dispatch-receipt.v2`, and `.v3`; write `.v3` | new Attempt and proof semantics require v3 or digest-bound reconciliation evidence |
-| New core schemas | `v1` | Task, State, Work Item, Attempt, Event, Result, Proof, Evidence Descriptor, Dimension Policy Evidence, Dimension Gate Result, Dependency Edge, Manual Attestation, Cancellation Event, and Claim Result begin at v1 |
+| New core schemas | `v1` | Task, State, Work Item, Attempt, Event, Result, Replay Entry, Checkpoint Root, Proof, Evidence Descriptor, Dimension Policy Evidence, Dimension Gate Result, Dependency Edge, Manual Attestation, Cancellation Event, and Claim Result begin at v1 |
 | Reference System | `>=0.3.0,<0.4.0` | writes Protocol `0.3` artifacts only |
 | Adapter ABI | `>=1.0,<2.0` | minor additions are capability-negotiated; a major mismatch blocks |
 
@@ -2525,11 +2525,26 @@ model, tool, or network, allocate external identity, inspect a UI, or perform a
 side effect. Time, identity, runtime status, content digests, and other
 observations enter only as typed Events and Evidence.
 
+For the `0.3.0-draft` Kernel machine contracts, canonical JSON bytes are UTF-8
+JSON with object keys sorted lexicographically, no insignificant whitespace,
+protocol arrays kept in their declared order, set-like Evidence collections
+sorted by each Evidence canonical byte representation, non-ASCII characters
+emitted as UTF-8 rather than ASCII escapes, non-finite numbers forbidden, and
+one trailing LF byte. A digest is `sha256:` plus 64 lowercase hexadecimal
+characters over those exact bytes. The canonical empty replay prefix is:
+
+```json
+{"entries":[],"schema_version":"valp-kernel-replay-prefix.v1"}
+```
+
+including its trailing LF byte, with digest
+`sha256:fa1f226ad4960367691ffda3176c5f45a463c102a791799d33dcf2bbfa08b54d`.
+
 The core entities are `Task`, `State`, `WorkItem`, `Attempt`, `Event`,
-`Evidence`, `Receipt`, `Claim`, and `Result`. Installation ID, Leader epoch,
-Task ID, Work Item ID, Attempt ID, dispatch ID and generation, suspension epoch,
-Event ID, and receipt sequence are distinct identities and MUST NOT substitute
-for one another.
+`Evidence`, `Receipt`, `Claim`, `Result`, `ReplayEntry`, and `CheckpointRoot`.
+Installation ID, Leader epoch, Task ID, Work Item ID, Attempt ID, dispatch ID
+and generation, suspension epoch, Event ID, and receipt sequence are distinct
+identities and MUST NOT substitute for one another.
 
 A Result contains exactly one mutually exclusive variant:
 
@@ -2559,15 +2574,77 @@ cancelled skipped
 Work Item `requirement` is exactly `required`, `optional`, or `soft`. Attempt
 status is exactly `created`, `submitted`, `running`, `completed`, `failed`,
 `cancelled`, or `fenced`. Claim result is exactly `pass`, `fail`, `unknown`,
-`partial`, `degraded`, or `not_applicable`. Unknown closed-vocabulary values
-fail with `VALP-E-UNKNOWN-ENUM-VALUE`.
+`partial`, `degraded`, or `not_applicable`. The Pure Kernel error-code
+vocabulary is closed to:
+
+```text
+VALP-E-UNKNOWN-ENUM-VALUE
+VALP-E-STATE-CONFLICT
+VALP-E-IDEMPOTENCY-CONFLICT
+```
+
+Unknown closed-vocabulary values fail with `VALP-E-UNKNOWN-ENUM-VALUE`.
 
 ### 21.3 Attempts, replay, and control changes
 
-Replay applies accepted Results to rebuild State. It MUST NOT call an Agent,
-LLM, tool, Adapter, or runtime. Any operation that can produce a different
-external output is a new Attempt with a new Attempt ID, even when the Work Item
-and payload are unchanged.
+Replay consumes an ordered sequence of canonical entries:
+
+```text
+ReplayEntry(Event, EvidenceSet, accepted Result)
+replay(GenesisRoot | CheckpointRoot, ReplayEntry[]) -> Replay
+```
+
+Each `ReplayEntry` MUST preserve the exact canonical Event, canonical
+EvidenceSet, and accepted Result recorded for one accepted transition. Replay
+MUST process entries in accepted ledger order. For every entry it MUST call the
+pure `reduce(current State, Event, EvidenceSet)` function and require the
+recomputed Result to be `accepted` and its complete canonical representation to
+be byte-for-byte equal to the recorded accepted Result. The comparison includes
+the next State, identities, revisions, digests, obligations, and audit facts.
+Replay then advances to that next State. A missing input, reordered entry,
+non-accepted Result, or any canonical mismatch fails closed; replay MUST NOT
+trust a recorded Result merely because its digest is internally consistent.
+
+Replay validates recorded obligations but MUST return no obligations and MUST
+NOT submit, deliver, or otherwise re-emit them. Effect recovery is a separate
+Reference System reconciliation of accepted obligations against durable
+receipts. Replay itself MUST NOT call an Agent, LLM, tool, Adapter, runtime, or
+effect handler. The returned `Replay` envelope contains the rebuilt State, the
+ordered applied Result digests, and an exactly empty obligations collection; it
+is not a fourth `Result` variant.
+
+A replay root is legal only when it is exactly one of:
+
+- `GenesisRoot`: the canonical Task State for the applicable protocol version,
+  with valid installation, Leader epoch, and Task identities, Task status
+  `published`, revision `0`, zero accepted entries, the canonical empty-prefix
+  digest, and no prior Event or Result identity;
+- `CheckpointRoot`: a canonical, content-addressed record that binds the exact
+  State and State digest, protocol version, installation ID, Leader epoch, Task
+  ID, revision, accepted-entry count, digest of the exact accepted
+  `ReplayEntry` prefix, and the tail Event ID, Result ID, and Result digest. It
+  MUST also bind a prior Kernel-accepted checkpoint Result under the declared
+  checkpoint trust policy. That accepted Result and its supporting evidence
+  MUST be independently verifiable from an immutable ledger before suffix
+  replay begins.
+
+A bare State, opaque checkpoint reference, self-asserted digest, or cached
+projection is not a `CheckpointRoot`. An implementation without the complete
+Checkpoint Root machine contract and verification path MUST accept only a
+`GenesisRoot`.
+
+For genesis replay, State revision MUST equal the number of accepted entries in
+the validated prefix. For checkpoint replay, State revision, accepted-entry
+count, prefix digest, embedded history when present, and tail binding MUST all
+describe the same exact prefix. Every suffix entry MUST extend that prefix by
+exactly one revision and one history record with no gap, duplicate Event or
+Result identity, reordering, or identity/version/epoch change. Impossible
+combinations, including revision `0` with non-empty accepted history or a
+non-zero revision with no authenticated matching prefix, fail closed before any
+entry is applied.
+
+Any operation that can produce a different external output is a new Attempt
+with a new Attempt ID, even when the Work Item and payload are unchanged.
 
 An authorized cancellation fences the exact Task, Work Item, or Attempt
 identity and generation. Late output remains immutable evidence but cannot

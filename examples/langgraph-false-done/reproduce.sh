@@ -31,7 +31,8 @@ fi
 mkdir -p "$demo_workspace/.herdr-loop/tasks"
 cp -R "$case_dir/task" "$task_dir"
 "$repo_root/bin/valp" install init --workspace "$demo_workspace" >/dev/null
-"$repo_root/bin/valp" leader select langgraph-reproduction --workspace "$demo_workspace" >/dev/null
+"$repo_root/bin/valp" leader candidates --workspace "$demo_workspace" >/dev/null
+"$repo_root/bin/valp" leader select valp-reference-cli --workspace "$demo_workspace" >/dev/null
 python3 - "$task_dir" <<'PY'
 import json
 import shutil

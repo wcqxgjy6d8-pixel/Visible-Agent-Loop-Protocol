@@ -771,7 +771,8 @@ class LangGraphPublishedCaseTests(unittest.TestCase):
         self.assertNotIn('"$repo_root/bin/valp" audit "$case_dir/task"', script)
         self.assertIn("Expected the first task audit to fail before repair", script)
         self.assertIn('install init --workspace "$demo_workspace"', script)
-        self.assertIn('leader select langgraph-reproduction --workspace "$demo_workspace"', script)
+        self.assertIn('leader candidates --workspace "$demo_workspace"', script)
+        self.assertIn('leader select valp-reference-cli --workspace "$demo_workspace"', script)
         self.assertIn('"$task_dir/runtime/langgraph/receipts.v3.jsonl"', script)
         self.assertNotIn("written = [", script)
 

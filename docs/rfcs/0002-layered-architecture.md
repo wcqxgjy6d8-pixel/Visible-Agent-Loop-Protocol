@@ -556,21 +556,24 @@ Neither area is implementation-authorized by RFC prose alone.
 
 The Phase 1 structural Checkpoint Root contract binds State, State digest,
 identity tuple, revision, accepted-entry count, prefix digest, tail bindings,
-checkpoint Result identity, and trust-policy digest. Accepted checkpoint
-Event/Result semantics, trust-policy Evidence verification, and suffix-replay
-fixtures remain Stage 2 contracts. Until those Stage 2 requirements pass
-independent negative tests, only Genesis Root replay is
-implementation-authorized; a bare non-zero State cannot be treated as a trusted
-checkpoint.
+checkpoint Result identity, and trust-policy digest. MVP-H adds the bounded
+Stage 2 pure-Kernel path: an independently supplied canonical trust policy,
+identity-bound Evidence over the canonical checkpoint statement, exact accepted
+tail Result/State verification, and reducer-recomputed suffix replay with zero
+emitted obligations. A bare or self-asserted non-zero State remains invalid.
+This is local Layer 02 correctness evidence; it does not implement checkpoint
+storage, effect reconciliation, wait/wake, Adapter continuation, or runtime
+recovery.
 
 MVP-B implements the closed Layer 02 Task transition graph for the 13 Kernel
 truth statuses. Its typed Event contract covers the forward, fix/redispatch,
 approval, explicit blocked-to-fixing recovery, failure, and cancellation
 edges; `done`, `failed`, and `cancelled` are terminal. The first bounded Stage
 2 pure-Kernel slice adds Work Item and Attempt graphs, dependency-gated
-eligibility, identity/generation binding, and Attempt fencing. It does not
-implement receipt writes, wait/wake semantics, Adapter adoption, or checkpoint
-suffix replay.
+eligibility, identity/generation binding, and Attempt fencing. MVP-H adds
+authenticated Checkpoint Root suffix replay at the same pure-Kernel boundary.
+These slices do not implement wait/wake semantics, checkpoint persistence,
+effect recovery, or Adapter adoption.
 
 ## 19. Acceptance Criteria
 

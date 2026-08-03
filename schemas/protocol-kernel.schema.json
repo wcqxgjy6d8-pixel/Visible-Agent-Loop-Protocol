@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://valp.dev/schema/protocol-kernel.v1.json",
-  "title": "VALP Pure Protocol Kernel Slice 1 and structural CheckpointRoot",
+  "title": "VALP Pure Protocol Kernel with authenticated CheckpointRoot replay",
   "oneOf": [
     {"$ref": "#/$defs/state"},
     {"$ref": "#/$defs/event"},
@@ -9,6 +9,8 @@
     {"$ref": "#/$defs/result"},
     {"$ref": "#/$defs/genesisRoot"},
     {"$ref": "#/$defs/checkpointRoot"},
+    {"$ref": "#/$defs/checkpointTrustPolicy"},
+    {"$ref": "#/$defs/checkpointAuthentication"},
     {"$ref": "#/$defs/replayEntry"},
     {"$ref": "#/$defs/replay"}
   ],
@@ -387,7 +389,7 @@
       ]
     },
     "checkpointRoot": {
-      "description": "Phase 1 structural contract only. It does not authorize suffix replay until Stage 2 verifies checkpoint Result and trust-policy evidence.",
+      "description": "Structural checkpoint bindings. Suffix replay additionally requires an independently supplied checkpointAuthentication.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -413,6 +415,41 @@
         "tail_result_digest": {"$ref": "#/$defs/digest"},
         "checkpoint_result_id": {"$ref": "#/$defs/resultIdentity"},
         "trust_policy_digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "checkpointTrustPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "trusted_evidence_ids"],
+      "properties": {
+        "schema_version": {"const": "valp-kernel-checkpoint-trust-policy.v1"},
+        "trusted_evidence_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/evidenceIdentity"}
+        }
+      }
+    },
+    "checkpointAuthentication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "checkpoint_result",
+        "evidence_set",
+        "trust_policy"
+      ],
+      "properties": {
+        "schema_version": {"const": "valp-kernel-checkpoint-authentication.v1"},
+        "checkpoint_result": {"$ref": "#/$defs/acceptedResult"},
+        "evidence_set": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/evidence"}
+        },
+        "trust_policy": {"$ref": "#/$defs/checkpointTrustPolicy"}
       }
     },
     "replayEntry": {

@@ -12,12 +12,15 @@ from valp_cli.protocol_kernel import (
     Event,
     EventKind,
     EMPTY_REPLAY_PREFIX_DIGEST,
+    CheckpointAuthentication,
     CheckpointRoot,
+    CheckpointTrustPolicy,
     GenesisRoot,
     Identity,
     IdentityKind,
     IDEMPOTENCY_CONFLICT_ERROR,
     PROTOCOL_VERSION,
+    Replay,
     ReplayEntry,
     Result,
     ResultVariant,
@@ -33,6 +36,7 @@ from valp_cli.protocol_kernel import (
     UNKNOWN_ENUM_ERROR,
     reduce,
     replay,
+    replay_prefix_digest,
 )
 
 
@@ -449,11 +453,60 @@ class ProtocolKernelTests(unittest.TestCase):
             ),
         )
 
+    def make_authenticated_checkpoint(self):
+        initial, _ = self.make_transition()
+        sequence = (
+            EventKind.ROUTING_VALIDATION_STARTED,
+            EventKind.ROUTING_VALIDATION_PASSED,
+            EventKind.DISPATCH_ACCEPTED,
+        )
+        current = initial
+        entries = []
+        for index, kind in enumerate(sequence):
+            event = self.event_for(current, f"checkpoint-replay-{index}", kind)
+            result = reduce(current, event, ())
+            self.assertEqual(result.variant, ResultVariant.ACCEPTED)
+            entries.append(ReplayEntry(event, (), result))
+            current = result.accepted.state
+        prefix = tuple(entries[:2])
+        checkpoint_result = prefix[-1].result
+        checkpoint_state = checkpoint_result.accepted.state
+        trusted_evidence_id = Identity(IdentityKind.EVIDENCE, "checkpoint-authority-1")
+        policy = CheckpointTrustPolicy((trusted_evidence_id,))
+        root = CheckpointRoot(
+            state=checkpoint_state,
+            accepted_entry_count=len(prefix),
+            prefix_digest=replay_prefix_digest(prefix),
+            tail_event_id=checkpoint_state.accepted_events[-1].event_id,
+            tail_result_id=checkpoint_state.accepted_events[-1].result_id,
+            tail_result_digest=checkpoint_state.accepted_events[-1].result_digest,
+            checkpoint_result_id=checkpoint_result.accepted.result_id,
+            trust_policy_digest=policy.digest,
+        )
+        statement_digest = CheckpointAuthentication.statement_digest_for(
+            root, checkpoint_result, policy
+        )
+        authentication = CheckpointAuthentication(
+            checkpoint_result=checkpoint_result,
+            evidence_set=(Evidence(trusted_evidence_id, statement_digest),),
+            trust_policy=policy,
+        )
+        return initial, tuple(entries), root, authentication
+
     def test_empty_replay_prefix_digest_is_a_cross_runtime_golden(self) -> None:
         self.assertEqual(
             EMPTY_REPLAY_PREFIX_DIGEST,
             "sha256:fa1f226ad4960367691ffda3176c5f45"
             "a463c102a791799d33dcf2bbfa08b54d",
+        )
+
+    def test_authenticated_checkpoint_prefix_digest_is_a_cross_runtime_golden(self) -> None:
+        _, _, root, _ = self.make_authenticated_checkpoint()
+
+        self.assertEqual(
+            root.prefix_digest,
+            "sha256:96debe3c80c80eda97052e4277458381"
+            "f9f40db274a695bea563de1f1fd8321a",
         )
 
     def test_task_only_state_canonical_form_remains_compatible(self) -> None:
@@ -949,6 +1002,207 @@ class ProtocolKernelTests(unittest.TestCase):
         self.machine_contract_validator().validate(root.canonical())
         self.assertEqual(root.state_digest, root.state_digest)
 
+    def test_checkpoint_authentication_is_schema_valid(self) -> None:
+        _, _, _, authentication = self.make_authenticated_checkpoint()
+        validator = self.machine_contract_validator()
+
+        validator.validate(authentication.trust_policy.canonical())
+        validator.validate(authentication.canonical())
+
+    def test_checkpoint_authentication_rejects_duplicate_evidence_identities(self) -> None:
+        _, _, _, authentication = self.make_authenticated_checkpoint()
+        evidence = authentication.evidence_set[0]
+
+        with self.assertRaisesRegex(ValueError, "unique Evidence identities"):
+            CheckpointAuthentication(
+                checkpoint_result=authentication.checkpoint_result,
+                evidence_set=(evidence, evidence),
+                trust_policy=authentication.trust_policy,
+            )
+
+    def test_checkpoint_trust_policy_is_nonempty_unique_and_canonical(self) -> None:
+        first = Identity(IdentityKind.EVIDENCE, "checkpoint-authority-a")
+        second = Identity(IdentityKind.EVIDENCE, "checkpoint-authority-b")
+
+        self.assertEqual(
+            CheckpointTrustPolicy((second, first)).digest,
+            CheckpointTrustPolicy((first, second)).digest,
+        )
+        for identities in (
+            (),
+            (first, first),
+            (Identity(IdentityKind.TASK, "not-evidence"),),
+        ):
+            with self.subTest(identities=identities):
+                with self.assertRaises(ValueError):
+                    CheckpointTrustPolicy(identities)
+
+    def test_authenticated_checkpoint_suffix_matches_full_genesis_replay(self) -> None:
+        initial, entries, root, authentication = self.make_authenticated_checkpoint()
+
+        full = replay(GenesisRoot(initial), tuple(entries))
+        suffix = replay(root, tuple(entries[2:]), authentication)
+
+        self.assertEqual(suffix.state, full.state)
+        self.assertEqual(
+            suffix.applied_result_digests,
+            (entries[2].result.accepted.result_digest,),
+        )
+        self.assertEqual(suffix.obligations, ())
+
+    def test_invalid_checkpoint_authentication_fails_before_reading_suffix(self) -> None:
+        _, _, root, authentication = self.make_authenticated_checkpoint()
+        trusted_id = authentication.trust_policy.trusted_evidence_ids[0]
+        other_id = Identity(IdentityKind.EVIDENCE, "checkpoint-authority-other")
+        other_policy = CheckpointTrustPolicy((other_id,))
+        cases = (
+            None,
+            replace(authentication, trust_policy=other_policy),
+            replace(authentication, evidence_set=()),
+            replace(
+                authentication,
+                evidence_set=authentication.evidence_set
+                + (Evidence(other_id, authentication.evidence_set[0].content_digest),),
+            ),
+            replace(
+                authentication,
+                evidence_set=(Evidence(trusted_id, "sha256:" + "0" * 64),),
+            ),
+            replace(
+                authentication,
+                evidence_set=(
+                    Evidence(
+                        Identity(IdentityKind.TASK, trusted_id.value),
+                        authentication.evidence_set[0].content_digest,
+                    ),
+                ),
+            ),
+        )
+
+        def unread_suffix():
+            raise AssertionError("invalid authentication read a suffix entry")
+            yield
+
+        for case in cases:
+            with self.subTest(authentication=case):
+                with self.assertRaisesRegex(ValueError, "authentication is invalid"):
+                    replay(root, unread_suffix(), case)
+
+    def test_checkpoint_result_and_root_binding_mismatches_fail_closed(self) -> None:
+        _, entries, root, authentication = self.make_authenticated_checkpoint()
+        accepted = authentication.checkpoint_result.accepted
+        wrong_result_id = Identity(IdentityKind.RESULT, "wrong-checkpoint-result")
+        cases = (
+            (
+                root,
+                replace(
+                    authentication,
+                    checkpoint_result=Result(accepted=replace(
+                        accepted,
+                        result_id=wrong_result_id,
+                    )),
+                ),
+            ),
+            (
+                root,
+                replace(
+                    authentication,
+                    checkpoint_result=Result(accepted=replace(
+                        accepted,
+                        result_digest="sha256:" + "0" * 64,
+                    )),
+                ),
+            ),
+            (
+                root,
+                replace(authentication, checkpoint_result=entries[0].result),
+            ),
+            (
+                replace(root, checkpoint_result_id=wrong_result_id),
+                authentication,
+            ),
+            (
+                replace(root, prefix_digest="sha256:" + "0" * 64),
+                authentication,
+            ),
+        )
+
+        def unread_suffix():
+            raise AssertionError("invalid checkpoint binding read a suffix entry")
+            yield
+
+        for changed_root, changed_authentication in cases:
+            with self.subTest(root=changed_root, authentication=changed_authentication):
+                with self.assertRaisesRegex(ValueError, "authentication is invalid"):
+                    replay(changed_root, unread_suffix(), changed_authentication)
+
+    def test_checkpoint_suffix_rejects_gaps_identity_drift_and_recorded_mismatch(self) -> None:
+        _, entries, root, authentication = self.make_authenticated_checkpoint()
+        suffix = entries[2]
+        wrong_installation = Identity(IdentityKind.INSTALLATION, "wrong-installation")
+        wrong_task = Identity(IdentityKind.TASK, "wrong-task")
+        cases = (
+            entries[1],
+            replace(suffix, event=replace(
+                suffix.event,
+                expected_revision=suffix.event.expected_revision + 1,
+            )),
+            replace(suffix, event=replace(
+                suffix.event,
+                installation_id=wrong_installation,
+            )),
+            replace(suffix, event=replace(
+                suffix.event,
+                leader_epoch=suffix.event.leader_epoch + 1,
+            )),
+            replace(suffix, event=replace(
+                suffix.event,
+                task_id=wrong_task,
+            )),
+            replace(suffix, result=Result(accepted=replace(
+                suffix.result.accepted,
+                result_digest="sha256:" + "0" * 64,
+            ))),
+            replace(suffix, result=Result(accepted=replace(
+                suffix.result.accepted,
+                obligations=("must-not-be-reemitted",),
+            ))),
+        )
+
+        for changed_suffix in cases:
+            with self.subTest(suffix=changed_suffix):
+                with self.assertRaises(ValueError):
+                    replay(root, (changed_suffix,), authentication)
+
+    def test_checkpoint_suffix_rejects_reordering_and_duplicate_identities(self) -> None:
+        _, entries, root, authentication = self.make_authenticated_checkpoint()
+        first = entries[2]
+        next_event = self.event_for(
+            first.result.accepted.state,
+            "checkpoint-replay-3",
+            EventKind.WORK_COMPLETED,
+        )
+        next_result = reduce(first.result.accepted.state, next_event, ())
+        self.assertEqual(next_result.variant, ResultVariant.ACCEPTED)
+        second = ReplayEntry(next_event, (), next_result)
+        duplicate_result = replace(
+            second,
+            result=Result(accepted=replace(
+                second.result.accepted,
+                result_id=first.result.accepted.result_id,
+            )),
+        )
+
+        cases = (
+            (second, first),
+            (first, first),
+            (first, duplicate_result),
+        )
+        for changed_suffix in cases:
+            with self.subTest(suffix=changed_suffix):
+                with self.assertRaises(ValueError):
+                    replay(root, changed_suffix, authentication)
+
     def test_checkpoint_root_rejects_count_or_tail_binding_mismatch(self) -> None:
         state, event = self.make_transition()
         accepted = reduce(state, event, ())
@@ -992,7 +1246,7 @@ class ProtocolKernelTests(unittest.TestCase):
 
         self.assertFalse(self.machine_contract_validator().is_valid(root))
 
-    def test_structural_checkpoint_root_cannot_start_replay_before_stage_2(self) -> None:
+    def test_checkpoint_root_without_authentication_is_rejected(self) -> None:
         state, event = self.make_transition()
         accepted = reduce(state, event, ())
         accepted_event = accepted.accepted.state.accepted_events[-1]
@@ -1009,6 +1263,12 @@ class ProtocolKernelTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             replay(root, ())
+
+    def test_replay_envelope_cannot_be_constructed_with_obligations(self) -> None:
+        state, _ = self.make_transition()
+
+        with self.assertRaises(ValueError):
+            Replay(state, (), ("must-not-be-reemitted",))
 
     def test_replay_recomputes_event_and_evidence_inputs(self) -> None:
         state, event = self.make_transition()

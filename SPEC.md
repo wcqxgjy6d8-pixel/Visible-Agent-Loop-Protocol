@@ -2723,7 +2723,9 @@ Replay consumes an ordered sequence of canonical entries:
 
 ```text
 ReplayEntry(Event, EvidenceSet, accepted Result)
-replay(GenesisRoot | CheckpointRoot, ReplayEntry[]) -> Replay
+CheckpointTrustPolicy(trusted Evidence identities)
+CheckpointAuthentication(accepted checkpoint Result, EvidenceSet, trust policy)
+replay(GenesisRoot | CheckpointRoot, ReplayEntry[], CheckpointAuthentication?) -> Replay
 ```
 
 Each `ReplayEntry` MUST preserve the exact canonical Event, canonical
@@ -2765,14 +2767,55 @@ projection is not a `CheckpointRoot`. An implementation without the complete
 Checkpoint Root machine contract and verification path MUST accept only a
 `GenesisRoot`.
 
-Phase 1 MAY publish a structural `CheckpointRoot` machine contract before
-suffix replay is implemented. That contract binds the State and State digest,
-identity tuple, revision, accepted-entry count, prefix digest, tail accepted
+The structural `CheckpointRoot` binds the State and State digest, identity
+tuple, revision, accepted-entry count, prefix digest, tail accepted
 Event/Result identities and Result digest, a checkpoint Result identity, and a
-trust-policy digest. Structural validation is not checkpoint authorization:
-until Stage 2 verifies the accepted checkpoint Result, trust-policy Evidence,
-immutable prefix, and suffix continuity, `replay` MUST reject a
-`CheckpointRoot` and accept only `GenesisRoot`.
+trust-policy digest. Structural validation is not checkpoint authorization. A
+`CheckpointRoot` MUST be accompanied by a `CheckpointAuthentication` supplied
+as an input independent from the untrusted root. A `GenesisRoot` MUST NOT be
+accompanied by checkpoint authentication.
+
+`CheckpointTrustPolicy` is a canonical, immutable Kernel input containing a
+non-empty, unique, canonically ordered set of trusted Evidence identities. Its
+canonical digest MUST equal the root `trust_policy_digest`. The System or
+Adapter establishes why those Evidence identities are trusted before invoking
+the Kernel; the Kernel MUST NOT infer trust from an Agent name, Provider,
+runtime, file path, timestamp, or from identities embedded only in the root.
+Changing the trusted Evidence set changes the policy digest and requires a new
+authentication input.
+
+The authenticated checkpoint Result MUST be the exact accepted Result at the
+prefix tail. It MUST be structurally valid and accepted; its canonical next
+State MUST equal the root State, its recorded `result_digest` MUST equal the
+root `tail_result_digest`, and its Result identity MUST equal both
+`checkpoint_result_id` and `tail_result_id`. The tail State history record MUST
+bind that same Result identity and digest plus the root `tail_event_id`.
+
+Checkpoint authentication signs a canonical statement with this logical form:
+
+```text
+CheckpointStatement(CheckpointRoot, accepted checkpoint Result,
+                    trust-policy digest)
+```
+
+The statement uses schema version `valp-kernel-checkpoint-statement.v1` and the
+same canonical JSON rules as other Kernel entities. Its digest is the Evidence
+`content_digest`. The authentication EvidenceSet MUST contain exactly one
+structurally valid Evidence record for every trusted Evidence identity, no
+missing or additional identity, and every record MUST carry the exact statement
+digest. Evidence collections are canonical sets; duplicate identities,
+malformed digests, a different statement digest, or a policy digest mismatch
+fail closed. This is an identity-bound digest verification contract, not a
+signature algorithm, key store, freshness clock, or runtime lookup.
+
+Before applying any suffix entry, replay MUST validate the root State and State
+digest; exact protocol version, installation ID, Leader epoch, Task ID,
+revision, accepted-entry count, prefix digest, embedded accepted history, and
+tail bindings; the accepted checkpoint Result; the independently supplied
+trust policy; and the complete authentication EvidenceSet. Missing,
+self-asserted, malformed, stale, conflicting, or digest-mismatched
+authentication fails deterministically before the first suffix Event is passed
+to `reduce`.
 
 For genesis replay, State revision MUST equal the number of accepted entries in
 the validated prefix. For checkpoint replay, State revision, accepted-entry
@@ -2783,6 +2826,14 @@ Result identity, reordering, or identity/version/epoch change. Impossible
 combinations, including revision `0` with non-empty accepted history or a
 non-zero revision with no authenticated matching prefix, fail closed before any
 entry is applied.
+
+After checkpoint authentication succeeds, suffix replay uses the root State as
+the current State and applies the same per-entry reducer re-execution and full
+canonical Result comparison as Genesis replay. The returned applied Result
+digests contain only suffix Results, in order. Accepted obligations recorded in
+the checkpoint Result or any suffix Result remain data under validation;
+`Replay.obligations` MUST be exactly empty, so replay never repeats a prior
+external effect.
 
 Any operation that can produce a different external output is a new Attempt
 with a new Attempt ID, even when the Work Item and payload are unchanged.

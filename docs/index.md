@@ -53,12 +53,15 @@ canonical identities, closed enums, State and `accepted` / `no_op` /
 `rejected` Result contract, deterministic duplicate behavior, and ordered
 `ReplayEntry(Event, EvidenceSet, accepted Result)` reducer re-execution with
 complete canonical Result equality from a validated Genesis Root. It also
-defines a structural Checkpoint Root contract
-that binds State, prefix, tail, checkpoint-Result, and trust-policy identities;
-the contract does not authorize replay. The machine contract and negative tests
-reject bare State roots, impossible genesis revision/history combinations,
-changed replay inputs, non-accepted Results, and tampered Results. Authenticated
-Checkpoint Root suffix replay remains deferred to Stage 2. The repository also
+defines a structural Checkpoint Root contract that binds State, prefix, tail,
+checkpoint-Result, and trust-policy identities. MVP-H authenticates that root
+against an independently supplied trust policy and exact EvidenceSet, then
+recomputes an ordered suffix through the same reducer while emitting zero
+obligations. The machine contract and negative tests reject bare State roots,
+impossible revision/history combinations, malformed or mismatched checkpoint
+authentication, identity drift, suffix gaps/reordering/duplicates, and tampered
+Results. This remains Layer 02 local proof, not checkpoint storage, effect
+reconciliation, wait/wake, Adapter continuation, or runtime recovery. The repository also
 implements a pure v3 receipt-write reducer and digest-bound legacy/v2 migration
 projection fixtures. A file-backed Reference System store performs cooperative
 inter-process locking, canonical-prefix replay, CAS, atomic replacement, and

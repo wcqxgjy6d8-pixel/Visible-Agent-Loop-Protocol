@@ -1,4 +1,4 @@
-"""Pure Protocol Kernel Slice 1 plus a structural CheckpointRoot contract."""
+"""Pure Protocol Kernel with authenticated CheckpointRoot suffix replay."""
 
 from __future__ import annotations
 
@@ -184,7 +184,7 @@ class Evidence:
     content_digest: str
 
     def canonical(self) -> Mapping[str, Any]:
-        value = {
+        return {
             "schema_version": "valp-kernel-evidence.v1",
             "evidence_id": self.evidence_id.canonical(),
             "content_digest": self.content_digest,
@@ -428,6 +428,12 @@ class Replay:
     applied_result_digests: Tuple[str, ...]
     obligations: Tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "applied_result_digests", tuple(self.applied_result_digests))
+        object.__setattr__(self, "obligations", tuple(self.obligations))
+        if self.obligations:
+            raise ValueError("Replay obligations must be empty")
+
     def canonical(self) -> Mapping[str, Any]:
         return {
             "schema_version": "valp-kernel-replay.v1",
@@ -460,6 +466,37 @@ EMPTY_REPLAY_PREFIX_DIGEST = _digest(
 
 
 @dataclass(frozen=True)
+class CheckpointTrustPolicy:
+    trusted_evidence_ids: Tuple[Identity, ...]
+
+    def __post_init__(self) -> None:
+        identities = tuple(self.trusted_evidence_ids)
+        if (
+            not identities
+            or not all(_has_identity_kind(item, IdentityKind.EVIDENCE) for item in identities)
+            or len(set(identities)) != len(identities)
+        ):
+            raise ValueError("CheckpointTrustPolicy requires unique Evidence identities")
+        object.__setattr__(
+            self,
+            "trusted_evidence_ids",
+            tuple(sorted(identities, key=lambda item: _canonical_json(item.canonical()))),
+        )
+
+    @property
+    def digest(self) -> str:
+        return _digest(self.canonical())
+
+    def canonical(self) -> Mapping[str, Any]:
+        return {
+            "schema_version": "valp-kernel-checkpoint-trust-policy.v1",
+            "trusted_evidence_ids": [
+                item.canonical() for item in self.trusted_evidence_ids
+            ],
+        }
+
+
+@dataclass(frozen=True)
 class GenesisRoot:
     state: State
 
@@ -473,7 +510,7 @@ class GenesisRoot:
 
 @dataclass(frozen=True)
 class CheckpointRoot:
-    """Phase 1 structural checkpoint contract; it is not replay-authorizing."""
+    """Structural bindings that require separate authentication for replay."""
 
     state: State
     accepted_entry_count: int
@@ -522,6 +559,68 @@ class ReplayEntry:
             "event": self.event.canonical(),
             "evidence_set": list(_canonical_evidence(self.evidence_set)),
             "result": self.result.canonical(),
+        }
+
+
+def replay_prefix_digest(entries: Iterable[ReplayEntry]) -> str:
+    canonical_entries = []
+    for entry in entries:
+        if not isinstance(entry, ReplayEntry) or entry.result.accepted is None:
+            raise ValueError("replay prefix requires accepted ReplayEntry records")
+        canonical_entries.append(entry.canonical())
+    return _digest(
+        {
+            "schema_version": "valp-kernel-replay-prefix.v1",
+            "entries": canonical_entries,
+        }
+    )
+
+
+@dataclass(frozen=True)
+class CheckpointAuthentication:
+    """Bind a root and accepted Result to an identity-based trust policy.
+
+    This verifies canonical digest statements, not signatures, key authority, or
+    freshness. Those trust decisions remain System or Adapter responsibilities.
+    """
+
+    checkpoint_result: Result
+    evidence_set: Tuple[Evidence, ...]
+    trust_policy: CheckpointTrustPolicy
+
+    def __post_init__(self) -> None:
+        evidence_set = tuple(self.evidence_set)
+        if len({item.evidence_id for item in evidence_set}) != len(evidence_set):
+            raise ValueError("CheckpointAuthentication requires unique Evidence identities")
+        object.__setattr__(self, "evidence_set", evidence_set)
+
+    @staticmethod
+    def statement_digest_for(
+        root: CheckpointRoot,
+        checkpoint_result: Result,
+        trust_policy: CheckpointTrustPolicy,
+    ) -> str:
+        if not isinstance(root, CheckpointRoot):
+            raise ValueError("checkpoint statement requires a CheckpointRoot")
+        if not isinstance(checkpoint_result, Result):
+            raise ValueError("checkpoint statement requires a Result")
+        if not isinstance(trust_policy, CheckpointTrustPolicy):
+            raise ValueError("checkpoint statement requires a trust policy")
+        return _digest(
+            {
+                "schema_version": "valp-kernel-checkpoint-statement.v1",
+                "checkpoint_root": root.canonical(),
+                "checkpoint_result": checkpoint_result.canonical(),
+                "trust_policy_digest": trust_policy.digest,
+            }
+        )
+
+    def canonical(self) -> Mapping[str, Any]:
+        return {
+            "schema_version": "valp-kernel-checkpoint-authentication.v1",
+            "checkpoint_result": self.checkpoint_result.canonical(),
+            "evidence_set": list(_canonical_evidence(self.evidence_set)),
+            "trust_policy": self.trust_policy.canonical(),
         }
 
 
@@ -609,6 +708,44 @@ def _checkpoint_root_is_valid(value: Any) -> bool:
         value.tail_event_id == tail.event_id
         and value.tail_result_id == tail.result_id
         and value.tail_result_digest == tail.result_digest
+    )
+
+
+def _checkpoint_authentication_is_valid(
+    root: CheckpointRoot,
+    authentication: Any,
+) -> bool:
+    if (
+        not _checkpoint_root_is_valid(root)
+        or not isinstance(authentication, CheckpointAuthentication)
+        or not isinstance(authentication.trust_policy, CheckpointTrustPolicy)
+        or authentication.trust_policy.digest != root.trust_policy_digest
+        or not isinstance(authentication.checkpoint_result, Result)
+        or authentication.checkpoint_result.accepted is None
+        or not _evidence_set_is_valid(authentication.evidence_set)
+    ):
+        return False
+    accepted = authentication.checkpoint_result.accepted
+    if (
+        accepted.state != root.state
+        or accepted.result_id != root.checkpoint_result_id
+        or accepted.result_id != root.tail_result_id
+        or accepted.result_digest != root.tail_result_digest
+    ):
+        return False
+    expected_ids = set(authentication.trust_policy.trusted_evidence_ids)
+    actual_ids = {item.evidence_id for item in authentication.evidence_set}
+    statement_digest = CheckpointAuthentication.statement_digest_for(
+        root,
+        authentication.checkpoint_result,
+        authentication.trust_policy,
+    )
+    return (
+        actual_ids == expected_ids
+        and all(
+            item.content_digest == statement_digest
+            for item in authentication.evidence_set
+        )
     )
 
 
@@ -1064,18 +1201,28 @@ def reduce(state: State, event: Event, evidence_set: Sequence[Evidence]) -> Resu
     )
 
 
-def replay(root: GenesisRoot, entries: Iterable[ReplayEntry]) -> Replay:
-    """Recompute canonical entries from a verified genesis without emitting effects."""
+def replay(
+    root: Union[GenesisRoot, CheckpointRoot],
+    entries: Iterable[ReplayEntry],
+    checkpoint_authentication: Optional[CheckpointAuthentication] = None,
+) -> Replay:
+    """Recompute canonical entries from a verified root without emitting effects."""
 
-    if not isinstance(root, GenesisRoot):
+    if isinstance(root, GenesisRoot):
+        if checkpoint_authentication is not None:
+            raise ValueError("GenesisRoot does not accept checkpoint authentication")
+        if (
+            not _state_is_valid(root.state)
+            or root.state.status != TaskStatus.PUBLISHED
+            or root.state.revision != 0
+            or root.state.accepted_events
+        ):
+            raise ValueError("GenesisRoot must be the canonical empty Task State")
+    elif isinstance(root, CheckpointRoot):
+        if not _checkpoint_authentication_is_valid(root, checkpoint_authentication):
+            raise ValueError("CheckpointRoot authentication is invalid")
+    else:
         raise ValueError("replay requires a verified replay root")
-    if (
-        not _state_is_valid(root.state)
-        or root.state.status != TaskStatus.PUBLISHED
-        or root.state.revision != 0
-        or root.state.accepted_events
-    ):
-        raise ValueError("GenesisRoot must be the canonical empty Task State")
     current = root.state
     applied = []
     for entry in entries:

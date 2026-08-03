@@ -44,9 +44,11 @@ the closed Layer 02 Task graph for all 13 truth statuses and its canonical
 identity, closed-enum, State, Result, idempotency, and rejection contracts. It
 also implements ordered `ReplayEntry` reducer re-execution, complete canonical
 Result equality, validated Genesis Root replay with negative tests, and a
-structural Checkpoint Root machine contract. The structural contract is not
-trusted checkpoint replay: authenticated Checkpoint Root suffix replay remains
-deferred to Stage 2. A separate pure reducer covers canonical v3 receipt write
+structural Checkpoint Root machine contract. MVP-H adds independently
+trust-policy-bound checkpoint authentication and deterministic suffix replay
+through the same reducer, with exact Result equality and zero emitted
+obligations. This is Layer 02 local proof, not checkpoint storage, effect
+recovery, wait/wake, or Adapter continuation. A separate pure reducer covers canonical v3 receipt write
 proposals and digest-bound legacy/v2 migration projections, with valid and
 adversarial fixtures. A file-backed Reference System store now adds cooperative
 inter-process locking, canonical-prefix replay, CAS, atomic replacement, and
@@ -111,7 +113,7 @@ platform.
 | Live HERDR dispatch E2E completion case study | Not covered in repository CI | Requires sanitized task folder plus runtime submission and final audit evidence |
 | Live zero-model-turn deterministic wake and exactly-once coordinator continuation | Not covered in repository CI | Requires a wake-ID-bound continuation invocation receipt plus restart/restore evidence from a real adapter |
 | Non-HERDR real adapter E2E | Covered for the local LangGraph API development runtime | Production hosting and deterministic coordinator auto-continuation remain open |
-| Full state-machine transition suite | Partially covered | Installation, closed Layer 02 Task transitions, and the first bounded pure-Kernel Work Item/Attempt graph slice are implemented and tested; wait/wake, checkpoint suffix replay, and Adapter adoption remain open |
+| Full state-machine transition suite | Partially covered | Installation, closed Layer 02 Task transitions, Work Item/Attempt graphs, and authenticated Checkpoint Root suffix replay are implemented and tested; wait/wake, checkpoint persistence/effect recovery, and Adapter adoption remain open |
 | Context compression runtime integration | Partially covered | Semantics are documented; live adapter enforcement is not yet covered |
 | Auto Visible watcher E2E | Not covered | Trigger policy semantics exist; watcher implementation is runtime-specific |
 | App-managed first install E2E | Not covered in repository CI | Protocol now defines doctor-first health gate; App installer implementation must prove it |

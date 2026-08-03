@@ -1448,6 +1448,16 @@ suspension_epoch for terminal events
 These fields form one safety identity. A missing or mismatched field cannot be
 repaired from agent name, timestamp, file presence, or coordinator intent.
 
+For `valp-dispatch-receipt.v3`, `mode` is closed to `full`, `remote`, and
+`manual`; `proof_kind` is closed to `process_bound`, `content_bound`,
+`manual_attested`, and `transport_only`. Every v3 receipt additionally binds
+the installation ID, Leader epoch, exact payload digest, proof ref and digest,
+ledger revision, prior receipt digest, and its own canonical receipt digest.
+The first v3 receipt binds the canonical empty receipt-ledger digest. Later
+receipts increment both ledger revision and event sequence by exactly one and
+bind the immediately preceding canonical receipt digest. Boolean values are
+not integer revisions, sequences, epochs, or generations.
+
 If expected evidence is declared, gates require `dispatch_completed`.
 
 For Full Mode and Remote Mode, `dispatch_completed` is not valid by itself. The
@@ -2505,6 +2515,14 @@ effects. Every gate-bearing state change MUST be proposed to the Kernel as an
 Event plus Evidence and accepted as a Result before the System presents it as
 protocol truth.
 
+The Reference System's task-state projection is not the Kernel `State` in
+Section 21.2. Its `status` field records operational progress such as intake,
+capability/context scans, routing, preflight, suspension, and recommendation
+resolution. Those phases describe System work and MUST NOT be substituted for
+Kernel truth conditions. The current `valp-task-state.v1` projection has 30
+closed operational values; a future projection vocabulary change requires its
+own schema version and migration path.
+
 Layer 02, the Protocol Kernel, owns truth conditions. Layer 03 translates
 replaceable runtimes into typed observations and proof. Layer 04 contains the
 replaceable Agents, models, Providers, tools, skills, repositories, runtimes,
@@ -2557,12 +2575,61 @@ Only `accepted` increments the State revision or emits side-effect obligations.
 An identical duplicate is `no_op`; a same-identity duplicate with different
 canonical content is `rejected` and fails closed.
 
-Task status is closed to:
+Kernel Task status is closed to these 13 truth values:
 
 ```text
 published routing_validation dispatching executing verifying reviewing fixing
 approval_required recording done blocked failed cancelled
 ```
+
+This Kernel vocabulary is intentionally distinct from the Layer 01 operational
+projection. In particular, `new`, capability/context scans, adapter selection,
+planning, locking, suspension, and recommendation resolution are not Kernel
+Task statuses. A System MAY display or persist those phases, but it MUST
+propose a typed Event and Evidence to change Kernel State and MUST NOT infer a
+Kernel Result from projection text alone.
+
+The following is the complete legal Layer 02 Task transition graph for this
+protocol version. Each row is an exact typed Event kind and its only legal
+source and target. An Event with a listed kind at any other source status is a
+`VALP-E-STATE-CONFLICT` and leaves State unchanged.
+
+| Event kind | Source status | Target status |
+| --- | --- | --- |
+| `routing_validation_started` | `published` | `routing_validation` |
+| `routing_validation_passed` | `routing_validation` | `dispatching` |
+| `dispatch_accepted` | `dispatching` | `executing` |
+| `work_completed` | `executing` | `verifying` |
+| `verification_passed` | `verifying` | `reviewing` |
+| `verification_failed` | `verifying` | `fixing` |
+| `review_passed` | `reviewing` | `recording` |
+| `review_rejected` | `reviewing` | `fixing` |
+| `approval_required_raised` | `reviewing` | `approval_required` |
+| `fix_dispatch_requested` | `fixing` | `dispatching` |
+| `approval_granted` | `approval_required` | `recording` |
+| `approval_denied` | `approval_required` | `fixing` |
+| `recording_completed` | `recording` | `done` |
+| `task_blocked` | `executing`, `verifying`, `reviewing`, or `fixing` | `blocked` |
+| `blocked_recovery_to_fixing` | `blocked` | `fixing` |
+| `task_failed` | any non-terminal Task status | `failed` |
+| `task_cancelled` | any non-terminal Task status | `cancelled` |
+
+`done`, `failed`, and `cancelled` are the closed terminal set and have no
+outgoing edges. `blocked` is recoverable only through the explicit typed
+`blocked_recovery_to_fixing` Event; no System projection, wake, or
+user-interface text may silently rewrite it. A fix re-enters the normal
+dispatching, executing, and verifying spine only through their separately
+named and validated Events. `approval_required` reaches `recording` only by
+the typed `approval_granted` Event; it has no direct path to `done`.
+
+The Kernel State starts only as `published` at revision `0`. For every valid
+State, `revision` MUST equal the number of `accepted_events`; revision `0` MUST
+have an empty accepted-event ledger and status `published`, while a non-zero
+revision MUST have a non-empty accepted-event ledger. The graph does not model
+Layer 01 `operationalPhase`, Work Item or Attempt transitions, receipt writes,
+or external effects. Every accepted edge remains subject to identity binding,
+expected-revision CAS, Evidence validation, canonical Result construction, and
+idempotency rules in this section.
 
 Work Item status is closed to:
 
@@ -2633,6 +2700,15 @@ projection is not a `CheckpointRoot`. An implementation without the complete
 Checkpoint Root machine contract and verification path MUST accept only a
 `GenesisRoot`.
 
+Phase 1 MAY publish a structural `CheckpointRoot` machine contract before
+suffix replay is implemented. That contract binds the State and State digest,
+identity tuple, revision, accepted-entry count, prefix digest, tail accepted
+Event/Result identities and Result digest, a checkpoint Result identity, and a
+trust-policy digest. Structural validation is not checkpoint authorization:
+until Stage 2 verifies the accepted checkpoint Result, trust-policy Evidence,
+immutable prefix, and suffix continuity, `replay` MUST reject a
+`CheckpointRoot` and accept only `GenesisRoot`.
+
 For genesis replay, State revision MUST equal the number of accepted entries in
 the validated prefix. For checkpoint replay, State revision, accepted-entry
 count, prefix digest, embedded history when present, and tail binding MUST all
@@ -2658,7 +2734,193 @@ is cancelled, superseded, or moved to a scoped follow-up; it is not erased.
 Identity-bound Interrupt and Redirect machine contracts are required before
 their Stage 3 implementation. Prose alone does not authorize implementation.
 
-### 21.4 Adapter proof contract
+### 21.4 Receipt writes and migration
+
+The Protocol receipt-write contract is pure:
+
+```text
+propose_receipt_append(ReceiptLedger, ReceiptDraft) -> ReceiptWriteResult
+```
+
+It validates canonical input and returns exactly one of `accepted`, `no_op`,
+or `rejected`. It does not read a file, allocate time or identity, obtain
+runtime proof, or append bytes. An accepted result contains the exact canonical
+`valp-dispatch-receipt.v3` record and one append obligation. The Reference
+System or Adapter performs the durable locked append and records whether that
+obligation was fulfilled.
+
+Each v3 receipt binds `receipt_id`, installation ID, Leader epoch, Task ID,
+Work Item ID, Attempt ID, dispatch ID and generation, mode, event sequence,
+ledger revision, expected evidence refs, payload digest, proof kind/ref/digest,
+prior receipt digest, and canonical receipt digest. Full and Remote receipts
+MUST use process- or content-bound proof as required by the event. Manual
+events MUST use `manual_attested`; `transport_only` can record visibility but
+never satisfies submission or completion. Every receipt carries an
+`approval_binding` whose status is either `not_required` or `granted`. The
+granted form requires the paired approval ref and digest, but their presence
+never grants approval by itself; approval cannot be inferred from another
+receipt.
+
+Canonical v3 encoding sorts `proof_bindings` by their canonical object encoding;
+input array order is not a separate proof meaning or idempotency identity.
+
+The first accepted receipt has event sequence and ledger revision `1` and
+binds the canonical empty receipt-ledger digest. Every later accepted receipt
+increments both values by exactly one and binds the prior canonical receipt
+digest. Two candidates against the same prior revision race by revision CAS;
+the first accepted candidate wins and the stale candidate is rejected. An
+identical receipt-ID duplicate is `no_op` and does not emit an append
+obligation. The same receipt ID with different canonical content is rejected
+with `VALP-E-IDEMPOTENCY-CONFLICT`. Invalid identity, sequence, digest, proof,
+or prior-ledger binding is `VALP-E-STATE-CONFLICT`. Unknown receipt schema,
+event, mode, proof kind, required safety field, authority meaning, or proof
+meaning is `VALP-E-MIGRATION-UNSUPPORTED`.
+
+Legacy and v2 receipts remain immutable read-only history. Migration MUST
+preserve their exact original bytes and source digest and create a separate v3
+projection. Each projection carries an explicit `migration_id`. A migrator may
+accept explicit reconciliation bindings for the
+missing installation, Leader epoch, Task, Work Item, Attempt, dispatch, mode,
+payload, and proof identities. It MUST NOT infer them from agent name,
+timestamp, line number, file presence, or coordinator intent. Missing,
+ambiguous, malformed, or unsupported safety semantics fail closed. Repeating
+the same source bytes and bindings is a no-op; reusing one `migration_id`
+for different source bytes or bindings is an idempotency conflict.
+
+The bounded v2 submission projection recognizes only a closed Adapter proof
+record with a concrete submission ID, literal acknowledgement, exact payload
+digest, receipt and dispatch identity tuple, event sequence, dispatch ref, and
+expected evidence refs, all equal to both the immutable source and v3 draft.
+Aliases, missing or additional proof fields, simulation or dry-run evidence,
+generic identifiers, and conflicting bindings are unsupported. v2 terminal
+receipts remain read-only until a separately versioned terminal reconciliation
+contract exists; this slice does not project them into v3 terminal proof.
+
+#### 21.4.1 Reference System durable receipt append
+
+The Reference System consumes only an `accepted` receipt-write Result whose
+single append obligation and canonical v3 receipt digest agree. Persistence is
+an effect boundary and MUST NOT be implemented inside the Protocol reducer.
+
+For a file-backed receipt ledger, one durable append transaction MUST:
+
+1. acquire an exclusive inter-process lock on a stable lock file distinct from
+   the replaceable ledger file;
+2. strictly decode every non-empty ledger line as one canonical v3 receipt and
+   validate the complete revision, sequence, identity, and prior-digest chain;
+3. replay the accepted draft through `propose_receipt_append` against that exact
+   durable prefix and require the recomputed accepted receipt to be byte-equal
+   to the obligation receipt;
+4. treat an exact existing receipt as `no_op`, reject the same receipt or
+   migration identity with changed content, and reject stale revision/CAS input
+   without changing ledger bytes;
+5. serialize the complete old prefix plus one canonical LF-terminated record to
+   a same-directory temporary file, flush and `fsync` that file, atomically
+   replace the ledger, and sync directory metadata where the platform supports
+   it; and
+6. release the lock only after the durability boundary completes or its exact
+   failure state is reported.
+
+Directly appending a line is insufficient for the MVP-D crash boundary because
+a process may stop after writing only part of a JSON object. Atomic replacement
+MUST leave readers with either the complete prior ledger or the complete next
+ledger after a process crash on a supported filesystem. Malformed, truncated,
+noncanonical, mixed-schema, identity-conflicting, or digest-invalid persisted
+input fails closed and MUST NOT be truncated, skipped, repaired, or rewritten
+by the append operation.
+
+Failure before atomic replacement MUST preserve prior bytes. Failure reported
+after replacement, including directory-sync failure, MUST be classified as an
+unknown-or-committed durability outcome rather than a clean rejection; callers
+MUST reconcile by strict reread before retrying. Lock timeout and unavailable
+locking are explicit failures. An exact retry after a committed append returns
+the prior canonical receipt without a second write or revision.
+
+The Reference System MUST expose whether directory metadata sync is supported.
+Atomic replacement plus process-crash recovery MUST NOT be described as proven
+sudden-power-loss durability on platforms or filesystems where directory sync,
+storage barriers, or atomic-replace guarantees are unavailable. MVP-D does not
+wire this store into existing v2 runtime writers or execute a migration.
+
+#### 21.4.2 Reference System LangGraph v3 adoption
+
+The Reference System LangGraph Adapter is the first bounded runtime path to
+adopt the durable v3 receipt contract. Its authoritative receipt ledger is
+`runtime/langgraph/receipts.v3.jsonl`. The Adapter MUST use the Section 21.4.1
+ReceiptStore boundary for every `dispatch_submitted`, `dispatch_completed`, and
+`dispatch_blocked` write, and its resume, dependency-order, and audit consumers
+MUST read that same canonical v3 ledger. Direct JSONL append is forbidden on
+this path.
+
+Adoption is declared by the task-local `runtime/langgraph/adoption.json`
+marker. Once that marker exists, audit MUST require the authoritative v3 ledger
+and MUST NOT fall back to compatibility receipts because the v3 ledger is empty,
+missing, or invalid. Historical LangGraph tasks without the marker remain
+legacy/v2 read-only compatibility cases and cannot receive new v3 writes.
+
+Adoption is atomic per Adapter and task ledger. A LangGraph task with a non-empty
+legacy/v2 `dispatch-receipts.jsonl` and a non-empty authoritative LangGraph v3
+ledger is mixed-version state and MUST fail closed. The Adapter MUST NOT append
+v3 records to a legacy/v2 ledger, translate old receipts in place, or infer a
+migration. HERDR, Queue, Manual Mode, workflow observation/recovery writers, and
+their legacy/v2 consumers remain compatibility-only and are not adopted by this
+slice.
+
+Before invoking LangGraph, the Adapter MUST load a real initialized Reference
+System installation identity and active non-zero Leader epoch. Missing,
+malformed, inconsistent, or bootstrap-only installation state fails closed.
+The selected work-item record supplies Task, agent, role, Work Item, dispatch
+ID, and dispatch generation. The exact canonical LangGraph request supplies the
+payload digest. A successful LangGraph run ID becomes the Attempt ID and is
+preserved by resume. No missing identity may be replaced by a placeholder,
+timestamp, agent name, or newly generated local value.
+
+Submission proof MUST bind the adapter-issued run/thread identities and exact
+request payload acknowledgement as separate process-bound and content-bound
+records with different refs and digests. The process record binds the exact
+provider response; the content record binds the exact canonical request digest,
+the provider response digest, and an explicit acknowledgement. Reusing one
+locally generated record under both proof kinds is proof relabeling and fails
+closed. Terminal proof MUST bind the same Attempt, the terminal run
+observation, and the exact expected-evidence content. Proof refs and approval
+policy refs MUST name persisted task-local records whose canonical digests match
+their bindings. When no approval is required, the receipt still binds the
+recorded no-approval policy digest; approval is never inferred from runtime
+success.
+
+Sequence and revision allocation MUST be proposed from the strictly loaded v3
+prefix and committed through ReceiptStore CAS. An exact receipt retry is a
+no-op. A stale proposal or proof/identity conflict fails closed without another
+runtime invocation. If ReceiptStore reports `unknown_or_committed` after atomic
+replacement, the Adapter MUST strictly reread and reconcile the exact receipt.
+An exact committed receipt returns success without another write or LangGraph
+submission; an absent or conflicting receipt returns an explicit durability
+conflict. Uncertainty alone MUST NOT redispatch work.
+
+Before `POST /runs`, the Adapter MUST durably persist a stable submission intent
+for the Task, Work Item, dispatch generation, graph, requested thread, and exact
+input. The intent ID MUST be sent to the provider as an idempotency/reconciliation
+key. A provider response is persisted back into that same intent before receipt
+construction. If the process restarts with an accepted intent, it reuses the
+recorded run and Attempt. If it restarts with only a prepared intent, provider
+acceptance is unknown: the Adapter MUST stop for explicit reconciliation and
+MUST NOT issue a second run. This bounded path prefers an orphaned-but-visible
+unknown outcome over double dispatch.
+
+LangGraph resume MUST load the persisted submission record and the same v3
+ledger, reuse the original run and Attempt identity, and append only the matching
+terminal receipt. Audit and dependency gates MUST validate the canonical v3
+chain and exact identity, proof, expected-evidence, ordering, and prior submitted
+receipt. Legacy/v2 remains readable only on runtime paths not adopted here.
+
+Receipt-write rejection leaves Kernel Task State unchanged. MVP-C does not add
+`recording -> blocked`: a pure validation/CAS rejection is not an external
+storage outage, and an outage cannot durably prove that transition through the
+failed ledger. A future recording-recovery contract must separately define
+failure Evidence, retry/fencing semantics, and whether work may be re-executed
+before a versioned Task-graph change is allowed.
+
+### 21.5 Adapter proof contract
 
 An Adapter declares support for `probe`, `submit`, `observe`, `cancel`,
 `resume`, and `prove`. Unsupported operations are explicit capability results.
@@ -2692,7 +2954,7 @@ observation sequence, and failure or acknowledgement. A weak or missing
 segment limits the final claim; strong downstream proof MUST NOT hide weak
 upstream transport.
 
-### 21.5 Dependencies, dimensions, and Done
+### 21.6 Dependencies, dimensions, and Done
 
 Dependency kinds are closed to `hard`, `soft`, and `optional`. A hard failure
 blocks the dependent Work Item, a soft failure permits a declared degraded
@@ -2735,7 +2997,7 @@ source and compare its canonical payload and policy digest. No raw
 `source_digest` field is defined until byte-level source identity semantics are
 specified.
 
-### 21.6 Evidence, delivery, and traceability
+### 21.7 Evidence, delivery, and traceability
 
 Evidence descriptors bind content digest, safe ref, provenance, observed time,
 freshness policy, confidence, scope, fault class, review status,

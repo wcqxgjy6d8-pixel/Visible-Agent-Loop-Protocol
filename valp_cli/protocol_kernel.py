@@ -1,4 +1,4 @@
-"""Pure Protocol Kernel Slice 1 from RFC-0002 and SPEC section 21.2."""
+"""Pure Protocol Kernel Slice 1 plus a structural CheckpointRoot contract."""
 
 from __future__ import annotations
 
@@ -82,6 +82,54 @@ class ClaimResult(str, Enum):
 
 class EventKind(str, Enum):
     ROUTING_VALIDATION_STARTED = "routing_validation_started"
+    ROUTING_VALIDATION_PASSED = "routing_validation_passed"
+    DISPATCH_ACCEPTED = "dispatch_accepted"
+    WORK_COMPLETED = "work_completed"
+    VERIFICATION_PASSED = "verification_passed"
+    VERIFICATION_FAILED = "verification_failed"
+    REVIEW_PASSED = "review_passed"
+    REVIEW_REJECTED = "review_rejected"
+    APPROVAL_REQUIRED_RAISED = "approval_required_raised"
+    FIX_DISPATCH_REQUESTED = "fix_dispatch_requested"
+    APPROVAL_GRANTED = "approval_granted"
+    APPROVAL_DENIED = "approval_denied"
+    RECORDING_COMPLETED = "recording_completed"
+    TASK_BLOCKED = "task_blocked"
+    BLOCKED_RECOVERY_TO_FIXING = "blocked_recovery_to_fixing"
+    TASK_FAILED = "task_failed"
+    TASK_CANCELLED = "task_cancelled"
+
+
+KERNEL_TASK_TRANSITIONS: Mapping[Tuple[TaskStatus, EventKind], TaskStatus] = {
+    (TaskStatus.PUBLISHED, EventKind.ROUTING_VALIDATION_STARTED): TaskStatus.ROUTING_VALIDATION,
+    (TaskStatus.ROUTING_VALIDATION, EventKind.ROUTING_VALIDATION_PASSED): TaskStatus.DISPATCHING,
+    (TaskStatus.DISPATCHING, EventKind.DISPATCH_ACCEPTED): TaskStatus.EXECUTING,
+    (TaskStatus.EXECUTING, EventKind.WORK_COMPLETED): TaskStatus.VERIFYING,
+    (TaskStatus.VERIFYING, EventKind.VERIFICATION_PASSED): TaskStatus.REVIEWING,
+    (TaskStatus.VERIFYING, EventKind.VERIFICATION_FAILED): TaskStatus.FIXING,
+    (TaskStatus.REVIEWING, EventKind.REVIEW_PASSED): TaskStatus.RECORDING,
+    (TaskStatus.REVIEWING, EventKind.REVIEW_REJECTED): TaskStatus.FIXING,
+    (TaskStatus.REVIEWING, EventKind.APPROVAL_REQUIRED_RAISED): TaskStatus.APPROVAL_REQUIRED,
+    (TaskStatus.FIXING, EventKind.FIX_DISPATCH_REQUESTED): TaskStatus.DISPATCHING,
+    (TaskStatus.APPROVAL_REQUIRED, EventKind.APPROVAL_GRANTED): TaskStatus.RECORDING,
+    (TaskStatus.APPROVAL_REQUIRED, EventKind.APPROVAL_DENIED): TaskStatus.FIXING,
+    (TaskStatus.RECORDING, EventKind.RECORDING_COMPLETED): TaskStatus.DONE,
+    (TaskStatus.EXECUTING, EventKind.TASK_BLOCKED): TaskStatus.BLOCKED,
+    (TaskStatus.VERIFYING, EventKind.TASK_BLOCKED): TaskStatus.BLOCKED,
+    (TaskStatus.REVIEWING, EventKind.TASK_BLOCKED): TaskStatus.BLOCKED,
+    (TaskStatus.FIXING, EventKind.TASK_BLOCKED): TaskStatus.BLOCKED,
+    (TaskStatus.BLOCKED, EventKind.BLOCKED_RECOVERY_TO_FIXING): TaskStatus.FIXING,
+    **{
+        (status, EventKind.TASK_FAILED): TaskStatus.FAILED
+        for status in TaskStatus
+        if status not in {TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED}
+    },
+    **{
+        (status, EventKind.TASK_CANCELLED): TaskStatus.CANCELLED
+        for status in TaskStatus
+        if status not in {TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED}
+    },
+}
 
 
 class ResultVariant(str, Enum):
@@ -330,6 +378,42 @@ class GenesisRoot:
 
 
 @dataclass(frozen=True)
+class CheckpointRoot:
+    """Phase 1 structural checkpoint contract; it is not replay-authorizing."""
+
+    state: State
+    accepted_entry_count: int
+    prefix_digest: str
+    tail_event_id: Identity
+    tail_result_id: Identity
+    tail_result_digest: str
+    checkpoint_result_id: Identity
+    trust_policy_digest: str
+
+    def __post_init__(self) -> None:
+        if not _checkpoint_root_is_valid(self):
+            raise ValueError("CheckpointRoot bindings are invalid")
+
+    @property
+    def state_digest(self) -> str:
+        return _digest(self.state.canonical())
+
+    def canonical(self) -> Mapping[str, Any]:
+        return {
+            "schema_version": "valp-kernel-checkpoint-root.v1",
+            "state": self.state.canonical(),
+            "state_digest": self.state_digest,
+            "accepted_entry_count": self.accepted_entry_count,
+            "prefix_digest": self.prefix_digest,
+            "tail_event_id": self.tail_event_id.canonical(),
+            "tail_result_id": self.tail_result_id.canonical(),
+            "tail_result_digest": self.tail_result_digest,
+            "checkpoint_result_id": self.checkpoint_result_id.canonical(),
+            "trust_policy_digest": self.trust_policy_digest,
+        }
+
+
+@dataclass(frozen=True)
 class ReplayEntry:
     event: Event
     evidence_set: Tuple[Evidence, ...]
@@ -374,6 +458,29 @@ def _accepted_event_is_valid(value: Any) -> bool:
     )
 
 
+def _checkpoint_root_is_valid(value: Any) -> bool:
+    if not isinstance(value, CheckpointRoot) or not _state_is_valid(value.state):
+        return False
+    if (
+        value.state.revision < 1
+        or value.accepted_entry_count != value.state.revision
+        or value.accepted_entry_count != len(value.state.accepted_events)
+        or not _is_digest(value.prefix_digest)
+        or not _is_digest(value.tail_result_digest)
+        or not _is_digest(value.trust_policy_digest)
+        or not _has_identity_kind(value.tail_event_id, IdentityKind.EVENT)
+        or not _has_identity_kind(value.tail_result_id, IdentityKind.RESULT)
+        or not _has_identity_kind(value.checkpoint_result_id, IdentityKind.RESULT)
+    ):
+        return False
+    tail = value.state.accepted_events[-1]
+    return (
+        value.tail_event_id == tail.event_id
+        and value.tail_result_id == tail.result_id
+        and value.tail_result_digest == tail.result_digest
+    )
+
+
 def _state_is_valid(value: Any) -> bool:
     if not isinstance(value, State):
         return False
@@ -384,6 +491,8 @@ def _state_is_valid(value: Any) -> bool:
         or not _is_non_negative_int(value.leader_epoch)
         or not _is_non_negative_int(value.revision)
         or not isinstance(value.status, TaskStatus)
+        or value.revision != len(value.accepted_events)
+        or (value.revision == 0 and value.status != TaskStatus.PUBLISHED)
         or not all(_accepted_event_is_valid(item) for item in value.accepted_events)
     ):
         return False
@@ -521,9 +630,9 @@ def reduce(state: State, event: Event, evidence_set: Sequence[Evidence]) -> Resu
             prior_result_digest=prior.result_digest,
         )
 
+    target_status = KERNEL_TASK_TRANSITIONS.get((state.status, event.kind))
     if (
-        event.kind != EventKind.ROUTING_VALIDATION_STARTED
-        or state.status != TaskStatus.PUBLISHED
+        target_status is None
         or event.task_id != state.task_id
         or event.expected_revision != state.revision
     ):
@@ -537,7 +646,7 @@ def reduce(state: State, event: Event, evidence_set: Sequence[Evidence]) -> Resu
         leader_epoch=state.leader_epoch,
         task_id=state.task_id,
         revision=state.revision + 1,
-        status=TaskStatus.ROUTING_VALIDATION,
+        status=target_status,
     )
     result_digest = _accepted_result_digest(
         result_id,
@@ -554,7 +663,7 @@ def reduce(state: State, event: Event, evidence_set: Sequence[Evidence]) -> Resu
         leader_epoch=state.leader_epoch,
         task_id=state.task_id,
         revision=state.revision + 1,
-        status=TaskStatus.ROUTING_VALIDATION,
+        status=target_status,
         accepted_events=state.accepted_events
         + (
             AcceptedEvent(

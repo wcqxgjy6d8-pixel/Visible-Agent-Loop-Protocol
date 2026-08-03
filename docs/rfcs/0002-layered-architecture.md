@@ -35,8 +35,10 @@ and runtime proof belong in separate acceptance artifacts.
 
 ## 2. Status And Normative Language
 
-This RFC is a draft. It does not change the stable protocol, public schemas, or
-reference CLI until it is accepted and incorporated through reviewed changes.
+This RFC is a draft and does not change the stable `0.2.0` protocol or release.
+Selected `0.3.0-draft` schemas and Reference System CLI slices are incorporated
+in the current candidate through reviewed changes; they remain non-stable and
+do not imply complete Kernel, Adapter, platform, or production conformance.
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are normative.
 
@@ -552,11 +554,21 @@ Interrupt and Redirect Event contracts are required before Stage 3
 human-intervention work. Budget Record contracts are also deferred to Stage 3.
 Neither area is implementation-authorized by RFC prose alone.
 
-Checkpoint Root schema, accepted checkpoint Event/Result semantics, trust-policy
-evidence, and suffix-replay fixtures are Stage 2 contracts. Until they exist and
-pass independent negative tests, only Genesis Root replay is
+The Phase 1 structural Checkpoint Root contract binds State, State digest,
+identity tuple, revision, accepted-entry count, prefix digest, tail bindings,
+checkpoint Result identity, and trust-policy digest. Accepted checkpoint
+Event/Result semantics, trust-policy Evidence verification, and suffix-replay
+fixtures remain Stage 2 contracts. Until those Stage 2 requirements pass
+independent negative tests, only Genesis Root replay is
 implementation-authorized; a bare non-zero State cannot be treated as a trusted
 checkpoint.
+
+MVP-B implements the closed Layer 02 Task transition graph for the 13 Kernel
+truth statuses. Its typed Event contract covers the forward, fix/redispatch,
+approval, explicit blocked-to-fixing recovery, failure, and cancellation
+edges; `done`, `failed`, and `cancelled` are terminal. This does not implement
+Work Item or Attempt transition graphs, receipt writes, wait/wake semantics,
+or checkpoint suffix replay.
 
 ## 19. Acceptance Criteria
 

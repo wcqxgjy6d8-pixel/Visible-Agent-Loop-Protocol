@@ -30,6 +30,8 @@ fi
 
 mkdir -p "$demo_workspace/.herdr-loop/tasks"
 cp -R "$case_dir/task" "$task_dir"
+"$repo_root/bin/valp" install init --workspace "$demo_workspace" >/dev/null
+"$repo_root/bin/valp" leader select langgraph-reproduction --workspace "$demo_workspace" >/dev/null
 python3 - "$task_dir" <<'PY'
 import json
 import shutil
@@ -53,15 +55,7 @@ for relative in (
     (task_dir / relative).unlink(missing_ok=True)
 
 ledger = task_dir / "dispatch-receipts.jsonl"
-written = [
-    json.loads(line)
-    for line in ledger.read_text(encoding="utf-8").splitlines()
-    if line.strip() and json.loads(line).get("event") == "dispatch_written"
-]
-ledger.write_text(
-    "".join(json.dumps(receipt, ensure_ascii=False) + "\n" for receipt in written),
-    encoding="utf-8",
-)
+ledger.write_text("", encoding="utf-8")
 
 state_path = task_dir / "state.json"
 state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -240,7 +234,6 @@ import json, pathlib, sys
 ledger = pathlib.Path(sys.argv[1])
 events = [json.loads(line)["event"] for line in ledger.read_text().splitlines() if line.strip()]
 expected = [
-    "dispatch_written", "dispatch_written", "dispatch_written",
     "dispatch_submitted", "dispatch_completed",
     "dispatch_submitted", "dispatch_blocked",
     "dispatch_submitted", "dispatch_completed",
@@ -249,7 +242,7 @@ expected = [
 if events != expected:
     raise SystemExit(f"unexpected receipt sequence: {events}")
 print("receipt sequence PASS:", " -> ".join(events))
-' "$task_dir/dispatch-receipts.jsonl"
+' "$task_dir/runtime/langgraph/receipts.v3.jsonl"
 
 "$repo_root/bin/valp" audit "$task_dir"
 

@@ -1,0 +1,8 @@
+{
+  "ts": "2026-08-03T08:00:00Z",
+  "agent": "codex",
+  "role": "implementer",
+  "event": "future_event",
+  "dispatch_ref": "agents/codex/dispatch.md",
+  "future_authority": true
+}

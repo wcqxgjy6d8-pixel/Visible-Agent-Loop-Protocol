@@ -1,0 +1,5 @@
+{
+  "schema_version": "valp-dispatch-receipt.v4",
+  "receipt_id": "future-receipt",
+  "event": "dispatch_submitted"
+}

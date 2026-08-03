@@ -40,15 +40,24 @@ Kernel-computed dimension gates, and independent version lines.
 The public RFC 0002 package comprises `SPEC.md`, `docs/index.md`, this
 project status page, and
 `docs/rfcs/0002-layered-architecture.md`. Pure Protocol Kernel Slice 1 implements
-only the `published` -> `routing_validation` transition and its canonical
+the closed Layer 02 Task graph for all 13 truth statuses and its canonical
 identity, closed-enum, State, Result, idempotency, and rejection contracts. It
 also implements ordered `ReplayEntry` reducer re-execution, complete canonical
-Result equality, and validated Genesis Root replay with negative tests.
-Authenticated Checkpoint Root suffix replay remains deferred to Stage 2. The
-complete Protocol Kernel and complete third layer remain unfinished. No v3
-receipt writes, broader transition graph, migration fixtures, Adapter
-conformance, platform parity, release support, or runtime-wide Done conformance
-is claimed.
+Result equality, validated Genesis Root replay with negative tests, and a
+structural Checkpoint Root machine contract. The structural contract is not
+trusted checkpoint replay: authenticated Checkpoint Root suffix replay remains
+deferred to Stage 2. A separate pure reducer covers canonical v3 receipt write
+proposals and digest-bound legacy/v2 migration projections, with valid and
+adversarial fixtures. A file-backed Reference System store now adds cooperative
+inter-process locking, canonical-prefix replay, CAS, atomic replacement, and
+file plus directory synchronization. Current evidence covers process-crash
+recovery on the tested macOS/APFS host, not sudden power loss, hostile writers,
+or Windows parity. The LangGraph Adapter is the only runtime path that acquires
+canonical v3 proof and uses the durable v3 store end to end. HERDR, Queue,
+Manual Mode, and workflow observation/recovery remain legacy/v2
+compatibility-only paths. The complete Protocol Kernel and complete third layer
+remain unfinished. No broader Adapter conformance, platform parity, release
+support, or runtime-wide Done conformance is claimed.
 
 ## Verified In This Repository
 
@@ -85,10 +94,11 @@ platform.
 | Deterministic wake core | Covered locally for dependency barrier, identity rejection, revision CAS, duplicate wake, concurrent wake, and event-to-projection recovery | `valp_cli/workflow.py`, `tests/test_valp_workflow.py` |
 | v0.3 installation core | Covered for bootstrap, explicit leader selection, epoch fencing, CAS, idempotency, replay, capability registry, content-addressed claims/reviews, task Done reducer, plugin boundary, and migration dry-run | `valp_cli/control_plane.py`, `valp_cli/task_control.py`, `valp_cli/plugins.py`, `valp_cli/conformance.py`, `tests/test_control_plane.py` |
 | Protocol 0.3 layered architecture | Public RFC 0002 package integrated; broader architecture remains a normative target | `SPEC.md` Section 21, `docs/index.md`, this page, and `docs/rfcs/0002-layered-architecture.md` |
-| Pure Protocol Kernel Slice 1 | Implemented only for `published` -> `routing_validation`; this is not the complete Protocol Kernel or complete third layer | `valp_cli/protocol_kernel.py`, `schemas/protocol-kernel.schema.json`, `tests/test_protocol_kernel.py` |
-| Remaining layered core machine contracts and conformance | Not implemented by Slice 1 | Requires the remaining transition graph, v3 receipt and migration fixtures, proof-kind negative tests, Adapter conformance, independent review, and strict audit |
+| Pure Protocol Kernel Slice 1 | Closed Layer 02 Task transition graph implemented; this is not the complete Protocol Kernel or complete third layer | `valp_cli/protocol_kernel.py`, `schemas/protocol-kernel.schema.json`, `tests/test_protocol_kernel.py` |
+| Pure v3 receipt-write, migration projection, and durable Reference System store | Covered for canonical append proposals, fail-closed legacy/v2 projection, proof-kind negative cases, fixtures, cooperative locking/CAS, and process-crash recovery on the tested macOS/APFS host; LangGraph is the only adopted runtime path | `valp_cli/protocol_receipts.py`, `valp_cli/receipt_store.py`, `schemas/receipts.schema.json`, `tests/test_protocol_receipts.py`, `tests/test_receipt_store.py`, `tests/fixtures/receipt-v3/` |
+| Remaining layered core machine contracts and conformance | Not implemented by these bounded slices | Requires remaining Adapter adoption/conformance, broader platform durability proof, independent review, and strict audit |
 | Local-process adapter | Covered for approved subprocess submission, lifecycle result, output evidence, and failure status | `valp_cli/process_adapter.py`, `schemas/process-adapter-run.schema.json`, `tests/test_control_plane.py` |
-| LangGraph API adapter | Covered for real run/thread identity, submission proof, state/output/checkpoint refs, failure reason, replay identity, and non-terminal wait windows | `valp_cli/langgraph_adapter.py`, `tests/test_langgraph_adapter.py` |
+| LangGraph API adapter | Covered for real run/thread and Attempt identity, canonical v3 ReceiptStore writes, strict resume/audit reads, dependency ordering, exact retry, stale CAS, proof mismatch, mixed-ledger rejection, post-commit reconciliation, false-Done blocking, and non-terminal wait windows | `valp_cli/langgraph_adapter.py`, `valp_cli/audit.py`, `valp_cli/submission.py`, `tests/test_langgraph_adapter.py` |
 | File-ledger queue concurrency | Covered on the current POSIX test host with synchronized cross-process submitters | `valp_cli/workflow.py`, `tests/test_valp_workflow.py`; real Windows subprocess proof remains open |
 | Wait/wake closed artifacts | Covered for shared closed suspension projections, immutable policy snapshots, event/reason pairing, valid/invalid fixtures, identity-bound external wake evidence, generated-result audit, and projection mismatch failure | `schemas/suspension.schema.json`, `schemas/wait-policy.schema.json`, `schemas/exception-wake.schema.json`, `schemas/wait-event.schema.json`, `schemas/wake-result.schema.json`, `tests/test_schema_examples.py`, `tests/test_valp_audit.py`, `tests/test_valp_workflow.py` |
 | Doctor diagnostics and capability passports | Covered for per-surface/session passports, four evidence layers, model/provider/session freshness, Skills, MCP, permissions, context, history binding, and role gates | `schemas/capability-passport.schema.json`, `tests/test_valp_doctor.py` |
@@ -101,7 +111,7 @@ platform.
 | Live HERDR dispatch E2E completion case study | Not covered in repository CI | Requires sanitized task folder plus runtime submission and final audit evidence |
 | Live zero-model-turn deterministic wake and exactly-once coordinator continuation | Not covered in repository CI | Requires a wake-ID-bound continuation invocation receipt plus restart/restore evidence from a real adapter |
 | Non-HERDR real adapter E2E | Covered for the local LangGraph API development runtime | Production hosting and deterministic coordinator auto-continuation remain open |
-| Full state-machine transition suite | Partially covered | Installation transitions are implemented and tested; the task-level legal transition graph remains planned |
+| Full state-machine transition suite | Partially covered | Installation and closed Layer 02 Task transitions are implemented and tested; Work Item and Attempt graphs remain planned |
 | Context compression runtime integration | Partially covered | Semantics are documented; live adapter enforcement is not yet covered |
 | Auto Visible watcher E2E | Not covered | Trigger policy semantics exist; watcher implementation is runtime-specific |
 | App-managed first install E2E | Not covered in repository CI | Protocol now defines doctor-first health gate; App installer implementation must prove it |
@@ -137,7 +147,7 @@ and exports the required receipts and evidence.
 | App installer behavior is not a protocol runtime | First-launch UX can accidentally hide path, preflight, and submit boundaries | First-install health gate is specified; App must expose doctor/preflight/dry-run results |
 | Windows local Full Mode is conditional | Native Windows runtime support is beta-dependent | Recommend SSH remote for stable Windows workflow |
 | Stable release is early | Users need clear limits around runtime proof and adapter coverage | Use the v0.3 draft core for installation-control-plane evaluation; keep stable/live-runtime claims tied to adapter proof |
-| Protocol Kernel beyond Slice 1 is incomplete | One deterministic transition can be mistaken for the complete third layer | Keep broader transition, v3 receipt, migration, Adapter, platform, and runtime support claims blocked until matching implementation and conformance evidence exists |
+| Protocol Kernel beyond Slice 1 is incomplete | The closed Task graph can be mistaken for the complete third layer | Keep migration, additional Adapter, platform, and runtime-wide support claims blocked until matching implementation and conformance evidence exists |
 | Small public community | Social proof is low | Avoid community-size overclaims |
 
 ## Promotion Language

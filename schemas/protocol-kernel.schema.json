@@ -1,13 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://valp.dev/schema/protocol-kernel.v1.json",
-  "title": "VALP Pure Protocol Kernel Slice 1",
+  "title": "VALP Pure Protocol Kernel Slice 1 and structural CheckpointRoot",
   "oneOf": [
     {"$ref": "#/$defs/state"},
     {"$ref": "#/$defs/event"},
     {"$ref": "#/$defs/evidence"},
     {"$ref": "#/$defs/result"},
     {"$ref": "#/$defs/genesisRoot"},
+    {"$ref": "#/$defs/checkpointRoot"},
     {"$ref": "#/$defs/replayEntry"},
     {"$ref": "#/$defs/replay"}
   ],
@@ -144,7 +145,22 @@
           "items": {"$ref": "#/$defs/acceptedEvent"},
           "uniqueItems": true
         }
-      }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "revision": {"const": 0},
+            "status": {"const": "published"},
+            "accepted_events": {"maxItems": 0}
+          }
+        },
+        {
+          "properties": {
+            "revision": {"minimum": 1},
+            "accepted_events": {"minItems": 1}
+          }
+        }
+      ]
     },
     "event": {
       "type": "object",
@@ -164,7 +180,27 @@
         "installation_id": {"$ref": "#/$defs/installationIdentity"},
         "leader_epoch": {"type": "integer", "minimum": 0},
         "task_id": {"$ref": "#/$defs/taskIdentity"},
-        "kind": {"const": "routing_validation_started"},
+        "kind": {
+          "enum": [
+            "routing_validation_started",
+            "routing_validation_passed",
+            "dispatch_accepted",
+            "work_completed",
+            "verification_passed",
+            "verification_failed",
+            "review_passed",
+            "review_rejected",
+            "approval_required_raised",
+            "fix_dispatch_requested",
+            "approval_granted",
+            "approval_denied",
+            "recording_completed",
+            "task_blocked",
+            "blocked_recovery_to_fixing",
+            "task_failed",
+            "task_cancelled"
+          ]
+        },
         "expected_revision": {"type": "integer", "minimum": 0}
       }
     },
@@ -271,6 +307,46 @@
         "prefix_digest": {
           "const": "sha256:fa1f226ad4960367691ffda3176c5f45a463c102a791799d33dcf2bbfa08b54d"
         }
+      }
+    },
+    "checkpointState": {
+      "allOf": [
+        {"$ref": "#/$defs/state"},
+        {
+          "properties": {
+            "revision": {"minimum": 1},
+            "accepted_events": {"minItems": 1}
+          }
+        }
+      ]
+    },
+    "checkpointRoot": {
+      "description": "Phase 1 structural contract only. It does not authorize suffix replay until Stage 2 verifies checkpoint Result and trust-policy evidence.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "state",
+        "state_digest",
+        "accepted_entry_count",
+        "prefix_digest",
+        "tail_event_id",
+        "tail_result_id",
+        "tail_result_digest",
+        "checkpoint_result_id",
+        "trust_policy_digest"
+      ],
+      "properties": {
+        "schema_version": {"const": "valp-kernel-checkpoint-root.v1"},
+        "state": {"$ref": "#/$defs/checkpointState"},
+        "state_digest": {"$ref": "#/$defs/digest"},
+        "accepted_entry_count": {"type": "integer", "minimum": 1},
+        "prefix_digest": {"$ref": "#/$defs/digest"},
+        "tail_event_id": {"$ref": "#/$defs/eventIdentity"},
+        "tail_result_id": {"$ref": "#/$defs/resultIdentity"},
+        "tail_result_digest": {"$ref": "#/$defs/digest"},
+        "checkpoint_result_id": {"$ref": "#/$defs/resultIdentity"},
+        "trust_policy_digest": {"$ref": "#/$defs/digest"}
       }
     },
     "replayEntry": {

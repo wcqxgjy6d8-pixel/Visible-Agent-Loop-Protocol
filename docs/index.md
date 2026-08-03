@@ -47,19 +47,30 @@ and External Runtime And Ecosystem. The
 defines the normative ownership and proof boundaries; [RFC 0002](rfcs/0002-layered-architecture.md)
 records public D01-D19 traceability and the staged implementation boundary.
 
-Pure Protocol Kernel Slice 1 implements only the `published` ->
-`routing_validation` transition, with its canonical identities, closed enums,
-State and `accepted` / `no_op` / `rejected` Result contract, deterministic
-duplicate behavior, and ordered `ReplayEntry(Event, EvidenceSet, accepted
-Result)` reducer re-execution with complete canonical Result equality from a
-validated Genesis Root. The machine contract and negative tests reject bare
-State roots, impossible genesis revision/history combinations, changed replay
-inputs, non-accepted Results, and tampered Results. Authenticated Checkpoint
-Root suffix replay remains deferred to Stage 2. Slice 1 is not the complete
-Protocol Kernel or complete third-layer implementation. No broader transition
-graph, v3 receipt writes, migrations, Adapter conformance, cross-platform
-parity, or release support is claimed. The stable public release remains
-`0.2.0`.
+Pure Protocol Kernel Slice 1 implements the closed Layer 02 Task transition
+graph across its 13 truth statuses, with typed Events, terminal-state closure,
+canonical identities, closed enums, State and `accepted` / `no_op` /
+`rejected` Result contract, deterministic duplicate behavior, and ordered
+`ReplayEntry(Event, EvidenceSet, accepted Result)` reducer re-execution with
+complete canonical Result equality from a validated Genesis Root. It also
+defines a structural Checkpoint Root contract
+that binds State, prefix, tail, checkpoint-Result, and trust-policy identities;
+the contract does not authorize replay. The machine contract and negative tests
+reject bare State roots, impossible genesis revision/history combinations,
+changed replay inputs, non-accepted Results, and tampered Results. Authenticated
+Checkpoint Root suffix replay remains deferred to Stage 2. The repository also
+implements a pure v3 receipt-write reducer and digest-bound legacy/v2 migration
+projection fixtures. A file-backed Reference System store performs cooperative
+inter-process locking, canonical-prefix replay, CAS, atomic replacement, and
+file plus directory synchronization. Its current evidence covers process-crash
+recovery on the tested macOS/APFS host; it does not establish sudden-power-loss,
+hostile-writer, or Windows parity. LangGraph is the only bounded Adapter path
+that uses this canonical v3 store end to end. HERDR, Queue, Manual Mode, and
+workflow observation/recovery remain legacy/v2 compatibility-only paths. This
+remains a bounded Kernel and Reference System slice, not the complete Protocol
+Kernel or complete third-layer implementation. No broader Adapter conformance,
+cross-platform parity, or release support is claimed. The stable public release
+remains `0.2.0`.
 
 ## v0.3 Draft Implementation
 

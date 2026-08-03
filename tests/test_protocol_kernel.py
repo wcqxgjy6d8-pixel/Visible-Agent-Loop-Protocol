@@ -12,6 +12,7 @@ from valp_cli.protocol_kernel import (
     Event,
     EventKind,
     EMPTY_REPLAY_PREFIX_DIGEST,
+    CheckpointRoot,
     GenesisRoot,
     Identity,
     IdentityKind,
@@ -77,6 +78,238 @@ class ProtocolKernelTests(unittest.TestCase):
         self.assertEqual(result.accepted.state.revision, 1)
         self.assertEqual(result.accepted.state.status, TaskStatus.ROUTING_VALIDATION)
         self.assertEqual(result.accepted.obligations, ())
+
+    def test_routing_validation_passed_transitions_to_dispatching(self) -> None:
+        state, event = self.make_transition()
+        routing = reduce(state, event, ()).accepted.state
+        passed = Event(
+            event_id=Identity(IdentityKind.EVENT, "event-2"),
+            installation_id=routing.installation_id,
+            leader_epoch=routing.leader_epoch,
+            task_id=routing.task_id,
+            kind=EventKind.ROUTING_VALIDATION_PASSED,
+            expected_revision=routing.revision,
+        )
+
+        result = reduce(routing, passed, ())
+
+        self.assertEqual(result.variant, ResultVariant.ACCEPTED)
+        self.assertEqual(result.accepted.state.status, TaskStatus.DISPATCHING)
+
+    def event_for(self, state, event_id: str, kind: EventKind) -> Event:
+        return Event(
+            event_id=Identity(IdentityKind.EVENT, event_id),
+            installation_id=state.installation_id,
+            leader_epoch=state.leader_epoch,
+            task_id=state.task_id,
+            kind=kind,
+            expected_revision=state.revision,
+        )
+
+    def state_reached_from_genesis(self, target: TaskStatus, prefix: str) -> State:
+        initial, _ = self.make_transition()
+        paths = {
+            TaskStatus.PUBLISHED: (),
+            TaskStatus.ROUTING_VALIDATION: (EventKind.ROUTING_VALIDATION_STARTED,),
+            TaskStatus.DISPATCHING: (
+                EventKind.ROUTING_VALIDATION_STARTED,
+                EventKind.ROUTING_VALIDATION_PASSED,
+            ),
+            TaskStatus.EXECUTING: (
+                EventKind.ROUTING_VALIDATION_STARTED,
+                EventKind.ROUTING_VALIDATION_PASSED,
+                EventKind.DISPATCH_ACCEPTED,
+            ),
+            TaskStatus.VERIFYING: (
+                EventKind.ROUTING_VALIDATION_STARTED,
+                EventKind.ROUTING_VALIDATION_PASSED,
+                EventKind.DISPATCH_ACCEPTED,
+                EventKind.WORK_COMPLETED,
+            ),
+            TaskStatus.REVIEWING: (
+                EventKind.ROUTING_VALIDATION_STARTED,
+                EventKind.ROUTING_VALIDATION_PASSED,
+                EventKind.DISPATCH_ACCEPTED,
+                EventKind.WORK_COMPLETED,
+                EventKind.VERIFICATION_PASSED,
+            ),
+            TaskStatus.FIXING: (
+                EventKind.ROUTING_VALIDATION_STARTED,
+                EventKind.ROUTING_VALIDATION_PASSED,
+                EventKind.DISPATCH_ACCEPTED,
+                EventKind.WORK_COMPLETED,
+                EventKind.VERIFICATION_FAILED,
+            ),
+            TaskStatus.APPROVAL_REQUIRED: (
+                EventKind.ROUTING_VALIDATION_STARTED,
+                EventKind.ROUTING_VALIDATION_PASSED,
+                EventKind.DISPATCH_ACCEPTED,
+                EventKind.WORK_COMPLETED,
+                EventKind.VERIFICATION_PASSED,
+                EventKind.APPROVAL_REQUIRED_RAISED,
+            ),
+            TaskStatus.RECORDING: (
+                EventKind.ROUTING_VALIDATION_STARTED,
+                EventKind.ROUTING_VALIDATION_PASSED,
+                EventKind.DISPATCH_ACCEPTED,
+                EventKind.WORK_COMPLETED,
+                EventKind.VERIFICATION_PASSED,
+                EventKind.REVIEW_PASSED,
+            ),
+            TaskStatus.DONE: (
+                EventKind.ROUTING_VALIDATION_STARTED,
+                EventKind.ROUTING_VALIDATION_PASSED,
+                EventKind.DISPATCH_ACCEPTED,
+                EventKind.WORK_COMPLETED,
+                EventKind.VERIFICATION_PASSED,
+                EventKind.REVIEW_PASSED,
+                EventKind.RECORDING_COMPLETED,
+            ),
+            TaskStatus.BLOCKED: (
+                EventKind.ROUTING_VALIDATION_STARTED,
+                EventKind.ROUTING_VALIDATION_PASSED,
+                EventKind.DISPATCH_ACCEPTED,
+                EventKind.TASK_BLOCKED,
+            ),
+            TaskStatus.FAILED: (EventKind.TASK_FAILED,),
+            TaskStatus.CANCELLED: (EventKind.TASK_CANCELLED,),
+        }
+        current = initial
+        for index, kind in enumerate(paths[target]):
+            result = reduce(current, self.event_for(current, f"{prefix}-reach-{index}", kind), ())
+            self.assertEqual(result.variant, ResultVariant.ACCEPTED)
+            current = result.accepted.state
+        self.assertEqual(current.status, target)
+        return current
+
+    def test_every_specified_kernel_edge_is_accepted(self) -> None:
+        explicit_edges = (
+            (TaskStatus.PUBLISHED, EventKind.ROUTING_VALIDATION_STARTED, TaskStatus.ROUTING_VALIDATION),
+            (TaskStatus.ROUTING_VALIDATION, EventKind.ROUTING_VALIDATION_PASSED, TaskStatus.DISPATCHING),
+            (TaskStatus.DISPATCHING, EventKind.DISPATCH_ACCEPTED, TaskStatus.EXECUTING),
+            (TaskStatus.EXECUTING, EventKind.WORK_COMPLETED, TaskStatus.VERIFYING),
+            (TaskStatus.VERIFYING, EventKind.VERIFICATION_PASSED, TaskStatus.REVIEWING),
+            (TaskStatus.VERIFYING, EventKind.VERIFICATION_FAILED, TaskStatus.FIXING),
+            (TaskStatus.REVIEWING, EventKind.REVIEW_PASSED, TaskStatus.RECORDING),
+            (TaskStatus.REVIEWING, EventKind.REVIEW_REJECTED, TaskStatus.FIXING),
+            (TaskStatus.REVIEWING, EventKind.APPROVAL_REQUIRED_RAISED, TaskStatus.APPROVAL_REQUIRED),
+            (TaskStatus.FIXING, EventKind.FIX_DISPATCH_REQUESTED, TaskStatus.DISPATCHING),
+            (TaskStatus.APPROVAL_REQUIRED, EventKind.APPROVAL_GRANTED, TaskStatus.RECORDING),
+            (TaskStatus.APPROVAL_REQUIRED, EventKind.APPROVAL_DENIED, TaskStatus.FIXING),
+            (TaskStatus.RECORDING, EventKind.RECORDING_COMPLETED, TaskStatus.DONE),
+            (TaskStatus.EXECUTING, EventKind.TASK_BLOCKED, TaskStatus.BLOCKED),
+            (TaskStatus.VERIFYING, EventKind.TASK_BLOCKED, TaskStatus.BLOCKED),
+            (TaskStatus.REVIEWING, EventKind.TASK_BLOCKED, TaskStatus.BLOCKED),
+            (TaskStatus.FIXING, EventKind.TASK_BLOCKED, TaskStatus.BLOCKED),
+            (TaskStatus.BLOCKED, EventKind.BLOCKED_RECOVERY_TO_FIXING, TaskStatus.FIXING),
+        )
+        non_terminals = tuple(
+            status
+            for status in TaskStatus
+            if status not in {TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED}
+        )
+        terminal_edges = tuple(
+            (status, EventKind.TASK_FAILED, TaskStatus.FAILED)
+            for status in non_terminals
+        ) + tuple(
+            (status, EventKind.TASK_CANCELLED, TaskStatus.CANCELLED)
+            for status in non_terminals
+        )
+
+        for index, (source, kind, target) in enumerate(explicit_edges + terminal_edges):
+            with self.subTest(source=source.value, kind=kind.value):
+                state = self.state_reached_from_genesis(source, f"edge-{index}")
+                result = reduce(state, self.event_for(state, f"edge-{index}", kind), ())
+                self.assertEqual(result.variant, ResultVariant.ACCEPTED)
+                self.assertEqual(result.accepted.state.status, target)
+                self.assertEqual(result.accepted.state.revision, state.revision + 1)
+
+    def test_event_kind_vocabulary_is_closed_and_matches_machine_contract(self) -> None:
+        self.assertEqual(
+            {kind.value for kind in EventKind},
+            {
+                "routing_validation_started", "routing_validation_passed", "dispatch_accepted",
+                "work_completed", "verification_passed", "verification_failed", "review_passed",
+                "review_rejected", "approval_required_raised", "fix_dispatch_requested",
+                "approval_granted", "approval_denied", "recording_completed", "task_blocked",
+                "blocked_recovery_to_fixing", "task_failed", "task_cancelled",
+            },
+        )
+        state, _ = self.make_transition()
+        for index, kind in enumerate(EventKind):
+            with self.subTest(kind=kind.value):
+                self.machine_contract_validator().validate(
+                    self.event_for(state, f"schema-event-{index}", kind).canonical()
+                )
+
+    def test_illegal_and_terminal_edges_fail_closed(self) -> None:
+        cases = (
+            (TaskStatus.PUBLISHED, EventKind.WORK_COMPLETED),
+            (TaskStatus.VERIFYING, EventKind.DISPATCH_ACCEPTED),
+            (TaskStatus.APPROVAL_REQUIRED, EventKind.RECORDING_COMPLETED),
+            (TaskStatus.BLOCKED, EventKind.WORK_COMPLETED),
+            (TaskStatus.DONE, EventKind.TASK_CANCELLED),
+            (TaskStatus.FAILED, EventKind.TASK_FAILED),
+            (TaskStatus.CANCELLED, EventKind.TASK_BLOCKED),
+        )
+        for index, (status, kind) in enumerate(cases):
+            with self.subTest(status=status.value, kind=kind.value):
+                state = self.state_reached_from_genesis(status, f"illegal-{index}")
+                result = reduce(state, self.event_for(state, f"illegal-{index}", kind), ())
+                self.assertEqual(result.variant, ResultVariant.REJECTED)
+                self.assertEqual(result.rejected.error_code, STATE_CONFLICT_ERROR)
+                self.assertIs(result.rejected.state, state)
+
+    def test_forged_state_revision_and_history_are_rejected(self) -> None:
+        initial, _ = self.make_transition()
+        forged_routing = replace(initial, status=TaskStatus.ROUTING_VALIDATION)
+        forged_nonzero_empty = replace(initial, revision=1)
+        reached_routing = self.state_reached_from_genesis(TaskStatus.ROUTING_VALIDATION, "mismatch")
+        forged_count = replace(reached_routing, revision=2)
+        cases = (
+            (forged_routing, EventKind.ROUTING_VALIDATION_PASSED, False),
+            (forged_nonzero_empty, EventKind.ROUTING_VALIDATION_STARTED, False),
+            (forged_count, EventKind.ROUTING_VALIDATION_PASSED, True),
+        )
+        for index, (state, kind, schema_valid) in enumerate(cases):
+            with self.subTest(status=state.status.value, revision=state.revision):
+                self.assertEqual(
+                    self.machine_contract_validator().is_valid(state.canonical()),
+                    schema_valid,
+                )
+                result = reduce(state, self.event_for(state, f"forged-{index}", kind), ())
+                self.assertEqual(result.variant, ResultVariant.REJECTED)
+                self.assertEqual(result.rejected.error_code, STATE_CONFLICT_ERROR)
+                self.assertIs(result.rejected.state, state)
+
+    def test_genesis_replay_recomputes_multi_step_spine_without_obligations(self) -> None:
+        initial, _ = self.make_transition()
+        sequence = (
+            EventKind.ROUTING_VALIDATION_STARTED,
+            EventKind.ROUTING_VALIDATION_PASSED,
+            EventKind.DISPATCH_ACCEPTED,
+            EventKind.WORK_COMPLETED,
+            EventKind.VERIFICATION_PASSED,
+            EventKind.REVIEW_PASSED,
+            EventKind.RECORDING_COMPLETED,
+        )
+        current = initial
+        entries = []
+        for index, kind in enumerate(sequence):
+            event = self.event_for(current, f"replay-{index}", kind)
+            result = reduce(current, event, ())
+            self.assertEqual(result.variant, ResultVariant.ACCEPTED)
+            entries.append(ReplayEntry(event=event, evidence_set=(), result=result))
+            current = result.accepted.state
+
+        replayed = replay(GenesisRoot(state=initial), tuple(entries))
+
+        self.assertEqual(replayed.state, current)
+        self.assertEqual(replayed.state.status, TaskStatus.DONE)
+        self.assertEqual(replayed.applied_result_digests, tuple(
+            entry.result.accepted.result_digest for entry in entries
+        ))
+        self.assertEqual(replayed.obligations, ())
 
     def test_identical_duplicate_is_no_op_bound_to_prior_result(self) -> None:
         state, event = self.make_transition()
@@ -216,6 +449,85 @@ class ProtocolKernelTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             replay(GenesisRoot(state=impossible), ())
+
+    def test_checkpoint_root_is_a_schema_valid_structural_contract(self) -> None:
+        state, event = self.make_transition()
+        accepted = reduce(state, event, ())
+        accepted_event = accepted.accepted.state.accepted_events[-1]
+        root = CheckpointRoot(
+            state=accepted.accepted.state,
+            accepted_entry_count=1,
+            prefix_digest="sha256:" + "a" * 64,
+            tail_event_id=accepted_event.event_id,
+            tail_result_id=accepted_event.result_id,
+            tail_result_digest=accepted_event.result_digest,
+            checkpoint_result_id=Identity(IdentityKind.RESULT, "checkpoint-1"),
+            trust_policy_digest="sha256:" + "b" * 64,
+        )
+
+        self.machine_contract_validator().validate(root.canonical())
+        self.assertEqual(root.state_digest, root.state_digest)
+
+    def test_checkpoint_root_rejects_count_or_tail_binding_mismatch(self) -> None:
+        state, event = self.make_transition()
+        accepted = reduce(state, event, ())
+        accepted_event = accepted.accepted.state.accepted_events[-1]
+        fields = {
+            "state": accepted.accepted.state,
+            "accepted_entry_count": 1,
+            "prefix_digest": "sha256:" + "a" * 64,
+            "tail_event_id": accepted_event.event_id,
+            "tail_result_id": accepted_event.result_id,
+            "tail_result_digest": accepted_event.result_digest,
+            "checkpoint_result_id": Identity(IdentityKind.RESULT, "checkpoint-1"),
+            "trust_policy_digest": "sha256:" + "b" * 64,
+        }
+
+        with self.assertRaises(ValueError):
+            CheckpointRoot(**{**fields, "accepted_entry_count": 0})
+        with self.assertRaises(ValueError):
+            CheckpointRoot(
+                **{
+                    **fields,
+                    "tail_event_id": Identity(IdentityKind.EVENT, "other-event"),
+                }
+            )
+
+    def test_checkpoint_schema_rejects_nonzero_revision_with_empty_history(self) -> None:
+        state, event = self.make_transition()
+        accepted = reduce(state, event, ())
+        accepted_event = accepted.accepted.state.accepted_events[-1]
+        root = CheckpointRoot(
+            state=accepted.accepted.state,
+            accepted_entry_count=1,
+            prefix_digest="sha256:" + "a" * 64,
+            tail_event_id=accepted_event.event_id,
+            tail_result_id=accepted_event.result_id,
+            tail_result_digest=accepted_event.result_digest,
+            checkpoint_result_id=Identity(IdentityKind.RESULT, "checkpoint-1"),
+            trust_policy_digest="sha256:" + "b" * 64,
+        ).canonical()
+        root["state"]["accepted_events"] = []
+
+        self.assertFalse(self.machine_contract_validator().is_valid(root))
+
+    def test_structural_checkpoint_root_cannot_start_replay_before_stage_2(self) -> None:
+        state, event = self.make_transition()
+        accepted = reduce(state, event, ())
+        accepted_event = accepted.accepted.state.accepted_events[-1]
+        root = CheckpointRoot(
+            state=accepted.accepted.state,
+            accepted_entry_count=1,
+            prefix_digest="sha256:" + "a" * 64,
+            tail_event_id=accepted_event.event_id,
+            tail_result_id=accepted_event.result_id,
+            tail_result_digest=accepted_event.result_digest,
+            checkpoint_result_id=Identity(IdentityKind.RESULT, "checkpoint-1"),
+            trust_policy_digest="sha256:" + "b" * 64,
+        )
+
+        with self.assertRaises(ValueError):
+            replay(root, ())
 
     def test_replay_recomputes_event_and_evidence_inputs(self) -> None:
         state, event = self.make_transition()

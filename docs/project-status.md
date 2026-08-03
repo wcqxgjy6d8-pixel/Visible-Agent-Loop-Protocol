@@ -8,7 +8,7 @@ multi-agent platform.
 
 | Area | Current state |
 |---|---|
-| Protocol | `0.2.0` |
+| Protocol | Stable `0.2.0`; `0.3.0-draft` normative documentation target |
 | Repository license | MIT |
 | Reference CLI | `bin/valp` with task workflow, v0.3 installation, leader, capability, migration, plugin, hello, conformance, audit, and doctor commands |
 | Reference runtime | HERDR for the documented Full Mode path |
@@ -27,6 +27,21 @@ The shipped draft core covers control-root bootstrap, explicit leader selection,
 leader epochs, message/event ledgers, replayable state, capability layers,
 plugin manifest boundary checks, migration dry-run/apply guards, and isolated
 conformance fixtures.
+
+## Layered Architecture Documentation Status
+
+[RFC 0002: VALP Layered Architecture](rfcs/0002-layered-architecture.md) and
+[SPEC Section 21](../SPEC.md#21-layered-architecture-and-kernel-boundary)
+document the accepted Protocol `0.3` ownership and proof model: five top-level
+layers, a pure deterministic Kernel, distinct Attempt identity, complementary
+proof kinds, cancellation fencing, bounded partial/degraded outcomes,
+Kernel-computed dimension gates, and independent version lines.
+
+This repository change is documentation only. It does not prove that the new
+Task/State/Work Item/Attempt/Result contracts, v3 state and receipt writes,
+pure reducer, migration fixtures, or Adapter conformance exist. Existing
+implementation and runtime claims below remain scoped to their current tests
+and artifacts.
 
 ## Verified In This Repository
 
@@ -62,6 +77,8 @@ platform.
 | Assignment declaration and validation schemas | Covered for bundled examples and negative cases | `schemas/assignment-declaration.schema.json`, `schemas/assignment-validation.schema.json`, `tests/test_schema_examples.py` |
 | Deterministic wake core | Covered locally for dependency barrier, identity rejection, revision CAS, duplicate wake, concurrent wake, and event-to-projection recovery | `valp_cli/workflow.py`, `tests/test_valp_workflow.py` |
 | v0.3 installation core | Covered for bootstrap, explicit leader selection, epoch fencing, CAS, idempotency, replay, capability registry, content-addressed claims/reviews, task Done reducer, plugin boundary, and migration dry-run | `valp_cli/control_plane.py`, `valp_cli/task_control.py`, `valp_cli/plugins.py`, `valp_cli/conformance.py`, `tests/test_control_plane.py` |
+| Protocol 0.3 layered architecture | Normative documentation covered; implementation not yet claimed | `SPEC.md` Section 21 and `docs/rfcs/0002-layered-architecture.md` |
+| Layered core machine contracts and conformance | Not implemented by this docs-only slice | Requires schemas, pure reducer RED/GREEN tests, v3 migration fixtures, proof-kind negative tests, Adapter conformance, independent review, and strict audit |
 | Local-process adapter | Covered for approved subprocess submission, lifecycle result, output evidence, and failure status | `valp_cli/process_adapter.py`, `schemas/process-adapter-run.schema.json`, `tests/test_control_plane.py` |
 | LangGraph API adapter | Covered for real run/thread identity, submission proof, state/output/checkpoint refs, failure reason, replay identity, and non-terminal wait windows | `valp_cli/langgraph_adapter.py`, `tests/test_langgraph_adapter.py` |
 | File-ledger queue concurrency | Covered on the current POSIX test host with synchronized cross-process submitters | `valp_cli/workflow.py`, `tests/test_valp_workflow.py`; real Windows subprocess proof remains open |
@@ -112,6 +129,7 @@ and exports the required receipts and evidence.
 | App installer behavior is not a protocol runtime | First-launch UX can accidentally hide path, preflight, and submit boundaries | First-install health gate is specified; App must expose doctor/preflight/dry-run results |
 | Windows local Full Mode is conditional | Native Windows runtime support is beta-dependent | Recommend SSH remote for stable Windows workflow |
 | Stable release is early | Users need clear limits around runtime proof and adapter coverage | Use the v0.3 draft core for installation-control-plane evaluation; keep stable/live-runtime claims tied to adapter proof |
+| Layered architecture is documentation-first | Normative ownership and proof semantics can be mistaken for shipped behavior | Keep schema, reducer, v3 receipt, migration, Adapter, platform, and runtime support claims blocked until matching implementation and conformance evidence exists |
 | Small public community | Social proof is low | Avoid community-size overclaims |
 
 ## Promotion Language

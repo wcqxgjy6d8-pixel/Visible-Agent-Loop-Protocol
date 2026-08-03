@@ -12,6 +12,7 @@ Start here:
 - [Repository README](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/README.md)
 - [中文注解](zh-CN/README.md)
 - [Protocol specification](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SPEC.md)
+- [RFC 0002: layered architecture and D01-D19 traceability](rfcs/0002-layered-architecture.md)
 - [v0.3 draft installation control plane](v0.3-implementation.md) and RFC
 - [Twelve-layer N/I/P audit matrix](twelve-layer-nip-matrix.md)
 - [Quickstart](quickstart.md)
@@ -34,6 +35,20 @@ task-local learning feedback that points to proof.
 
 VALP is currently `0.2.0`. It is an open protocol release plus a reference CLI,
 not a hosted production platform.
+
+## Protocol 0.3 Layered Architecture
+
+The Protocol `0.3` documentation target now separates VALP into five explicit
+layers: the Human Intent And Authority Boundary, Reference System, pure Protocol
+Kernel, Adapter Boundary, and External Runtime And Ecosystem. The
+[specification](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SPEC.md#21-layered-architecture-and-kernel-boundary)
+defines the normative ownership and proof boundaries; [RFC 0002](rfcs/0002-layered-architecture.md)
+records public D01-D19 traceability and the staged implementation boundary.
+
+This is a docs/spec-only architecture slice. It does not claim that the new
+core schemas, reducer, v3 state and receipt records, migrations, Adapter
+conformance, or cross-platform runtime proofs are implemented. The stable
+public release remains `0.2.0`.
 
 ## v0.3 Draft Implementation
 

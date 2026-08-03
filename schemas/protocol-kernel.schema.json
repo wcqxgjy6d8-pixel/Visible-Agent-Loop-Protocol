@@ -1,0 +1,311 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/protocol-kernel.v1.json",
+  "title": "VALP Pure Protocol Kernel Slice 1",
+  "oneOf": [
+    {"$ref": "#/$defs/state"},
+    {"$ref": "#/$defs/event"},
+    {"$ref": "#/$defs/evidence"},
+    {"$ref": "#/$defs/result"},
+    {"$ref": "#/$defs/genesisRoot"},
+    {"$ref": "#/$defs/replayEntry"},
+    {"$ref": "#/$defs/replay"}
+  ],
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "installation",
+            "task",
+            "work_item",
+            "attempt",
+            "dispatch",
+            "event",
+            "evidence",
+            "receipt",
+            "claim",
+            "result"
+          ]
+        },
+        "value": {"type": "string", "minLength": 1}
+      }
+    },
+    "installationIdentity": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {"properties": {"kind": {"const": "installation"}}}
+      ]
+    },
+    "taskIdentity": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {"properties": {"kind": {"const": "task"}}}
+      ]
+    },
+    "eventIdentity": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {"properties": {"kind": {"const": "event"}}}
+      ]
+    },
+    "evidenceIdentity": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {"properties": {"kind": {"const": "evidence"}}}
+      ]
+    },
+    "resultIdentity": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {"properties": {"kind": {"const": "result"}}}
+      ]
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "taskStatus": {
+      "enum": [
+        "published",
+        "routing_validation",
+        "dispatching",
+        "executing",
+        "verifying",
+        "reviewing",
+        "fixing",
+        "approval_required",
+        "recording",
+        "done",
+        "blocked",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "workItemStatus": {
+      "enum": [
+        "pending",
+        "eligible",
+        "submitted",
+        "running",
+        "completed",
+        "partial",
+        "degraded",
+        "blocked",
+        "failed",
+        "cancelled",
+        "skipped"
+      ]
+    },
+    "workItemRequirement": {"enum": ["required", "optional", "soft"]},
+    "attemptStatus": {
+      "enum": ["created", "submitted", "running", "completed", "failed", "cancelled", "fenced"]
+    },
+    "claimResult": {
+      "enum": ["pass", "fail", "unknown", "partial", "degraded", "not_applicable"]
+    },
+    "acceptedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "result_id", "input_digest", "result_digest"],
+      "properties": {
+        "event_id": {"$ref": "#/$defs/eventIdentity"},
+        "result_id": {"$ref": "#/$defs/resultIdentity"},
+        "input_digest": {"$ref": "#/$defs/digest"},
+        "result_digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "protocol_version",
+        "installation_id",
+        "leader_epoch",
+        "task_id",
+        "revision",
+        "status",
+        "accepted_events"
+      ],
+      "properties": {
+        "schema_version": {"const": "valp-kernel-state.v1"},
+        "protocol_version": {"const": "0.3.0-draft"},
+        "installation_id": {"$ref": "#/$defs/installationIdentity"},
+        "leader_epoch": {"type": "integer", "minimum": 0},
+        "task_id": {"$ref": "#/$defs/taskIdentity"},
+        "revision": {"type": "integer", "minimum": 0},
+        "status": {"$ref": "#/$defs/taskStatus"},
+        "accepted_events": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/acceptedEvent"},
+          "uniqueItems": true
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "event_id",
+        "installation_id",
+        "leader_epoch",
+        "task_id",
+        "kind",
+        "expected_revision"
+      ],
+      "properties": {
+        "schema_version": {"const": "valp-kernel-event.v1"},
+        "event_id": {"$ref": "#/$defs/eventIdentity"},
+        "installation_id": {"$ref": "#/$defs/installationIdentity"},
+        "leader_epoch": {"type": "integer", "minimum": 0},
+        "task_id": {"$ref": "#/$defs/taskIdentity"},
+        "kind": {"const": "routing_validation_started"},
+        "expected_revision": {"type": "integer", "minimum": 0}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "evidence_id", "content_digest"],
+      "properties": {
+        "schema_version": {"const": "valp-kernel-evidence.v1"},
+        "evidence_id": {"$ref": "#/$defs/evidenceIdentity"},
+        "content_digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "acceptedResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "variant",
+        "result_id",
+        "state",
+        "input_digest",
+        "result_digest",
+        "obligations",
+        "audit_facts"
+      ],
+      "properties": {
+        "schema_version": {"const": "valp-kernel-result.v1"},
+        "variant": {"const": "accepted"},
+        "result_id": {"$ref": "#/$defs/resultIdentity"},
+        "state": {"$ref": "#/$defs/state"},
+        "input_digest": {"$ref": "#/$defs/digest"},
+        "result_digest": {"$ref": "#/$defs/digest"},
+        "obligations": {"type": "array", "items": {"type": "string"}},
+        "audit_facts": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "noOpResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "variant",
+        "state",
+        "input_digest",
+        "prior_result_id",
+        "prior_result_digest"
+      ],
+      "properties": {
+        "schema_version": {"const": "valp-kernel-result.v1"},
+        "variant": {"const": "no_op"},
+        "state": {"$ref": "#/$defs/state"},
+        "input_digest": {"$ref": "#/$defs/digest"},
+        "prior_result_id": {"$ref": "#/$defs/resultIdentity"},
+        "prior_result_digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "rejectedResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "variant", "state", "input_digest", "error_code"],
+      "properties": {
+        "schema_version": {"const": "valp-kernel-result.v1"},
+        "variant": {"const": "rejected"},
+        "state": {"$ref": "#/$defs/state"},
+        "input_digest": {"$ref": "#/$defs/digest"},
+        "error_code": {
+          "enum": [
+            "VALP-E-UNKNOWN-ENUM-VALUE",
+            "VALP-E-STATE-CONFLICT",
+            "VALP-E-IDEMPOTENCY-CONFLICT"
+          ]
+        },
+        "prior_result_id": {"$ref": "#/$defs/resultIdentity"},
+        "prior_result_digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "result": {
+      "oneOf": [
+        {"$ref": "#/$defs/acceptedResult"},
+        {"$ref": "#/$defs/noOpResult"},
+        {"$ref": "#/$defs/rejectedResult"}
+      ]
+    },
+    "genesisState": {
+      "allOf": [
+        {"$ref": "#/$defs/state"},
+        {
+          "properties": {
+            "revision": {"const": 0},
+            "status": {"const": "published"},
+            "accepted_events": {"maxItems": 0}
+          }
+        }
+      ]
+    },
+    "genesisRoot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "state", "prefix_digest"],
+      "properties": {
+        "schema_version": {"const": "valp-kernel-genesis-root.v1"},
+        "state": {"$ref": "#/$defs/genesisState"},
+        "prefix_digest": {
+          "const": "sha256:fa1f226ad4960367691ffda3176c5f45a463c102a791799d33dcf2bbfa08b54d"
+        }
+      }
+    },
+    "replayEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "event", "evidence_set", "result"],
+      "properties": {
+        "schema_version": {"const": "valp-kernel-replay-entry.v1"},
+        "event": {"$ref": "#/$defs/event"},
+        "evidence_set": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/evidence"},
+          "uniqueItems": true
+        },
+        "result": {"$ref": "#/$defs/acceptedResult"}
+      }
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "state",
+        "applied_result_digests",
+        "obligations"
+      ],
+      "properties": {
+        "schema_version": {"const": "valp-kernel-replay.v1"},
+        "state": {"$ref": "#/$defs/state"},
+        "applied_result_digests": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/digest"}
+        },
+        "obligations": {"type": "array", "maxItems": 0}
+      }
+    }
+  }
+}

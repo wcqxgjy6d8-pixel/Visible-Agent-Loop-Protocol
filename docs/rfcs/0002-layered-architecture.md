@@ -1,18 +1,20 @@
 # RFC 0002: VALP Layered Architecture
 
-Status: Draft; based on frozen RFC-0001 layered-architecture semantics
+Status: Draft; based on frozen Blueprint 0001 layered-architecture semantics
 
 Target: VALP 0.3 design line
 
 Created: 2026-07-29
 
-Source basis: frozen artifact digests verified against the frozen RFC-0001
-artifact manifest
+Source basis: frozen-source provenance carried from Blueprint 0001. The source
+artifacts and artifact manifest are not distributed in this repository, so the
+metadata below is traceability context, not locally reproducible verification
+evidence.
 
 ## 1. Abstract
 
 This RFC publishes the approved layered-architecture semantics derived from the
-RFC-0001 design line. It separates protocol truth from system effects into five
+Blueprint 0001 design line. It separates protocol truth from system effects into five
 layers, defines the minimum machine contracts for a vertical implementation
 slice, and provides full traceability from the nineteen agent-reviewed design
 decisions (D01-D19) to their RFC destinations.
@@ -38,10 +40,17 @@ reference CLI until it is accepted and incorporated through reviewed changes.
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are normative.
 
-## 3. Frozen Source Basis
+## 3. Frozen Source Provenance
 
-The semantics in this document are derived from four frozen artifacts whose
-SHA-256 digests and byte sizes have been verified against the artifact manifest:
+The semantics in this document were derived from four frozen Blueprint 0001
+artifacts. Their SHA-256 digests and byte sizes were recorded during the source
+review. They cannot be re-verified from this public repository because neither
+the artifacts nor their manifest are included here.
+
+Blueprint 0001 is a design-source identifier only. It is not
+[RFC 0001: VALP v0.3 Installation Control Plane](0001-v0.3-installation-control-plane.md),
+which is the public RFC 0001 in this repository. This RFC is the public
+layered-architecture RFC 0002.
 
 | Artifact | SHA-256 digest | Size |
 |---|---|---|
@@ -163,9 +172,19 @@ network, allocate an external identity, inspect a UI, or perform a side effect.
 Time, runtime status, content digests, and identity observations enter as typed
 Events and Evidence created by the System or Adapter.
 
+For the `0.3.0-draft` Kernel contracts, canonical JSON bytes use UTF-8, sorted
+object keys, no insignificant whitespace, declared protocol array order,
+Evidence-set ordering by each Evidence canonical byte representation, unescaped
+non-ASCII UTF-8, no non-finite numbers, and one trailing LF byte. Digests are
+`sha256:` plus 64 lowercase hexadecimal characters over those exact bytes. The
+empty replay prefix preimage is
+`{"entries":[],"schema_version":"valp-kernel-replay-prefix.v1"}` plus its
+trailing LF, producing
+`sha256:fa1f226ad4960367691ffda3176c5f45a463c102a791799d33dcf2bbfa08b54d`.
+
 **Core entities.** Task, State, WorkItem, Attempt, Event, Evidence, Receipt,
-Claim, and Result. Each has a distinct identity; one MUST NOT substitute for
-another.
+Claim, Result, ReplayEntry, and CheckpointRoot. Each identity-bearing entity has
+a distinct identity; one MUST NOT substitute for another.
 
 **Result variants.** A Result contains exactly one of:
 
@@ -269,16 +288,64 @@ Unknown values in any closed vocabulary fail with
 
 ## 8. Attempt And Replay Semantics
 
-Replay applies accepted Events to rebuild state. Replay MUST NOT call an LLM,
-tool, Agent, Adapter, or runtime (D07). Any operation that can produce a
-different external output is a new Attempt. Retrying or redispatching creates a
-new Attempt ID even when the Work Item and payload are unchanged.
+Replay consumes accepted transitions in ledger order as:
+
+```text
+ReplayEntry(Event, EvidenceSet, accepted Result)
+replay(GenesisRoot | CheckpointRoot, ReplayEntry[]) -> Replay
+```
+
+For each entry, replay calls the pure `reduce(current State, Event,
+EvidenceSet)` function again. The recomputed Result MUST be `accepted`, and its
+complete canonical representation MUST be byte-for-byte equal to the recorded
+accepted Result, including next State, identities, revisions, digests,
+obligations, and audit facts. Only then does replay advance to the next State.
+A missing input, reordered entry, non-accepted Result, or mismatch fails closed.
+An internally consistent Result digest alone is not proof that the Event and
+Evidence passed the reducer.
+
+Replay validates recorded obligations but always returns an empty obligation
+set. It MUST NOT submit, deliver, or otherwise re-emit an obligation, and MUST
+NOT call an LLM, tool, Agent, Adapter, runtime, or effect handler (D07). The
+Reference System reconciles already accepted obligations against durable
+receipts through a separate recovery path. The `Replay` envelope contains the
+rebuilt State, ordered applied Result digests, and an exactly empty obligations
+collection; it is not another Result variant.
+
+A legal `GenesisRoot` is the canonical Task State for the applicable protocol
+version with valid installation, Leader epoch, and Task identities, status
+`published`, revision `0`, zero accepted entries, the canonical empty-prefix
+digest, and no prior Event or Result identity.
+
+A legal `CheckpointRoot` is a canonical, content-addressed record binding the
+exact State and State digest, protocol version, installation ID, Leader epoch,
+Task ID, revision, accepted-entry count, digest of the exact accepted
+`ReplayEntry` prefix, and tail Event ID, Result ID, and Result digest. It also
+binds a prior Kernel-accepted checkpoint Result under the declared checkpoint
+trust policy. That accepted Result and its supporting evidence MUST be
+independently verifiable from an immutable ledger before suffix replay begins.
+A bare State, opaque checkpoint reference, self-asserted digest, or cached
+projection is not a checkpoint. An implementation without the complete
+Checkpoint Root machine contract and verification path MUST accept only a
+`GenesisRoot`.
+
+For genesis replay, State revision equals the validated accepted-entry count.
+For checkpoint replay, revision, entry count, prefix digest, embedded history
+when present, and tail binding all describe the same exact prefix. Each suffix
+entry extends that prefix by exactly one revision and history record. Gaps,
+duplicate Event or Result identities, reordering, identity/version/epoch
+changes, revision `0` with non-empty history, and non-zero revision without an
+authenticated matching prefix all fail closed before an entry is applied.
+
+Any operation that can produce a different external output is a new Attempt.
+Retrying or redispatching creates a new Attempt ID even when the Work Item and
+payload are unchanged.
 
 The ledger preserves prior Attempt IDs, payload and control-contract digests,
-receipts and evidence, supersession or correction relationships, and the
-accepted Result for each Event. An identical duplicate Event is a no-op bound
-by ID and digest to the prior accepted Result. A duplicate identity with
-different content fails closed.
+receipts and evidence, supersession or correction relationships, and the full
+`ReplayEntry` for each accepted transition. An identical duplicate Event is a
+no-op bound by ID and digest to the prior accepted Result. A duplicate identity
+with different content fails closed.
 
 ## 9. Cancel, Interrupt, And Redirect
 
@@ -394,7 +461,8 @@ evidence gates.
 Delivery proceeds in four stages (D12):
 
 **MVP.** Canonical core entities and identities, pure reducer, canonical State
-and accepted/no-op/rejected Result variants, publish/validated assignment/
+and accepted/no-op/rejected Result variants, ordered `ReplayEntry` reducer
+re-execution from a validated Genesis Root, publish/validated assignment/
 dispatch receipts/evidence evaluation, System-materialized dimension policy
 Evidence and Kernel-computed required dimension gates, Done/Blocked/Failed/
 Cancelled, golden/negative/property/replay tests, one process-bound Adapter
@@ -402,7 +470,7 @@ proof path.
 
 **Stage 2: asynchronous and recovery.** Dependency frontier, wait/wake/resume,
 Attempt fencing, partial/degraded outcomes, handoff and restart recovery,
-Composite Adapter provenance.
+authenticated Checkpoint Root suffix replay, Composite Adapter provenance.
 
 **Stage 3: experience and learning.** Evidence Board and progressive disclosure,
 human interruption and redirect, expanded four-dimensional policy/SLO catalog
@@ -447,7 +515,7 @@ This RFC preserves:
 It refines or adds:
 
 - explicit five-layer ownership;
-- Attempt identity and no-side-effect replay;
+- Attempt identity and reducer-verified, no-side-effect replay;
 - cancellation fencing and intent redirect;
 - Work Item partial/degraded outcomes;
 - proof grades and Composite Adapter provenance;
@@ -484,15 +552,25 @@ Interrupt and Redirect Event contracts are required before Stage 3
 human-intervention work. Budget Record contracts are also deferred to Stage 3.
 Neither area is implementation-authorized by RFC prose alone.
 
+Checkpoint Root schema, accepted checkpoint Event/Result semantics, trust-policy
+evidence, and suffix-replay fixtures are Stage 2 contracts. Until they exist and
+pass independent negative tests, only Genesis Root replay is
+implementation-authorized; a bare non-zero State cannot be treated as a trusted
+checkpoint.
+
 ## 19. Acceptance Criteria
 
 This RFC is ready for implementation only when:
 
 - all five resolved decisions remain visibly closed;
 - an independent Reviewer checks the exact RFC digest;
-- core entities and transition rules have machine-contract drafts;
+- core entities, `ReplayEntry`, legal replay roots, and transition rules have
+  machine-contract drafts;
 - State, status enums, all three Result variants, and the four-dimensional
   evaluation boundary have machine-contract drafts and negative tests;
+- replay tests prove reducer re-execution, complete canonical Result equality,
+  zero re-emitted obligations, and rejection of malformed genesis/checkpoint
+  roots and impossible revision/history combinations;
 - the acceptance plan contains RED tests for every new semantic claim;
 - public and local-only material are separated;
 - no approval, receipt, evidence, or audit gate is weakened.

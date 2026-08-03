@@ -111,7 +111,7 @@ platform.
 | Live HERDR dispatch E2E completion case study | Not covered in repository CI | Requires sanitized task folder plus runtime submission and final audit evidence |
 | Live zero-model-turn deterministic wake and exactly-once coordinator continuation | Not covered in repository CI | Requires a wake-ID-bound continuation invocation receipt plus restart/restore evidence from a real adapter |
 | Non-HERDR real adapter E2E | Covered for the local LangGraph API development runtime | Production hosting and deterministic coordinator auto-continuation remain open |
-| Full state-machine transition suite | Partially covered | Installation and closed Layer 02 Task transitions are implemented and tested; Work Item and Attempt graphs remain planned |
+| Full state-machine transition suite | Partially covered | Installation, closed Layer 02 Task transitions, and the first bounded pure-Kernel Work Item/Attempt graph slice are implemented and tested; wait/wake, checkpoint suffix replay, and Adapter adoption remain open |
 | Context compression runtime integration | Partially covered | Semantics are documented; live adapter enforcement is not yet covered |
 | Auto Visible watcher E2E | Not covered | Trigger policy semantics exist; watcher implementation is runtime-specific |
 | App-managed first install E2E | Not covered in repository CI | Protocol now defines doctor-first health gate; App installer implementation must prove it |

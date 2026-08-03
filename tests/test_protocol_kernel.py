@@ -24,6 +24,12 @@ from valp_cli.protocol_kernel import (
     STATE_CONFLICT_ERROR,
     State,
     TaskStatus,
+    Dependency,
+    Attempt,
+    AttemptStatus,
+    WorkItem,
+    WorkItemRequirement,
+    WorkItemStatus,
     UNKNOWN_ENUM_ERROR,
     reduce,
     replay,
@@ -31,6 +37,388 @@ from valp_cli.protocol_kernel import (
 
 
 class ProtocolKernelTests(unittest.TestCase):
+    def test_dependency_satisfied_work_item_becomes_eligible(self) -> None:
+        installation = Identity(IdentityKind.INSTALLATION, "installation-work")
+        task = Identity(IdentityKind.TASK, "task-work")
+        dependency_id = Identity(IdentityKind.WORK_ITEM, "dependency")
+        work_item_id = Identity(IdentityKind.WORK_ITEM, "target")
+        state = State(
+            protocol_version=PROTOCOL_VERSION,
+            installation_id=installation,
+            leader_epoch=1,
+            task_id=task,
+            revision=0,
+            status=TaskStatus.PUBLISHED,
+            work_items=(
+                WorkItem(task_id=task, work_item_id=dependency_id,
+                         requirement=WorkItemRequirement.REQUIRED,
+                         status=WorkItemStatus.COMPLETED),
+                WorkItem(task_id=task, work_item_id=work_item_id,
+                         requirement=WorkItemRequirement.REQUIRED,
+                         dependencies=(Dependency(dependency_id, WorkItemRequirement.REQUIRED),)),
+            ),
+        )
+        result = reduce(
+            state,
+            Event(
+                event_id=Identity(IdentityKind.EVENT, "eligible-target"),
+                installation_id=installation,
+                leader_epoch=1,
+                task_id=task,
+                kind=EventKind.WORK_ITEM_ELIGIBLE,
+                expected_revision=0,
+                work_item_id=work_item_id,
+            ),
+            (),
+        )
+
+        self.assertEqual(result.variant, ResultVariant.ACCEPTED)
+        self.assertEqual(result.accepted.state.work_items[1].status, WorkItemStatus.ELIGIBLE)
+
+    def test_eligible_work_item_creates_identity_bound_attempt(self) -> None:
+        installation = Identity(IdentityKind.INSTALLATION, "installation-attempt")
+        task = Identity(IdentityKind.TASK, "task-attempt")
+        work_item_id = Identity(IdentityKind.WORK_ITEM, "work-attempt")
+        attempt_id = Identity(IdentityKind.ATTEMPT, "attempt-1")
+        dispatch_id = Identity(IdentityKind.DISPATCH, "dispatch-1")
+        state = State(
+            protocol_version=PROTOCOL_VERSION, installation_id=installation,
+            leader_epoch=1, task_id=task, revision=0, status=TaskStatus.PUBLISHED,
+            work_items=(WorkItem(task, work_item_id, WorkItemRequirement.REQUIRED,
+                                 status=WorkItemStatus.ELIGIBLE),),
+        )
+
+        result = reduce(state, Event(
+            event_id=Identity(IdentityKind.EVENT, "create-attempt"),
+            installation_id=installation, leader_epoch=1, task_id=task,
+            kind=EventKind.ATTEMPT_CREATED, expected_revision=0,
+            work_item_id=work_item_id, attempt_id=attempt_id,
+            dispatch_id=dispatch_id, dispatch_generation=0,
+        ), ())
+
+        self.assertEqual(result.variant, ResultVariant.ACCEPTED)
+        item = result.accepted.state.work_items[0]
+        self.assertEqual(item.status, WorkItemStatus.SUBMITTED)
+        self.assertEqual(item.current_attempt.attempt_id, attempt_id)
+        self.assertEqual(item.current_attempt.dispatch_generation, 0)
+
+    def test_duplicate_current_attempt_created_is_an_idempotent_no_op(self) -> None:
+        installation = Identity(IdentityKind.INSTALLATION, "installation-attempt-no-op")
+        task = Identity(IdentityKind.TASK, "task-attempt-no-op")
+        work = Identity(IdentityKind.WORK_ITEM, "work-attempt-no-op")
+        event = Event(
+            event_id=Identity(IdentityKind.EVENT, "create-attempt-no-op"),
+            installation_id=installation,
+            leader_epoch=1,
+            task_id=task,
+            kind=EventKind.ATTEMPT_CREATED,
+            expected_revision=0,
+            work_item_id=work,
+            attempt_id=Identity(IdentityKind.ATTEMPT, "attempt-no-op"),
+            dispatch_id=Identity(IdentityKind.DISPATCH, "dispatch-no-op"),
+            dispatch_generation=0,
+        )
+        initial = State(
+            protocol_version=PROTOCOL_VERSION,
+            installation_id=installation,
+            leader_epoch=1,
+            task_id=task,
+            revision=0,
+            status=TaskStatus.PUBLISHED,
+            work_items=(WorkItem(
+                task,
+                work,
+                WorkItemRequirement.REQUIRED,
+                status=WorkItemStatus.ELIGIBLE,
+            ),),
+        )
+        accepted = reduce(initial, event, ())
+
+        duplicate = reduce(accepted.accepted.state, event, ())
+
+        self.assertEqual(duplicate.variant, ResultVariant.NO_OP)
+        self.assertIs(duplicate.no_op.state, accepted.accepted.state)
+
+    def test_fenced_attempt_rejects_late_completion_for_the_same_generation(self) -> None:
+        installation = Identity(IdentityKind.INSTALLATION, "installation-fence")
+        task = Identity(IdentityKind.TASK, "task-fence")
+        work_item_id = Identity(IdentityKind.WORK_ITEM, "work-fence")
+        attempt_id = Identity(IdentityKind.ATTEMPT, "attempt-fence")
+        dispatch_id = Identity(IdentityKind.DISPATCH, "dispatch-fence")
+        attempt = Attempt(task, work_item_id, attempt_id, dispatch_id, 3,
+                          status=AttemptStatus.RUNNING)
+        state = State(
+            protocol_version=PROTOCOL_VERSION, installation_id=installation,
+            leader_epoch=1, task_id=task, revision=0, status=TaskStatus.PUBLISHED,
+            work_items=(WorkItem(task, work_item_id, WorkItemRequirement.REQUIRED,
+                                 status=WorkItemStatus.RUNNING, current_attempt=attempt),),
+        )
+        fence = Event(
+            event_id=Identity(IdentityKind.EVENT, "fence"), installation_id=installation,
+            leader_epoch=1, task_id=task, kind=EventKind.ATTEMPT_FENCED,
+            expected_revision=0, work_item_id=work_item_id, attempt_id=attempt_id,
+            dispatch_id=dispatch_id, dispatch_generation=3,
+        )
+        fenced = reduce(state, fence, ())
+
+        self.assertEqual(fenced.variant, ResultVariant.ACCEPTED)
+        self.assertEqual(fenced.accepted.state.work_items[0].current_attempt.status, AttemptStatus.FENCED)
+        stale = reduce(fenced.accepted.state, Event(
+            event_id=Identity(IdentityKind.EVENT, "late-completion"),
+            installation_id=installation, leader_epoch=1, task_id=task,
+            kind=EventKind.ATTEMPT_COMPLETED, expected_revision=1,
+            work_item_id=work_item_id, attempt_id=attempt_id,
+            dispatch_id=dispatch_id, dispatch_generation=3,
+        ), ())
+        self.assertEqual(stale.variant, ResultVariant.REJECTED)
+        self.assertEqual(stale.rejected.error_code, STATE_CONFLICT_ERROR)
+
+    def test_fenced_attempt_rejects_failed_and_cancelled_events(self) -> None:
+        installation = Identity(IdentityKind.INSTALLATION, "install-fenced-terminal")
+        task = Identity(IdentityKind.TASK, "task-fenced-terminal")
+        work = Identity(IdentityKind.WORK_ITEM, "work-fenced-terminal")
+        attempt = Identity(IdentityKind.ATTEMPT, "attempt-fenced-terminal")
+        dispatch = Identity(IdentityKind.DISPATCH, "dispatch-fenced-terminal")
+        state = State(PROTOCOL_VERSION, installation, 1, task, 0, TaskStatus.PUBLISHED,
+                      work_items=(WorkItem(task, work, WorkItemRequirement.REQUIRED,
+                          status=WorkItemStatus.RUNNING,
+                          current_attempt=Attempt(task, work, attempt, dispatch, 0,
+                              AttemptStatus.FENCED)),))
+        for kind in (EventKind.ATTEMPT_FAILED, EventKind.ATTEMPT_CANCELLED):
+            with self.subTest(kind=kind.value):
+                result = reduce(state, Event(
+                    Identity(IdentityKind.EVENT, f"fenced-{kind.value}"), installation,
+                    1, task, kind, 0, work, attempt, dispatch, 0), ())
+                self.assertEqual(result.variant, ResultVariant.REJECTED)
+                self.assertEqual(result.rejected.error_code, STATE_CONFLICT_ERROR)
+
+    def test_terminal_attempts_reject_fencing(self) -> None:
+        installation = Identity(IdentityKind.INSTALLATION, "install-terminal-fence")
+        task = Identity(IdentityKind.TASK, "task-terminal-fence")
+        work = Identity(IdentityKind.WORK_ITEM, "work-terminal-fence")
+        attempt_id = Identity(IdentityKind.ATTEMPT, "attempt-terminal-fence")
+        dispatch = Identity(IdentityKind.DISPATCH, "dispatch-terminal-fence")
+        for attempt_status, work_status in (
+            (AttemptStatus.COMPLETED, WorkItemStatus.COMPLETED),
+            (AttemptStatus.FAILED, WorkItemStatus.FAILED),
+            (AttemptStatus.CANCELLED, WorkItemStatus.CANCELLED),
+        ):
+            with self.subTest(status=attempt_status.value):
+                state = State(
+                    PROTOCOL_VERSION,
+                    installation,
+                    1,
+                    task,
+                    0,
+                    TaskStatus.PUBLISHED,
+                    work_items=(WorkItem(
+                        task,
+                        work,
+                        WorkItemRequirement.REQUIRED,
+                        status=work_status,
+                        current_attempt=Attempt(
+                            task,
+                            work,
+                            attempt_id,
+                            dispatch,
+                            0,
+                            attempt_status,
+                        ),
+                    ),),
+                )
+                result = reduce(state, Event(
+                    Identity(IdentityKind.EVENT, f"fence-{attempt_status.value}"),
+                    installation,
+                    1,
+                    task,
+                    EventKind.ATTEMPT_FENCED,
+                    0,
+                    work,
+                    attempt_id,
+                    dispatch,
+                    0,
+                ), ())
+                self.assertEqual(result.variant, ResultVariant.REJECTED)
+                self.assertEqual(result.rejected.error_code, STATE_CONFLICT_ERROR)
+
+    def test_terminal_attempts_reject_failed_and_cancelled_even_if_work_item_is_running(self) -> None:
+        installation = Identity(IdentityKind.INSTALLATION, "install-terminal-event")
+        task = Identity(IdentityKind.TASK, "task-terminal-event")
+        work = Identity(IdentityKind.WORK_ITEM, "work-terminal-event")
+        attempt_id = Identity(IdentityKind.ATTEMPT, "attempt-terminal-event")
+        dispatch = Identity(IdentityKind.DISPATCH, "dispatch-terminal-event")
+        for attempt_status in (
+            AttemptStatus.COMPLETED,
+            AttemptStatus.FAILED,
+            AttemptStatus.CANCELLED,
+        ):
+            for kind in (EventKind.ATTEMPT_FAILED, EventKind.ATTEMPT_CANCELLED):
+                with self.subTest(status=attempt_status.value, kind=kind.value):
+                    state = State(
+                        PROTOCOL_VERSION,
+                        installation,
+                        1,
+                        task,
+                        0,
+                        TaskStatus.PUBLISHED,
+                        work_items=(WorkItem(
+                            task,
+                            work,
+                            WorkItemRequirement.REQUIRED,
+                            status=WorkItemStatus.RUNNING,
+                            current_attempt=Attempt(
+                                task,
+                                work,
+                                attempt_id,
+                                dispatch,
+                                0,
+                                attempt_status,
+                            ),
+                        ),),
+                    )
+                    result = reduce(state, Event(
+                        Identity(IdentityKind.EVENT, f"{kind.value}-{attempt_status.value}"),
+                        installation,
+                        1,
+                        task,
+                        kind,
+                        0,
+                        work,
+                        attempt_id,
+                        dispatch,
+                        0,
+                    ), ())
+                    self.assertEqual(result.variant, ResultVariant.REJECTED)
+                    self.assertEqual(result.rejected.error_code, STATE_CONFLICT_ERROR)
+
+    def test_blocked_retry_requires_new_attempt_identity_and_higher_generation(self) -> None:
+        installation = Identity(IdentityKind.INSTALLATION, "install-retry")
+        task = Identity(IdentityKind.TASK, "task-retry")
+        work = Identity(IdentityKind.WORK_ITEM, "work-retry")
+        attempt = Identity(IdentityKind.ATTEMPT, "attempt-retry")
+        dispatch = Identity(IdentityKind.DISPATCH, "dispatch-retry")
+        state = State(PROTOCOL_VERSION, installation, 1, task, 0, TaskStatus.PUBLISHED,
+                      work_items=(WorkItem(task, work, WorkItemRequirement.REQUIRED,
+                          status=WorkItemStatus.BLOCKED,
+                          current_attempt=Attempt(task, work, attempt, dispatch, 0,
+                              AttemptStatus.FENCED)),))
+        result = reduce(state, Event(
+            Identity(IdentityKind.EVENT, "same-attempt-retry"), installation, 1, task,
+            EventKind.ATTEMPT_CREATED, 0, work, attempt,
+            Identity(IdentityKind.DISPATCH, "dispatch-retry-1"), 1), ())
+        self.assertEqual(result.variant, ResultVariant.REJECTED)
+        self.assertEqual(result.rejected.error_code, STATE_CONFLICT_ERROR)
+
+    def test_superseded_accepted_attempt_event_rejects_before_idempotency_no_op(self) -> None:
+        installation = Identity(IdentityKind.INSTALLATION, "install-superseded")
+        task = Identity(IdentityKind.TASK, "task-superseded")
+        work = Identity(IdentityKind.WORK_ITEM, "work-superseded")
+        old_attempt = Identity(IdentityKind.ATTEMPT, "attempt-old")
+        old_dispatch = Identity(IdentityKind.DISPATCH, "dispatch-old")
+        state = State(PROTOCOL_VERSION, installation, 1, task, 0, TaskStatus.PUBLISHED,
+                      work_items=(WorkItem(task, work, WorkItemRequirement.REQUIRED,
+                                           status=WorkItemStatus.ELIGIBLE),))
+        old_create = Event(Identity(IdentityKind.EVENT, "old-create"), installation, 1, task,
+                           EventKind.ATTEMPT_CREATED, 0, work, old_attempt, old_dispatch, 0)
+        state = reduce(state, old_create, ()).accepted.state
+        state = reduce(state, Event(Identity(IdentityKind.EVENT, "block-old"), installation,
+            1, task, EventKind.WORK_ITEM_BLOCKED, 1, work), ()).accepted.state
+        state = reduce(state, Event(Identity(IdentityKind.EVENT, "retry-new"), installation,
+            1, task, EventKind.ATTEMPT_CREATED, 2, work,
+            Identity(IdentityKind.ATTEMPT, "attempt-new"),
+            Identity(IdentityKind.DISPATCH, "dispatch-new"), 1), ()).accepted.state
+
+        stale = reduce(state, old_create, ())
+
+        self.assertEqual(stale.variant, ResultVariant.REJECTED)
+        self.assertEqual(stale.rejected.error_code, STATE_CONFLICT_ERROR)
+
+    def test_attempt_spine_reaches_completed_work_item_through_public_reduce(self) -> None:
+        installation = Identity(IdentityKind.INSTALLATION, "installation-spine")
+        task = Identity(IdentityKind.TASK, "task-spine")
+        work = Identity(IdentityKind.WORK_ITEM, "work-spine")
+        attempt = Identity(IdentityKind.ATTEMPT, "attempt-spine")
+        dispatch = Identity(IdentityKind.DISPATCH, "dispatch-spine")
+        state = State(PROTOCOL_VERSION, installation, 1, task, 0, TaskStatus.PUBLISHED,
+                      work_items=(WorkItem(task, work, WorkItemRequirement.REQUIRED,
+                                           status=WorkItemStatus.ELIGIBLE),))
+        for index, kind in enumerate((
+            EventKind.ATTEMPT_CREATED, EventKind.ATTEMPT_SUBMITTED,
+            EventKind.ATTEMPT_RUNNING, EventKind.ATTEMPT_COMPLETED,
+        )):
+            result = reduce(state, Event(
+                event_id=Identity(IdentityKind.EVENT, f"spine-{index}"),
+                installation_id=installation, leader_epoch=1, task_id=task,
+                kind=kind, expected_revision=state.revision, work_item_id=work,
+                attempt_id=attempt, dispatch_id=dispatch, dispatch_generation=0,
+            ), ())
+            self.assertEqual(result.variant, ResultVariant.ACCEPTED)
+            state = result.accepted.state
+        self.assertEqual(state.work_items[0].status, WorkItemStatus.COMPLETED)
+        self.assertEqual(state.work_items[0].current_attempt.status, AttemptStatus.COMPLETED)
+
+    def test_required_incomplete_dependency_cannot_become_eligible(self) -> None:
+        state, event = self.make_transition()
+        dependency = Identity(IdentityKind.WORK_ITEM, "required-dependency")
+        target = Identity(IdentityKind.WORK_ITEM, "required-target")
+        state = replace(state, work_items=(
+            WorkItem(state.task_id, dependency, WorkItemRequirement.REQUIRED),
+            WorkItem(state.task_id, target, WorkItemRequirement.REQUIRED,
+                     dependencies=(Dependency(dependency, WorkItemRequirement.REQUIRED),)),
+        ))
+        result = reduce(state, replace(event, kind=EventKind.WORK_ITEM_ELIGIBLE,
+                                       work_item_id=target), ())
+        self.assertEqual(result.variant, ResultVariant.REJECTED)
+        self.assertEqual(result.rejected.error_code, STATE_CONFLICT_ERROR)
+
+    def test_optional_and_soft_dependencies_are_eligible_with_soft_audit_fact(self) -> None:
+        state, event = self.make_transition()
+        dependency = Identity(IdentityKind.WORK_ITEM, "nonrequired-dependency")
+        for requirement, expects_soft_fact in (
+            (WorkItemRequirement.OPTIONAL, False),
+            (WorkItemRequirement.SOFT, True),
+        ):
+            with self.subTest(requirement=requirement.value):
+                target = Identity(IdentityKind.WORK_ITEM, f"target-{requirement.value}")
+                candidate = replace(state, work_items=(
+                    WorkItem(state.task_id, dependency, WorkItemRequirement.REQUIRED),
+                    WorkItem(state.task_id, target, WorkItemRequirement.REQUIRED,
+                             dependencies=(Dependency(dependency, requirement),)),
+                ))
+                result = reduce(candidate, replace(event, event_id=Identity(IdentityKind.EVENT,
+                    f"eligible-{requirement.value}"), kind=EventKind.WORK_ITEM_ELIGIBLE,
+                    work_item_id=target), ())
+                self.assertEqual(result.variant, ResultVariant.ACCEPTED)
+                self.assertEqual(any(fact.startswith("soft_dependency_unmet")
+                    for fact in result.accepted.audit_facts), expects_soft_fact)
+
+    def test_work_item_targeted_by_required_dependency_cannot_be_skipped(self) -> None:
+        state, event = self.make_transition()
+        prerequisite = Identity(IdentityKind.WORK_ITEM, "required-edge-prerequisite")
+        dependent = Identity(IdentityKind.WORK_ITEM, "required-edge-dependent")
+        state = replace(state, work_items=(
+            WorkItem(state.task_id, prerequisite, WorkItemRequirement.OPTIONAL),
+            WorkItem(
+                state.task_id,
+                dependent,
+                WorkItemRequirement.REQUIRED,
+                dependencies=(Dependency(
+                    prerequisite,
+                    WorkItemRequirement.REQUIRED,
+                ),),
+            ),
+        ))
+
+        result = reduce(state, replace(
+            event,
+            event_id=Identity(IdentityKind.EVENT, "skip-required-edge-target"),
+            kind=EventKind.WORK_ITEM_SKIPPED,
+            work_item_id=prerequisite,
+        ), ())
+
+        self.assertEqual(result.variant, ResultVariant.REJECTED)
+        self.assertEqual(result.rejected.error_code, STATE_CONFLICT_ERROR)
+
     def machine_contract_validator(self) -> Draft202012Validator:
         schema = json.loads(
             (Path(__file__).parents[1] / "schemas/protocol-kernel.schema.json").read_text(
@@ -68,6 +456,80 @@ class ProtocolKernelTests(unittest.TestCase):
             "a463c102a791799d33dcf2bbfa08b54d",
         )
 
+    def test_task_only_state_canonical_form_remains_compatible(self) -> None:
+        state, _ = self.make_transition()
+        self.assertEqual(state.canonical(), {
+            "schema_version": "valp-kernel-state.v1",
+            "protocol_version": PROTOCOL_VERSION,
+            "installation_id": {"kind": "installation", "value": "installation-1"},
+            "leader_epoch": 1,
+            "task_id": {"kind": "task", "value": "task-1"},
+            "revision": 0,
+            "status": "published",
+            "accepted_events": [],
+        })
+
+    def test_nonempty_work_item_table_is_present_in_canonical_state(self) -> None:
+        state, _ = self.make_transition()
+        work = Identity(IdentityKind.WORK_ITEM, "canonical-work")
+        state = replace(state, work_items=(WorkItem(
+            state.task_id,
+            work,
+            WorkItemRequirement.REQUIRED,
+        ),))
+
+        canonical = state.canonical()
+
+        self.assertEqual(canonical["work_items"], [
+            {
+                "task_id": state.task_id.canonical(),
+                "work_item_id": work.canonical(),
+                "requirement": "required",
+                "status": "pending",
+                "dependencies": [],
+                "current_attempt": None,
+            },
+        ])
+        self.machine_contract_validator().validate(canonical)
+
+    def test_work_event_schema_requires_its_exact_identity_fields(self) -> None:
+        state, _ = self.make_transition()
+        validator = self.machine_contract_validator()
+        attempt_without_tuple = Event(
+            Identity(IdentityKind.EVENT, "schema-attempt"), state.installation_id,
+            state.leader_epoch, state.task_id, EventKind.ATTEMPT_FENCED, 0)
+        work_without_item = Event(
+            Identity(IdentityKind.EVENT, "schema-work"), state.installation_id,
+            state.leader_epoch, state.task_id, EventKind.WORK_ITEM_ELIGIBLE, 0)
+        self.assertFalse(validator.is_valid(attempt_without_tuple.canonical()))
+        self.assertFalse(validator.is_valid(work_without_item.canonical()))
+
+    def test_genesis_replay_rebuilds_nonempty_work_item_attempt_spine_without_obligations(self) -> None:
+        installation = Identity(IdentityKind.INSTALLATION, "installation-replay-work")
+        task = Identity(IdentityKind.TASK, "task-replay-work")
+        work = Identity(IdentityKind.WORK_ITEM, "work-replay-work")
+        attempt = Identity(IdentityKind.ATTEMPT, "attempt-replay-work")
+        dispatch = Identity(IdentityKind.DISPATCH, "dispatch-replay-work")
+        state = State(PROTOCOL_VERSION, installation, 1, task, 0, TaskStatus.PUBLISHED,
+                      work_items=(WorkItem(task, work, WorkItemRequirement.REQUIRED),))
+        entries = []
+        for index, kind in enumerate((EventKind.WORK_ITEM_ELIGIBLE, EventKind.ATTEMPT_CREATED,
+                                      EventKind.ATTEMPT_SUBMITTED, EventKind.ATTEMPT_RUNNING,
+                                      EventKind.ATTEMPT_COMPLETED)):
+            event = Event(Identity(IdentityKind.EVENT, f"replay-work-{index}"), installation,
+                1, task, kind, state.revision, work,
+                attempt if kind != EventKind.WORK_ITEM_ELIGIBLE else None,
+                dispatch if kind != EventKind.WORK_ITEM_ELIGIBLE else None,
+                0 if kind != EventKind.WORK_ITEM_ELIGIBLE else None)
+            result = reduce(state, event, ())
+            self.assertEqual(result.variant, ResultVariant.ACCEPTED)
+            entries.append(ReplayEntry(event, (), result))
+            state = result.accepted.state
+        replayed = replay(GenesisRoot(State(PROTOCOL_VERSION, installation, 1, task, 0,
+            TaskStatus.PUBLISHED, work_items=(WorkItem(task, work, WorkItemRequirement.REQUIRED),))), entries)
+        self.assertEqual(replayed.state, state)
+        self.assertEqual(replayed.obligations, ())
+
     def test_routing_validation_transition_is_accepted(self) -> None:
         state, event = self.make_transition()
 
@@ -97,6 +559,17 @@ class ProtocolKernelTests(unittest.TestCase):
         self.assertEqual(result.accepted.state.status, TaskStatus.DISPATCHING)
 
     def event_for(self, state, event_id: str, kind: EventKind) -> Event:
+        work_item_id = None
+        attempt_id = None
+        dispatch_id = None
+        dispatch_generation = None
+        if kind.value.startswith("work_item_"):
+            work_item_id = Identity(IdentityKind.WORK_ITEM, f"work-{event_id}")
+        if kind.value.startswith("attempt_"):
+            work_item_id = Identity(IdentityKind.WORK_ITEM, f"work-{event_id}")
+            attempt_id = Identity(IdentityKind.ATTEMPT, f"attempt-{event_id}")
+            dispatch_id = Identity(IdentityKind.DISPATCH, f"dispatch-{event_id}")
+            dispatch_generation = 0
         return Event(
             event_id=Identity(IdentityKind.EVENT, event_id),
             installation_id=state.installation_id,
@@ -104,6 +577,10 @@ class ProtocolKernelTests(unittest.TestCase):
             task_id=state.task_id,
             kind=kind,
             expected_revision=state.revision,
+            work_item_id=work_item_id,
+            attempt_id=attempt_id,
+            dispatch_id=dispatch_id,
+            dispatch_generation=dispatch_generation,
         )
 
     def state_reached_from_genesis(self, target: TaskStatus, prefix: str) -> State:
@@ -233,6 +710,10 @@ class ProtocolKernelTests(unittest.TestCase):
                 "review_rejected", "approval_required_raised", "fix_dispatch_requested",
                 "approval_granted", "approval_denied", "recording_completed", "task_blocked",
                 "blocked_recovery_to_fixing", "task_failed", "task_cancelled",
+                "work_item_eligible", "attempt_created", "attempt_submitted", "attempt_running",
+                "attempt_completed", "attempt_failed", "attempt_cancelled", "attempt_fenced",
+                "work_item_partial", "work_item_degraded", "work_item_blocked",
+                "work_item_failed", "work_item_cancelled", "work_item_skipped",
             },
         )
         state, _ = self.make_transition()

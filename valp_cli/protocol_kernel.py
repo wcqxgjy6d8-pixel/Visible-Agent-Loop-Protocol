@@ -98,6 +98,20 @@ class EventKind(str, Enum):
     BLOCKED_RECOVERY_TO_FIXING = "blocked_recovery_to_fixing"
     TASK_FAILED = "task_failed"
     TASK_CANCELLED = "task_cancelled"
+    WORK_ITEM_ELIGIBLE = "work_item_eligible"
+    ATTEMPT_CREATED = "attempt_created"
+    ATTEMPT_COMPLETED = "attempt_completed"
+    ATTEMPT_FENCED = "attempt_fenced"
+    ATTEMPT_SUBMITTED = "attempt_submitted"
+    ATTEMPT_RUNNING = "attempt_running"
+    ATTEMPT_FAILED = "attempt_failed"
+    ATTEMPT_CANCELLED = "attempt_cancelled"
+    WORK_ITEM_PARTIAL = "work_item_partial"
+    WORK_ITEM_DEGRADED = "work_item_degraded"
+    WORK_ITEM_BLOCKED = "work_item_blocked"
+    WORK_ITEM_FAILED = "work_item_failed"
+    WORK_ITEM_CANCELLED = "work_item_cancelled"
+    WORK_ITEM_SKIPPED = "work_item_skipped"
 
 
 KERNEL_TASK_TRANSITIONS: Mapping[Tuple[TaskStatus, EventKind], TaskStatus] = {
@@ -170,10 +184,69 @@ class Evidence:
     content_digest: str
 
     def canonical(self) -> Mapping[str, Any]:
-        return {
+        value = {
             "schema_version": "valp-kernel-evidence.v1",
             "evidence_id": self.evidence_id.canonical(),
             "content_digest": self.content_digest,
+        }
+
+
+@dataclass(frozen=True)
+class Dependency:
+    work_item_id: Identity
+    requirement: WorkItemRequirement
+
+    def canonical(self) -> Mapping[str, Any]:
+        value = {
+            "work_item_id": self.work_item_id.canonical(),
+            "requirement": self.requirement.value,
+        }
+
+
+@dataclass(frozen=True)
+class Attempt:
+    task_id: Identity
+    work_item_id: Identity
+    attempt_id: Identity
+    dispatch_id: Identity
+    dispatch_generation: int
+    status: AttemptStatus = AttemptStatus.CREATED
+
+    def canonical(self) -> Mapping[str, Any]:
+        return {
+            "task_id": self.task_id.canonical(),
+            "work_item_id": self.work_item_id.canonical(),
+            "attempt_id": self.attempt_id.canonical(),
+            "dispatch_id": self.dispatch_id.canonical(),
+            "dispatch_generation": self.dispatch_generation,
+            "status": self.status.value,
+        }
+
+
+@dataclass(frozen=True)
+class WorkItem:
+    task_id: Identity
+    work_item_id: Identity
+    requirement: WorkItemRequirement
+    status: WorkItemStatus = WorkItemStatus.PENDING
+    dependencies: Tuple[Dependency, ...] = ()
+    current_attempt: Optional[Attempt] = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "dependencies", tuple(self.dependencies))
+
+    def canonical(self) -> Mapping[str, Any]:
+        return {
+            "task_id": self.task_id.canonical(),
+            "work_item_id": self.work_item_id.canonical(),
+            "requirement": self.requirement.value,
+            "status": self.status.value,
+            "dependencies": [item.canonical() for item in self.dependencies],
+            "current_attempt": (
+                self.current_attempt.canonical()
+                if self.current_attempt is not None
+                else None
+            ),
         }
 
 
@@ -185,10 +258,14 @@ class Event:
     task_id: Identity
     kind: Union[EventKind, str]
     expected_revision: int
+    work_item_id: Optional[Identity] = None
+    attempt_id: Optional[Identity] = None
+    dispatch_id: Optional[Identity] = None
+    dispatch_generation: Optional[int] = None
 
     def canonical(self) -> Mapping[str, Any]:
         kind = self.kind.value if isinstance(self.kind, EventKind) else self.kind
-        return {
+        value = {
             "schema_version": "valp-kernel-event.v1",
             "event_id": self.event_id.canonical(),
             "installation_id": self.installation_id.canonical(),
@@ -197,6 +274,16 @@ class Event:
             "kind": kind,
             "expected_revision": self.expected_revision,
         }
+        for name, identity in (
+            ("work_item_id", self.work_item_id),
+            ("attempt_id", self.attempt_id),
+            ("dispatch_id", self.dispatch_id),
+        ):
+            if identity is not None:
+                value[name] = identity.canonical()
+        if self.dispatch_generation is not None:
+            value["dispatch_generation"] = self.dispatch_generation
+        return value
 
 
 @dataclass(frozen=True)
@@ -224,10 +311,14 @@ class State:
     revision: int
     status: Union[TaskStatus, str]
     accepted_events: Tuple[AcceptedEvent, ...] = ()
+    work_items: Tuple[WorkItem, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "work_items", tuple(self.work_items))
 
     def canonical(self) -> Mapping[str, Any]:
         status = self.status.value if isinstance(self.status, TaskStatus) else self.status
-        return {
+        value = {
             "schema_version": "valp-kernel-state.v1",
             "protocol_version": self.protocol_version,
             "installation_id": self.installation_id.canonical(),
@@ -237,6 +328,9 @@ class State:
             "status": status,
             "accepted_events": [item.canonical() for item in self.accepted_events],
         }
+        if self.work_items:
+            value["work_items"] = [item.canonical() for item in self.work_items]
+        return value
 
 
 @dataclass(frozen=True)
@@ -458,6 +552,43 @@ def _accepted_event_is_valid(value: Any) -> bool:
     )
 
 
+def _attempt_is_valid(value: Any) -> bool:
+    return (
+        isinstance(value, Attempt)
+        and _has_identity_kind(value.task_id, IdentityKind.TASK)
+        and _has_identity_kind(value.work_item_id, IdentityKind.WORK_ITEM)
+        and _has_identity_kind(value.attempt_id, IdentityKind.ATTEMPT)
+        and _has_identity_kind(value.dispatch_id, IdentityKind.DISPATCH)
+        and _is_non_negative_int(value.dispatch_generation)
+        and isinstance(value.status, AttemptStatus)
+    )
+
+
+def _work_item_is_valid(value: Any, task_id: Identity) -> bool:
+    if not (
+        isinstance(value, WorkItem)
+        and value.task_id == task_id
+        and _has_identity_kind(value.work_item_id, IdentityKind.WORK_ITEM)
+        and isinstance(value.requirement, WorkItemRequirement)
+        and isinstance(value.status, WorkItemStatus)
+        and all(
+            isinstance(dep, Dependency)
+            and _has_identity_kind(dep.work_item_id, IdentityKind.WORK_ITEM)
+            and isinstance(dep.requirement, WorkItemRequirement)
+            and dep.work_item_id != value.work_item_id
+            for dep in value.dependencies
+        )
+        and len({dep.work_item_id for dep in value.dependencies}) == len(value.dependencies)
+    ):
+        return False
+    attempt = value.current_attempt
+    return attempt is None or (
+        _attempt_is_valid(attempt)
+        and attempt.task_id == value.task_id
+        and attempt.work_item_id == value.work_item_id
+    )
+
+
 def _checkpoint_root_is_valid(value: Any) -> bool:
     if not isinstance(value, CheckpointRoot) or not _state_is_valid(value.state):
         return False
@@ -494,11 +625,17 @@ def _state_is_valid(value: Any) -> bool:
         or value.revision != len(value.accepted_events)
         or (value.revision == 0 and value.status != TaskStatus.PUBLISHED)
         or not all(_accepted_event_is_valid(item) for item in value.accepted_events)
+        or not all(_work_item_is_valid(item, value.task_id) for item in value.work_items)
     ):
         return False
     event_ids = [item.event_id for item in value.accepted_events]
     result_ids = [item.result_id for item in value.accepted_events]
-    return len(event_ids) == len(set(event_ids)) and len(result_ids) == len(set(result_ids))
+    work_item_ids = [item.work_item_id for item in value.work_items]
+    return (
+        len(event_ids) == len(set(event_ids))
+        and len(result_ids) == len(set(result_ids))
+        and len(work_item_ids) == len(set(work_item_ids))
+    )
 
 
 def _event_is_valid(value: Any) -> bool:
@@ -510,6 +647,10 @@ def _event_is_valid(value: Any) -> bool:
         and _is_non_negative_int(value.leader_epoch)
         and _is_non_negative_int(value.expected_revision)
         and isinstance(value.kind, EventKind)
+        and (value.work_item_id is None or _has_identity_kind(value.work_item_id, IdentityKind.WORK_ITEM))
+        and (value.attempt_id is None or _has_identity_kind(value.attempt_id, IdentityKind.ATTEMPT))
+        and (value.dispatch_id is None or _has_identity_kind(value.dispatch_id, IdentityKind.DISPATCH))
+        and (value.dispatch_generation is None or _is_non_negative_int(value.dispatch_generation))
     )
 
 
@@ -540,6 +681,54 @@ def _input_digest(state: State, event: Event, evidence_set: Sequence[Evidence]) 
     )
 
 
+def _eligible_work_item(state: State, item: WorkItem) -> Tuple[bool, Tuple[str, ...]]:
+    items = {candidate.work_item_id: candidate for candidate in state.work_items}
+    audit_facts = []
+    for dependency in item.dependencies:
+        target = items.get(dependency.work_item_id)
+        if target is None:
+            return False, ()
+        if dependency.requirement == WorkItemRequirement.REQUIRED:
+            if target.status != WorkItemStatus.COMPLETED:
+                return False, ()
+        elif dependency.requirement == WorkItemRequirement.SOFT and target.status != WorkItemStatus.COMPLETED:
+            audit_facts.append(
+                f"soft_dependency_unmet:{item.work_item_id.value}:{target.work_item_id.value}"
+            )
+    return True, tuple(audit_facts)
+
+
+_ATTEMPT_SCOPED_EVENTS = frozenset({
+    EventKind.ATTEMPT_CREATED, EventKind.ATTEMPT_SUBMITTED,
+    EventKind.ATTEMPT_RUNNING, EventKind.ATTEMPT_COMPLETED,
+    EventKind.ATTEMPT_FAILED, EventKind.ATTEMPT_CANCELLED,
+    EventKind.ATTEMPT_FENCED,
+})
+
+
+def _attempt_event_is_stale(state: State, event: Event) -> bool:
+    if event.kind not in _ATTEMPT_SCOPED_EVENTS:
+        return False
+    item = next((item for item in state.work_items if item.work_item_id == event.work_item_id), None)
+    if item is None:
+        return True
+    attempt = item.current_attempt
+    if attempt is None:
+        return event.kind != EventKind.ATTEMPT_CREATED
+    event_tuple = (event.attempt_id, event.dispatch_id, event.dispatch_generation)
+    current_tuple = (attempt.attempt_id, attempt.dispatch_id, attempt.dispatch_generation)
+    if event.kind == EventKind.ATTEMPT_CREATED:
+        if event_tuple == current_tuple:
+            return False
+        return not (
+            item.status == WorkItemStatus.BLOCKED
+            and event.attempt_id != attempt.attempt_id
+            and event.dispatch_generation is not None
+            and event.dispatch_generation > attempt.dispatch_generation
+        )
+    return event_tuple != current_tuple or attempt.status == AttemptStatus.FENCED
+
+
 def _accepted_result_digest(
     result_id: Identity,
     event_id: Identity,
@@ -549,6 +738,18 @@ def _accepted_result_digest(
     obligations: Sequence[str],
     audit_facts: Sequence[str],
 ) -> str:
+    next_state_value: Mapping[str, Any]
+    if next_state.work_items:
+        next_state_value = next_state.canonical()
+    else:
+        next_state_value = {
+            "protocol_version": next_state.protocol_version,
+            "installation_id": next_state.installation_id.canonical(),
+            "leader_epoch": next_state.leader_epoch,
+            "task_id": next_state.task_id.canonical(),
+            "revision": next_state.revision,
+            "status": next_state.status.value,
+        }
     return _digest(
         {
             "variant": ResultVariant.ACCEPTED.value,
@@ -556,14 +757,7 @@ def _accepted_result_digest(
             "event_id": event_id.canonical(),
             "input_digest": input_digest,
             "prior_state_digest": _digest(prior_state.canonical()),
-            "state": {
-                "protocol_version": next_state.protocol_version,
-                "installation_id": next_state.installation_id.canonical(),
-                "leader_epoch": next_state.leader_epoch,
-                "task_id": next_state.task_id.canonical(),
-                "revision": next_state.revision,
-                "status": next_state.status.value,
-            },
+            "state": next_state_value,
             "obligations": tuple(obligations),
             "audit_facts": tuple(audit_facts),
         }
@@ -608,6 +802,9 @@ def reduce(state: State, event: Event, evidence_set: Sequence[Evidence]) -> Resu
     ):
         return _reject(state, input_digest, STATE_CONFLICT_ERROR)
 
+    if _attempt_event_is_stale(state, event):
+        return _reject(state, input_digest, STATE_CONFLICT_ERROR)
+
     prior = next(
         (item for item in state.accepted_events if item.event_id == event.event_id),
         None,
@@ -630,16 +827,195 @@ def reduce(state: State, event: Event, evidence_set: Sequence[Evidence]) -> Resu
             prior_result_digest=prior.result_digest,
         )
 
+    if event.task_id != state.task_id or event.expected_revision != state.revision:
+        return _reject(state, input_digest, STATE_CONFLICT_ERROR)
+
+    work_items = state.work_items
+    audit_facts: Tuple[str, ...]
     target_status = KERNEL_TASK_TRANSITIONS.get((state.status, event.kind))
-    if (
-        target_status is None
-        or event.task_id != state.task_id
-        or event.expected_revision != state.revision
-    ):
+    if event.kind in {EventKind.WORK_ITEM_ELIGIBLE, EventKind.ATTEMPT_CREATED}:
+        item_index = next(
+            (index for index, item in enumerate(work_items) if item.work_item_id == event.work_item_id),
+            None,
+        )
+        if event.work_item_id is None or item_index is None:
+            return _reject(state, input_digest, STATE_CONFLICT_ERROR)
+        item = work_items[item_index]
+        if event.kind == EventKind.WORK_ITEM_ELIGIBLE:
+            eligible, audit_facts = _eligible_work_item(state, item)
+            if item.status != WorkItemStatus.PENDING or not eligible:
+                return _reject(state, input_digest, STATE_CONFLICT_ERROR)
+            next_item = WorkItem(
+                task_id=item.task_id, work_item_id=item.work_item_id,
+                requirement=item.requirement, status=WorkItemStatus.ELIGIBLE,
+                dependencies=item.dependencies, current_attempt=item.current_attempt,
+            )
+        else:
+            audit_facts = ()
+            retry = item.status == WorkItemStatus.BLOCKED and item.current_attempt is not None
+            if (
+                item.status not in {WorkItemStatus.ELIGIBLE, WorkItemStatus.BLOCKED}
+                or (item.current_attempt is not None and not retry)
+                or event.attempt_id is None
+                or event.dispatch_id is None
+                or event.dispatch_generation is None
+                or (retry and event.dispatch_generation <= item.current_attempt.dispatch_generation)
+                or (retry and event.attempt_id == item.current_attempt.attempt_id)
+            ):
+                return _reject(state, input_digest, STATE_CONFLICT_ERROR)
+            next_item = WorkItem(
+                task_id=item.task_id, work_item_id=item.work_item_id,
+                requirement=item.requirement, status=WorkItemStatus.SUBMITTED,
+                dependencies=item.dependencies,
+                current_attempt=Attempt(
+                    task_id=state.task_id, work_item_id=item.work_item_id,
+                    attempt_id=event.attempt_id, dispatch_id=event.dispatch_id,
+                    dispatch_generation=event.dispatch_generation,
+                ),
+            )
+        work_items = work_items[:item_index] + (
+            next_item,
+        ) + work_items[item_index + 1:]
+        target_status = state.status
+    elif event.kind == EventKind.ATTEMPT_FENCED:
+        item_index = next(
+            (index for index, item in enumerate(work_items) if item.work_item_id == event.work_item_id),
+            None,
+        )
+        if event.work_item_id is None or item_index is None:
+            return _reject(state, input_digest, STATE_CONFLICT_ERROR)
+        item = work_items[item_index]
+        attempt = item.current_attempt
+        if (
+            attempt is None
+            or attempt.status not in {
+                AttemptStatus.CREATED,
+                AttemptStatus.SUBMITTED,
+                AttemptStatus.RUNNING,
+            }
+            or (attempt.attempt_id, attempt.dispatch_id, attempt.dispatch_generation)
+            != (event.attempt_id, event.dispatch_id, event.dispatch_generation)
+        ):
+            return _reject(state, input_digest, STATE_CONFLICT_ERROR)
+        work_items = work_items[:item_index] + (
+            WorkItem(
+                task_id=item.task_id, work_item_id=item.work_item_id,
+                requirement=item.requirement, status=item.status,
+                dependencies=item.dependencies,
+                current_attempt=Attempt(
+                    task_id=attempt.task_id, work_item_id=attempt.work_item_id,
+                    attempt_id=attempt.attempt_id, dispatch_id=attempt.dispatch_id,
+                    dispatch_generation=attempt.dispatch_generation,
+                    status=AttemptStatus.FENCED,
+                ),
+            ),
+        ) + work_items[item_index + 1:]
+        target_status = state.status
+        audit_facts = ()
+    elif event.kind in {
+        EventKind.ATTEMPT_SUBMITTED, EventKind.ATTEMPT_RUNNING,
+        EventKind.ATTEMPT_COMPLETED, EventKind.ATTEMPT_FAILED,
+        EventKind.ATTEMPT_CANCELLED,
+    }:
+        item_index = next((index for index, item in enumerate(work_items) if item.work_item_id == event.work_item_id), None)
+        if event.work_item_id is None or item_index is None:
+            return _reject(state, input_digest, STATE_CONFLICT_ERROR)
+        item = work_items[item_index]
+        attempt = item.current_attempt
+        if (
+            attempt is None
+            or attempt.status == AttemptStatus.FENCED
+            or (attempt.attempt_id, attempt.dispatch_id, attempt.dispatch_generation)
+            != (event.attempt_id, event.dispatch_id, event.dispatch_generation)
+        ):
+            return _reject(state, input_digest, STATE_CONFLICT_ERROR)
+        transitions = {
+            EventKind.ATTEMPT_SUBMITTED: (WorkItemStatus.SUBMITTED, AttemptStatus.CREATED, WorkItemStatus.RUNNING, AttemptStatus.SUBMITTED),
+            EventKind.ATTEMPT_RUNNING: (WorkItemStatus.RUNNING, AttemptStatus.SUBMITTED, WorkItemStatus.RUNNING, AttemptStatus.RUNNING),
+            EventKind.ATTEMPT_COMPLETED: (WorkItemStatus.RUNNING, AttemptStatus.RUNNING, WorkItemStatus.COMPLETED, AttemptStatus.COMPLETED),
+            EventKind.ATTEMPT_FAILED: (None, None, WorkItemStatus.FAILED, AttemptStatus.FAILED),
+            EventKind.ATTEMPT_CANCELLED: (None, None, WorkItemStatus.CANCELLED, AttemptStatus.CANCELLED),
+        }
+        required_item_status, required_attempt_status, next_item_status, next_attempt_status = transitions[event.kind]
+        if (
+            (required_item_status is not None and item.status != required_item_status)
+            or (required_attempt_status is not None and attempt.status != required_attempt_status)
+            or (event.kind in {EventKind.ATTEMPT_FAILED, EventKind.ATTEMPT_CANCELLED}
+                and (
+                    item.status not in {WorkItemStatus.SUBMITTED, WorkItemStatus.RUNNING}
+                    or attempt.status not in {
+                        AttemptStatus.CREATED,
+                        AttemptStatus.SUBMITTED,
+                        AttemptStatus.RUNNING,
+                    }
+                ))
+        ):
+            return _reject(state, input_digest, STATE_CONFLICT_ERROR)
+        work_items = work_items[:item_index] + (WorkItem(
+            task_id=item.task_id, work_item_id=item.work_item_id,
+            requirement=item.requirement, status=next_item_status,
+            dependencies=item.dependencies, current_attempt=Attempt(
+                task_id=attempt.task_id, work_item_id=attempt.work_item_id,
+                attempt_id=attempt.attempt_id, dispatch_id=attempt.dispatch_id,
+                dispatch_generation=attempt.dispatch_generation, status=next_attempt_status,
+            ),
+        ),) + work_items[item_index + 1:]
+        target_status = state.status
+        audit_facts = ()
+    elif event.kind in {
+        EventKind.WORK_ITEM_PARTIAL, EventKind.WORK_ITEM_DEGRADED,
+        EventKind.WORK_ITEM_BLOCKED, EventKind.WORK_ITEM_FAILED,
+        EventKind.WORK_ITEM_CANCELLED, EventKind.WORK_ITEM_SKIPPED,
+    }:
+        item_index = next((index for index, item in enumerate(work_items) if item.work_item_id == event.work_item_id), None)
+        if event.work_item_id is None or item_index is None:
+            return _reject(state, input_digest, STATE_CONFLICT_ERROR)
+        item = work_items[item_index]
+        allowed = {
+            EventKind.WORK_ITEM_PARTIAL: {WorkItemStatus.RUNNING},
+            EventKind.WORK_ITEM_DEGRADED: {WorkItemStatus.RUNNING},
+            EventKind.WORK_ITEM_BLOCKED: {WorkItemStatus.PENDING, WorkItemStatus.ELIGIBLE, WorkItemStatus.SUBMITTED, WorkItemStatus.RUNNING},
+            EventKind.WORK_ITEM_FAILED: {WorkItemStatus.PENDING, WorkItemStatus.ELIGIBLE, WorkItemStatus.SUBMITTED, WorkItemStatus.RUNNING, WorkItemStatus.BLOCKED},
+            EventKind.WORK_ITEM_CANCELLED: {WorkItemStatus.PENDING, WorkItemStatus.ELIGIBLE, WorkItemStatus.SUBMITTED, WorkItemStatus.RUNNING, WorkItemStatus.BLOCKED},
+            EventKind.WORK_ITEM_SKIPPED: {WorkItemStatus.PENDING, WorkItemStatus.ELIGIBLE},
+        }
+        targets = {
+            EventKind.WORK_ITEM_PARTIAL: WorkItemStatus.PARTIAL,
+            EventKind.WORK_ITEM_DEGRADED: WorkItemStatus.DEGRADED,
+            EventKind.WORK_ITEM_BLOCKED: WorkItemStatus.BLOCKED,
+            EventKind.WORK_ITEM_FAILED: WorkItemStatus.FAILED,
+            EventKind.WORK_ITEM_CANCELLED: WorkItemStatus.CANCELLED,
+            EventKind.WORK_ITEM_SKIPPED: WorkItemStatus.SKIPPED,
+        }
+        if item.status not in allowed[event.kind] or (
+            event.kind == EventKind.WORK_ITEM_SKIPPED
+            and (
+                item.requirement == WorkItemRequirement.REQUIRED
+                or any(
+                    dependency.work_item_id == item.work_item_id
+                    and dependency.requirement == WorkItemRequirement.REQUIRED
+                    for candidate in work_items
+                    for dependency in candidate.dependencies
+                )
+            )
+        ):
+            return _reject(state, input_digest, STATE_CONFLICT_ERROR)
+        work_items = work_items[:item_index] + (WorkItem(
+            task_id=item.task_id, work_item_id=item.work_item_id,
+            requirement=item.requirement, status=targets[event.kind],
+            dependencies=item.dependencies, current_attempt=item.current_attempt,
+        ),) + work_items[item_index + 1:]
+        target_status = state.status
+        audit_facts = ()
+    else:
+        audit_facts = ()
+    if target_status is None:
         return _reject(state, input_digest, STATE_CONFLICT_ERROR)
 
     result_id = Identity(IdentityKind.RESULT, f"{event.event_id.value}:accepted")
-    audit_facts = (f"accepted:{event.event_id.kind.value}:{event.event_id.value}",)
+    audit_facts = (
+        f"accepted:{event.event_id.kind.value}:{event.event_id.value}",
+    ) + audit_facts
     result_state = State(
         protocol_version=state.protocol_version,
         installation_id=state.installation_id,
@@ -647,6 +1023,7 @@ def reduce(state: State, event: Event, evidence_set: Sequence[Evidence]) -> Resu
         task_id=state.task_id,
         revision=state.revision + 1,
         status=target_status,
+        work_items=work_items,
     )
     result_digest = _accepted_result_digest(
         result_id,
@@ -664,6 +1041,7 @@ def reduce(state: State, event: Event, evidence_set: Sequence[Evidence]) -> Resu
         task_id=state.task_id,
         revision=state.revision + 1,
         status=target_status,
+        work_items=work_items,
         accepted_events=state.accepted_events
         + (
             AcceptedEvent(

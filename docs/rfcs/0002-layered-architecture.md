@@ -566,9 +566,11 @@ checkpoint.
 MVP-B implements the closed Layer 02 Task transition graph for the 13 Kernel
 truth statuses. Its typed Event contract covers the forward, fix/redispatch,
 approval, explicit blocked-to-fixing recovery, failure, and cancellation
-edges; `done`, `failed`, and `cancelled` are terminal. This does not implement
-Work Item or Attempt transition graphs, receipt writes, wait/wake semantics,
-or checkpoint suffix replay.
+edges; `done`, `failed`, and `cancelled` are terminal. The first bounded Stage
+2 pure-Kernel slice adds Work Item and Attempt graphs, dependency-gated
+eligibility, identity/generation binding, and Attempt fencing. It does not
+implement receipt writes, wait/wake semantics, Adapter adoption, or checkpoint
+suffix replay.
 
 ## 19. Acceptance Criteria
 

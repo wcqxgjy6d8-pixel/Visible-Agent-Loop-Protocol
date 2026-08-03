@@ -2626,8 +2626,8 @@ The Kernel State starts only as `published` at revision `0`. For every valid
 State, `revision` MUST equal the number of `accepted_events`; revision `0` MUST
 have an empty accepted-event ledger and status `published`, while a non-zero
 revision MUST have a non-empty accepted-event ledger. The graph does not model
-Layer 01 `operationalPhase`, Work Item or Attempt transitions, receipt writes,
-or external effects. Every accepted edge remains subject to identity binding,
+Layer 01 `operationalPhase`, receipt writes, or external effects. Every
+accepted edge remains subject to identity binding,
 expected-revision CAS, Evidence validation, canonical Result construction, and
 idempotency rules in this section.
 
@@ -2651,6 +2651,71 @@ VALP-E-IDEMPOTENCY-CONFLICT
 ```
 
 Unknown closed-vocabulary values fail with `VALP-E-UNKNOWN-ENUM-VALUE`.
+
+#### 21.2.1 Work Item and Attempt Stage 2 slice
+
+The Stage 2 Kernel State additionally carries an ordered, unique Work Item
+table. Each Work Item binds its Task ID, Work Item ID, requirement, declared
+dependency edges, status, and zero or one current Attempt. A dependency edge
+binds the depended-on Work Item ID and its requirement (`required`, `optional`,
+or `soft`). An Attempt binds the same Task and Work Item IDs plus a distinct
+Attempt ID, dispatch ID, and non-negative dispatch generation. These
+identities are never interchangeable.
+
+The complete closed Work Item graph is:
+
+| Event kind | Source status | Target status | Constraint |
+| --- | --- | --- | --- |
+| `work_item_eligible` | `pending` | `eligible` | dependency frontier is satisfied |
+| `attempt_created` | `eligible` or `blocked` | `submitted` | creates a current Attempt; retry from blocked has a new Attempt ID and higher generation |
+| `attempt_completed` | `running` | `completed` | current Attempt is completed |
+| `attempt_failed` | `submitted` or `running` | `failed` | current Attempt is failed |
+| `attempt_cancelled` | `submitted` or `running` | `cancelled` | current Attempt is cancelled |
+| `work_item_partial` | `running` | `partial` | does not rewrite current Attempt |
+| `work_item_degraded` | `running` | `degraded` | does not rewrite current Attempt |
+| `work_item_blocked` | `pending`, `eligible`, `submitted`, or `running` | `blocked` | does not rewrite current Attempt |
+| `work_item_failed` | `pending`, `eligible`, `submitted`, `running`, or `blocked` | `failed` | does not rewrite current Attempt |
+| `work_item_cancelled` | any non-terminal Work Item status | `cancelled` | does not rewrite current Attempt |
+| `work_item_skipped` | `pending` or `eligible` | `skipped` | the Work Item is optional or soft and is not the target of any required dependency edge |
+
+`completed`, `partial`, `degraded`, `failed`, `cancelled`, and `skipped` are
+terminal Work Item statuses. `fenced` is a terminal Attempt status with no
+outgoing edge. Retrying or redispatching never reuses an Attempt identity or
+generation.
+
+The complete closed Attempt graph is:
+
+| Event kind | Source Attempt status | Target Attempt status |
+| --- | --- | --- |
+| `attempt_created` | no current Attempt, or a blocked Work Item's current Attempt | `created` |
+| `attempt_submitted` | `created` | `submitted` |
+| `attempt_running` | `submitted` | `running` |
+| `attempt_completed` | `running` | `completed` |
+| `attempt_failed` | `created`, `submitted`, or `running` | `failed` |
+| `attempt_cancelled` | `created`, `submitted`, or `running` | `cancelled` |
+| `attempt_fenced` | `created`, `submitted`, or `running` | `fenced` |
+
+`completed`, `failed`, `cancelled`, and `fenced` are the closed terminal
+Attempt set. No Attempt event can change a terminal Attempt. Work Item events
+do not change a current Attempt; only the exact tuple-bound Attempt events do.
+
+Every attempt-scoped Event MUST carry and exactly match the State Task ID, Work
+Item ID, Attempt ID, dispatch ID, and dispatch generation. A current Attempt
+is superseded only by accepted retry. An Event bound to a different, stale,
+cancelled, fenced, or superseded Attempt/generation is
+`VALP-E-STATE-CONFLICT`, leaves State unchanged, and MUST NOT be an idempotent
+duplicate. An authorized Work Item or Attempt cancellation fences the exact
+current Attempt tuple. Late output may enter as immutable Evidence but cannot
+change the Work Item or Attempt truth.
+
+Dependency eligibility is computed by the Kernel from the declared Work Item
+table, not asserted by the System. A `required` dependency must be
+`completed`; `partial`, `degraded`, `blocked`, `failed`, `cancelled`, and
+`skipped` required dependencies prevent eligibility. An unmet `optional`
+dependency may permit eligibility. An unmet `soft` dependency may permit
+eligibility and records a deterministic audit fact. Unknown, duplicate, or
+cross-Task dependency identities fail closed. These rules do not model Layer
+01 scheduling, waiting, wake-up, or runtime effects.
 
 ### 21.3 Attempts, replay, and control changes
 

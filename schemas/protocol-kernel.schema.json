@@ -47,6 +47,24 @@
         {"properties": {"kind": {"const": "task"}}}
       ]
     },
+    "workItemIdentity": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {"properties": {"kind": {"const": "work_item"}}}
+      ]
+    },
+    "attemptIdentity": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {"properties": {"kind": {"const": "attempt"}}}
+      ]
+    },
+    "dispatchIdentity": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {"properties": {"kind": {"const": "dispatch"}}}
+      ]
+    },
     "eventIdentity": {
       "allOf": [
         {"$ref": "#/$defs/identity"},
@@ -144,7 +162,8 @@
           "type": "array",
           "items": {"$ref": "#/$defs/acceptedEvent"},
           "uniqueItems": true
-        }
+        },
+        "work_items": {"type": "array", "items": {"$ref": "#/$defs/workItem"}}
       },
       "oneOf": [
         {
@@ -199,9 +218,56 @@
             "blocked_recovery_to_fixing",
             "task_failed",
             "task_cancelled"
+            ,"work_item_eligible", "attempt_created", "attempt_submitted", "attempt_running", "attempt_completed", "attempt_failed", "attempt_cancelled", "attempt_fenced", "work_item_partial", "work_item_degraded", "work_item_blocked", "work_item_failed", "work_item_cancelled", "work_item_skipped"
           ]
         },
-        "expected_revision": {"type": "integer", "minimum": 0}
+        "expected_revision": {"type": "integer", "minimum": 0},
+        "work_item_id": {"$ref": "#/$defs/workItemIdentity"},
+        "attempt_id": {"$ref": "#/$defs/attemptIdentity"},
+        "dispatch_id": {"$ref": "#/$defs/dispatchIdentity"},
+        "dispatch_generation": {"type": "integer", "minimum": 0}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"enum": ["attempt_created", "attempt_submitted", "attempt_running", "attempt_completed", "attempt_failed", "attempt_cancelled", "attempt_fenced"]}}, "required": ["kind"]},
+          "then": {"required": ["work_item_id", "attempt_id", "dispatch_id", "dispatch_generation"]}
+        },
+        {
+          "if": {"properties": {"kind": {"enum": ["work_item_eligible", "work_item_partial", "work_item_degraded", "work_item_blocked", "work_item_failed", "work_item_cancelled", "work_item_skipped"]}}, "required": ["kind"]},
+          "then": {"required": ["work_item_id"]}
+        }
+      ]
+    },
+    "dependency": {
+      "type": "object", "additionalProperties": false,
+      "required": ["work_item_id", "requirement"],
+      "properties": {
+        "work_item_id": {"$ref": "#/$defs/workItemIdentity"},
+        "requirement": {"$ref": "#/$defs/workItemRequirement"}
+      }
+    },
+    "attempt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["task_id", "work_item_id", "attempt_id", "dispatch_id", "dispatch_generation", "status"],
+      "properties": {
+        "task_id": {"$ref": "#/$defs/taskIdentity"},
+        "work_item_id": {"$ref": "#/$defs/workItemIdentity"},
+        "attempt_id": {"$ref": "#/$defs/attemptIdentity"},
+        "dispatch_id": {"$ref": "#/$defs/dispatchIdentity"},
+        "dispatch_generation": {"type": "integer", "minimum": 0},
+        "status": {"$ref": "#/$defs/attemptStatus"}
+      }
+    },
+    "workItem": {
+      "type": "object", "additionalProperties": false,
+      "required": ["task_id", "work_item_id", "requirement", "status", "dependencies", "current_attempt"],
+      "properties": {
+        "task_id": {"$ref": "#/$defs/taskIdentity"},
+        "work_item_id": {"$ref": "#/$defs/workItemIdentity"},
+        "requirement": {"$ref": "#/$defs/workItemRequirement"},
+        "status": {"$ref": "#/$defs/workItemStatus"},
+        "dependencies": {"type": "array", "items": {"$ref": "#/$defs/dependency"}},
+        "current_attempt": {"oneOf": [{"$ref": "#/$defs/attempt"}, {"type": "null"}]}
       }
     },
     "evidence": {

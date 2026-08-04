@@ -20,6 +20,7 @@ from valp_cli.control_plane import (
     InstallationCore,
     digest_without,
     leader_installation_root,
+    write_json,
 )
 from valp_cli.herdr_adapter import HerdrSubmissionError
 from valp_cli.plugins import validate_plugin_manifest
@@ -248,7 +249,7 @@ class ControlPlaneTests(unittest.TestCase):
         }
         output = io.StringIO()
 
-        with patch(
+        with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
             "valp_cli.cli.provision_herdr_leader_session",
             return_value=provisioned,
         ) as provision, contextlib.redirect_stdout(output):
@@ -392,7 +393,9 @@ class ControlPlaneTests(unittest.TestCase):
     def test_leader_recover_start_requires_explicit_approval_before_runtime_access(self) -> None:
         self._block_first_leader_start()
 
-        with patch("valp_cli.cli.recover_herdr_leader_session") as recover:
+        with patch("valp_cli.cli.shutil.which") as which, patch(
+            "valp_cli.cli.recover_herdr_leader_session"
+        ) as recover:
             with self.assertRaises(SystemExit) as context:
                 main([
                     "leader",
@@ -405,6 +408,7 @@ class ControlPlaneTests(unittest.TestCase):
                 ])
 
         self.assertIn("VALP-E-APPROVAL-REQUIRED", str(context.exception))
+        which.assert_not_called()
         recover.assert_not_called()
         self.assertEqual(self.core.state()["status"], "blocked")
         self.assertEqual(self.core.state()["revision"], 6)
@@ -423,7 +427,9 @@ class ControlPlaneTests(unittest.TestCase):
         ) as handle:
             handle.write(json.dumps(conflicting, sort_keys=True) + "\n")
 
-        with patch("valp_cli.cli.recover_herdr_leader_session") as recover:
+        with patch("valp_cli.cli.shutil.which") as which, patch(
+            "valp_cli.cli.recover_herdr_leader_session"
+        ) as recover:
             with self.assertRaises(SystemExit) as context:
                 main([
                     "leader",
@@ -437,8 +443,29 @@ class ControlPlaneTests(unittest.TestCase):
                 ])
 
         self.assertIn("VALP-E-REGISTRY-CONSISTENCY", str(context.exception))
+        which.assert_not_called()
         recover.assert_not_called()
         self.assertEqual(self.core.state()["status"], "blocked")
+
+    def test_write_json_retries_transient_windows_replace_conflict(self) -> None:
+        path = self.workspace / "state.json"
+        real_replace = os.replace
+        conflict = PermissionError("injected Windows sharing violation")
+        conflict.winerror = 5
+        calls = 0
+
+        def replace_after_conflict(source, target):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise conflict
+            return real_replace(source, target)
+
+        with patch("valp_cli.control_plane.os.replace", side_effect=replace_after_conflict):
+            write_json(path, {"status": "prepared"})
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"status": "prepared"})
 
     def test_leader_recover_start_activates_only_the_user_named_failed_session(self) -> None:
         failed = self._block_first_leader_start()

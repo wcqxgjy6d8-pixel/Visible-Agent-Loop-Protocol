@@ -706,16 +706,16 @@ def main(argv: list[str] | None = None) -> int:
                         "VALP-E-ADAPTER-UNSUPPORTED",
                         "The reference CLI currently recovers installation Leaders only through a selected HERDR adapter",
                     )
+                prepared = core.prepare_leader_start_recovery(
+                    args.session,
+                    approve=args.approve,
+                )
                 herdr = shutil.which("herdr")
                 if not herdr:
                     raise ControlPlaneError(
                         "VALP-E-ADAPTER-UNSUPPORTED",
                         "The selected HERDR adapter is not installed or not reachable on PATH",
                     )
-                prepared = core.prepare_leader_start_recovery(
-                    args.session,
-                    approve=args.approve,
-                )
                 provisioned = recover_herdr_leader_session(
                     herdr,
                     installation_id=state["installation_id"],

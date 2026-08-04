@@ -972,6 +972,7 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
             },
         )
     def test_launch_argv_resolves_bare_entrypoint_before_daemon_handoff(self) -> None:
+        resolved_entrypoint = str((Path(sys.executable).parent / "build-agent").resolve())
         capabilities = {
             "agents": {
                 "build-agent": {
@@ -982,13 +983,13 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
 
         with patch(
             "valp_cli.workflow.shutil.which",
-            return_value="/opt/agents/bin/build-agent",
+            return_value=resolved_entrypoint,
         ) as which:
             argv = herdr_launch_argv_for("build-agent", capabilities)
 
         self.assertEqual(
             argv,
-            ["/opt/agents/bin/build-agent", "--profile", "review"],
+            [resolved_entrypoint, "--profile", "review"],
         )
         which.assert_called_once_with("build-agent")
 
@@ -1021,10 +1022,11 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
         which.assert_not_called()
 
     def test_launch_argv_fails_closed_when_absolute_entrypoint_is_not_executable(self) -> None:
+        missing_entrypoint = str((Path(sys.executable).parent / "missing-claude").resolve())
         capabilities = {
             "agents": {
                 "claude": {
-                    "runtime": {"launch_argv": ["/missing/claude"]}
+                    "runtime": {"launch_argv": [missing_entrypoint]}
                 }
             }
         }
@@ -1036,11 +1038,11 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
             ):
                 herdr_launch_argv_for("claude", capabilities)
 
-        which.assert_called_once_with("/missing/claude")
+        which.assert_called_once_with(missing_entrypoint)
 
     def test_provision_creates_task_owned_session_instead_of_using_unrelated_pane(self) -> None:
         calls: list[list[str]] = []
-        project_root = Path("/example/project")
+        project_root = Path("/example/project").resolve()
 
         def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
             calls.append(command)
@@ -1163,7 +1165,10 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
             )
 
     def test_provision_retries_incomplete_task_owned_runtime_identity(self) -> None:
-        project_root = Path("/example/project")
+        project_root = Path("/example/project").resolve()
+        session_name = "valp-" + hashlib.sha256(
+            f"{project_root}\0TASK-OWNED-SESSION\0codex".encode("utf-8")
+        ).hexdigest()[:16] + "-codex"
         pane_get_attempts = 0
 
         def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
@@ -1202,7 +1207,7 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                 if pane_get_attempts > 1:
                     pane.update({
                         "agent": "codex",
-                        "label": "valp-2e7a226f95d0c22d-codex",
+                        "label": session_name,
                     })
                 stdout = json.dumps({"result": {"pane": pane}})
             else:
@@ -1225,7 +1230,10 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
         self.assertEqual(binding["runtime_identity"]["pane_id"], "pane-owned")
 
     def test_provision_reports_launched_agent_when_runtime_detection_is_missing(self) -> None:
-        project_root = Path("/example/project")
+        project_root = Path("/example/project").resolve()
+        session_name = "valp-" + hashlib.sha256(
+            f"{project_root}\0TASK-REPORT-AGENT\0qwen".encode("utf-8")
+        ).hexdigest()[:16] + "-qwen"
         agent_reported = False
         calls: list[list[str]] = []
 
@@ -1258,7 +1266,7 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                 stdout = '{"result":{"type":"pane_agent_reported"}}'
             elif command[1:3] == ["pane", "get"]:
                 pane = {
-                    "label": "valp-aee00743d370bed3-qwen",
+                    "label": session_name,
                     "pane_id": "pane-owned",
                     "terminal_id": "terminal-owned",
                     "workspace_id": "workspace-owned",
@@ -1292,17 +1300,23 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
         self.assertEqual(binding["runtime_identity"]["pane_id"], "pane-owned")
 
     def test_provision_reuses_only_the_exact_task_owned_runtime_identity(self) -> None:
-        project_root = Path("/example/project")
+        project_root = Path("/example/project").resolve()
+        project_identity = "sha256:" + hashlib.sha256(
+            str(project_root).encode("utf-8")
+        ).hexdigest()
+        session_name = "valp-" + hashlib.sha256(
+            f"{project_root}\0TASK-OWNED-REUSE\0codex".encode("utf-8")
+        ).hexdigest()[:16] + "-codex"
         calls: list[list[str]] = []
         pane_list_stdout_limits: list[object] = []
         existing = {
             "agent": "codex",
-            "session_name": "valp-e41268096de0afc0-codex",
+            "session_name": session_name,
             "generation": 3,
             "ownership": {
                 "scope": "task",
                 "task_id": "TASK-OWNED-REUSE",
-                "project_identity": "sha256:b8c7d3b82ccbc8daeeadfe9ec3635316f6a87020a43de2ee83148cc3a9ee6e2e",
+                "project_identity": project_identity,
             },
             "context": {"cwd": str(project_root)},
             "launch": {"argv": ["codex"]},
@@ -1343,7 +1357,7 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                                 },
                                 {
                                     "agent": "codex",
-                                    "name": "valp-e41268096de0afc0-codex",
+                                    "name": session_name,
                                     "pane_id": "pane-owned",
                                     "terminal_id": "terminal-owned",
                                     "workspace_id": "workspace-owned",
@@ -1600,15 +1614,21 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
             self.assertEqual(receipts[-1]["launch"], binding["launch"])
 
     def test_provision_fails_closed_when_bound_pane_identity_changes(self) -> None:
-        project_root = Path("/example/project")
+        project_root = Path("/example/project").resolve()
+        project_identity = "sha256:" + hashlib.sha256(
+            str(project_root).encode("utf-8")
+        ).hexdigest()
+        session_name = "valp-" + hashlib.sha256(
+            f"{project_root}\0TASK-OWNED-CONFLICT\0codex".encode("utf-8")
+        ).hexdigest()[:16] + "-codex"
         existing = {
             "agent": "codex",
-            "session_name": "valp-a7e417532b5846cd-codex",
+            "session_name": session_name,
             "generation": 1,
             "ownership": {
                 "scope": "task",
                 "task_id": "TASK-OWNED-CONFLICT",
-                "project_identity": "sha256:b8c7d3b82ccbc8daeeadfe9ec3635316f6a87020a43de2ee83148cc3a9ee6e2e",
+                "project_identity": project_identity,
             },
             "context": {"cwd": str(project_root)},
             "launch": {"argv": ["codex"]},
@@ -1638,7 +1658,7 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                             "panes": [
                                 {
                                     "agent": "codex",
-                                    "name": "valp-a7e417532b5846cd-codex",
+                                    "name": session_name,
                                     "pane_id": "pane-owned",
                                     "terminal_id": "terminal-replacement",
                                     "workspace_id": "workspace-owned",
@@ -1664,16 +1684,22 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
             )
 
     def test_provision_replaces_absent_owned_session_with_next_generation(self) -> None:
-        project_root = Path("/example/project")
+        project_root = Path("/example/project").resolve()
+        project_identity = "sha256:" + hashlib.sha256(
+            str(project_root).encode("utf-8")
+        ).hexdigest()
+        session_name = "valp-" + hashlib.sha256(
+            f"{project_root}\0TASK-OWNED-REPLACE\0codex".encode("utf-8")
+        ).hexdigest()[:16] + "-codex"
         calls: list[list[str]] = []
         existing = {
             "agent": "codex",
-            "session_name": "valp-9db1e2bfd3263a89-codex",
+            "session_name": session_name,
             "generation": 1,
             "ownership": {
                 "scope": "task",
                 "task_id": "TASK-OWNED-REPLACE",
-                "project_identity": "sha256:b8c7d3b82ccbc8daeeadfe9ec3635316f6a87020a43de2ee83148cc3a9ee6e2e",
+                "project_identity": project_identity,
             },
             "context": {"cwd": str(project_root)},
             "launch": {"argv": ["codex-old"]},
@@ -1748,7 +1774,7 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                         "type": "pane_info",
                         "pane": {
                             "agent": "codex",
-                            "label": "valp-9db1e2bfd3263a89-codex",
+                            "label": session_name,
                             "pane_id": "pane-new",
                             "terminal_id": "terminal-new",
                             "workspace_id": "workspace-new",

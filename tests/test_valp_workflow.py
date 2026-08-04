@@ -5444,6 +5444,13 @@ class ValpWorkflowTests(unittest.TestCase):
 
     def test_dispatch_reconciles_late_model_identity_on_same_owned_work_item(self) -> None:
         task_id = "TASK-HERDR-LATE-MODEL-IDENTITY"
+        route_preflight = self.model_aware_test_preflight({
+            "runtime": "HERDR",
+            "adapter_class": "pane_controller",
+            "status": "pass",
+            "checks": {"submission_transport": {"status": "pass"}},
+            "agents": {"codex": {"status": "pass", "pane_id": "pane-route"}},
+        })
         capabilities = {
             "schema_version": "valp-agent-capabilities.v1",
             "updated_at": "2026-07-27T00:00:00Z",
@@ -5463,12 +5470,16 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = self.publish_routed_task(
-                        root,
-                        task_id,
-                        "Fix a bug and run tests",
-                        runtime="herdr",
-                    )
+                    with patch(
+                        "valp_cli.workflow.collect_runtime_preflight",
+                        return_value=route_preflight,
+                    ):
+                        task_dir = self.publish_routed_task(
+                            root,
+                            task_id,
+                            "Fix a bug and run tests",
+                            runtime="herdr",
+                        )
 
             projection = self.owned_session_projection(
                 task_id,
@@ -5626,6 +5637,13 @@ class ValpWorkflowTests(unittest.TestCase):
 
     def test_dispatch_does_not_reopen_late_model_recovery_after_submit_failure(self) -> None:
         task_id = "TASK-HERDR-LATE-MODEL-SUBMIT-FAILED"
+        route_preflight = self.model_aware_test_preflight({
+            "runtime": "HERDR",
+            "adapter_class": "pane_controller",
+            "status": "pass",
+            "checks": {"submission_transport": {"status": "pass"}},
+            "agents": {"codex": {"status": "pass", "pane_id": "pane-route"}},
+        })
         capabilities = {
             "schema_version": "valp-agent-capabilities.v1",
             "updated_at": "2026-07-27T00:00:00Z",
@@ -5645,12 +5663,16 @@ class ValpWorkflowTests(unittest.TestCase):
             root = Path(tmp)
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.skill_router_command", return_value=None):
-                    task_dir = self.publish_routed_task(
-                        root,
-                        task_id,
-                        "Fix a bug and run tests",
-                        runtime="herdr",
-                    )
+                    with patch(
+                        "valp_cli.workflow.collect_runtime_preflight",
+                        return_value=route_preflight,
+                    ):
+                        task_dir = self.publish_routed_task(
+                            root,
+                            task_id,
+                            "Fix a bug and run tests",
+                            runtime="herdr",
+                        )
 
             projection = self.owned_session_projection(
                 task_id,

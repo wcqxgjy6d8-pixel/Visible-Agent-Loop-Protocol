@@ -16,6 +16,8 @@ from typing import Any, Iterable
 
 PROTOCOL_VERSION = "0.3.0-draft"
 IMPLEMENTATION_ID = "valp-reference-cli"
+_WINDOWS_REPLACE_RETRY_SECONDS = 0.01
+_WINDOWS_REPLACE_TIMEOUT_SECONDS = 1.0
 INSTALLATION_STATUS = {
     "uninitialized",
     "bootstrapping",
@@ -122,10 +124,22 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        _replace_file(temporary, path)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def _replace_file(source: str, target: Path) -> None:
+    deadline = time.monotonic() + _WINDOWS_REPLACE_TIMEOUT_SECONDS
+    while True:
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError as exc:
+            if getattr(exc, "winerror", None) not in {5, 32} or time.monotonic() >= deadline:
+                raise
+            time.sleep(_WINDOWS_REPLACE_RETRY_SECONDS)
 
 
 def read_json(path: Path) -> dict[str, Any]:

@@ -1,0 +1,8 @@
+{
+  "ts": "2026-08-03T08:00:00Z",
+  "agent": "codex",
+  "role": "implementer",
+  "event": "dispatch_written",
+  "dispatch_ref": "agents/codex/dispatch.md",
+  "expected_refs": ["agents/codex/evidence.md"]
+}

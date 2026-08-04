@@ -124,7 +124,19 @@ class TaskAudit:
         self.evidence_board = self._load_json("evidence-board.json")
         self.correction_cycle = self._load_json("correction-cycle.json")
         self.control_contract = self._load_json(CONTROL_CONTRACT_REF)
-        self.receipts = self._load_jsonl("dispatch-receipts.jsonl")
+        self.receipt_ledger_ref = "dispatch-receipts.jsonl"
+        langgraph_adoption_path = self.task_dir / "runtime" / "langgraph" / "adoption.json"
+        if langgraph_adoption_path.is_file():
+            self.receipt_ledger_ref = "runtime/langgraph/receipts.v3.jsonl"
+            try:
+                from .langgraph_adapter import load_langgraph_v3_receipts
+
+                self.receipts = load_langgraph_v3_receipts(self.task_dir)
+            except Exception as error:
+                self.receipts = []
+                self.jsonl_errors.setdefault(self.receipt_ledger_ref, []).append(str(error))
+        else:
+            self.receipts = self._load_jsonl(self.receipt_ledger_ref)
         self.routing_history = self._load_jsonl("routing-history.jsonl")
         self.wait_events = self._load_jsonl("wait-events.jsonl")
         self.approval_requests = self._load_jsonl("approvals/requested.jsonl")
@@ -1735,9 +1747,9 @@ class TaskAudit:
         return self._pass("squad_routing", "Squad routing evidence is recorded when a squad is used", "Squad routing evidence found", evidence)
 
     def check_dispatch_receipts(self) -> AuditItem:
-        evidence = self._existing(["dispatch-receipts.jsonl"])
+        evidence = self._existing([self.receipt_ledger_ref])
         agents = self._selected_agents()
-        receipt_errors = self.jsonl_errors.get("dispatch-receipts.jsonl") or []
+        receipt_errors = self.jsonl_errors.get(self.receipt_ledger_ref) or []
         if receipt_errors:
             return self._fail(
                 "dispatch_receipts",
@@ -1757,7 +1769,12 @@ class TaskAudit:
                 evidence,
             )
         if not self.receipts:
-            return self._fail("dispatch_receipts", "Dispatch receipts satisfy the required gates", "Missing or empty dispatch-receipts.jsonl", evidence)
+            return self._fail(
+                "dispatch_receipts",
+                "Dispatch receipts satisfy the required gates",
+                f"Missing or empty {self.receipt_ledger_ref}",
+                evidence,
+            )
         runtime = self.routing.get("runtime_adapter") or self.state.get("runtime_adapter") or {}
         manual_mode = runtime.get("class") == "manual"
         completed_events = {"manual_result_attested", "dispatch_completed"} if manual_mode else {"dispatch_completed"}
@@ -1817,7 +1834,7 @@ class TaskAudit:
             return self._pass(
                 "dispatch_receipts",
                 "Dispatch receipts satisfy the required gates",
-                f"Each v2 work item has completion and identity-matched {mode_description} proof",
+                f"Each {'v3' if self.receipt_ledger_ref.endswith('receipts.v3.jsonl') else 'v2'} work item has completion and identity-matched {mode_description} proof",
                 evidence,
             )
         latest = self._latest_receipts_by_agent()
@@ -1852,7 +1869,7 @@ class TaskAudit:
         return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is dispatch_completed for Leader-declared Agents and runtime submission proof exists", evidence)
 
     def check_submission_dependencies(self) -> AuditItem:
-        evidence = self._existing(["submission-dependencies.json", "dispatch-receipts.jsonl", "routing.json", "state.json"])
+        evidence = self._existing(["submission-dependencies.json", self.receipt_ledger_ref, "routing.json", "state.json"])
         expected_marker = {"status": "recorded", "ref": "submission-dependencies.json"}
         routing_marker = self.routing.get("submission_dependencies") or {}
         state_marker = self.state.get("submission_dependencies") or {}
@@ -2938,7 +2955,7 @@ class TaskAudit:
         receipt_refs = {str(ref) for ref in receipt.get("expected_refs") or []}
         expected_refs = {str(ref) for ref in item.get("expected_refs") or []}
         return (
-            receipt.get("schema_version") == "valp-dispatch-receipt.v2"
+            receipt.get("schema_version") in {"valp-dispatch-receipt.v2", "valp-dispatch-receipt.v3"}
             and all(receipt.get(key) == value for key, value in expected.items())
             and expected_refs.issubset(receipt_refs)
         )

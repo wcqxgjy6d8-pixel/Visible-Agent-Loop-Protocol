@@ -378,6 +378,43 @@ approval state
 If the platform cannot export submission proof or expected evidence refs, it is
 not a Full Mode adapter.
 
+### Reference LangGraph v3 receipt path
+
+The Reference System LangGraph Adapter is the first bounded Adapter path that
+uses canonical v3 receipts end to end. Its authoritative task ledger is:
+
+```text
+runtime/langgraph/receipts.v3.jsonl
+```
+
+The Adapter obtains installation ID and the active non-zero Leader epoch from
+the initialized Reference System control plane, uses the adapter-issued run ID
+as the Attempt ID, digests the exact submitted request, persists typed process-
+and content-bound proof records, and sends every accepted receipt write through
+`ReceiptStore`. Resume and audit strictly load that same ledger and verify proof
+and approval-policy digests before accepting the receipt chain.
+
+`runtime/langgraph/adoption.json` marks a task as adopted. Adopted audit never
+falls back to v2 when the v3 ledger is absent or invalid. Before run submission,
+the Adapter persists a stable intent and sends its ID in provider metadata. A
+prepared intent with no persisted provider outcome blocks redispatch until
+explicit reconciliation; an accepted intent reuses the recorded run. Process
+and content proof use distinct records: one binds the provider response, while
+the other binds the exact request digest, provider-response digest, and explicit
+acknowledgement.
+
+This is an atomic per-task cutover. A non-empty legacy/v2
+`dispatch-receipts.jsonl` cannot coexist with a non-empty LangGraph v3 ledger,
+and a compatibility ledger blocks a new LangGraph v3 submission before runtime
+invocation. Post-commit `unknown_or_committed` outcomes are reconciled by strict
+reread; uncertainty never causes another LangGraph run submission. Dependency
+prerequisites are checked from the v3 ledger before runtime invocation.
+
+HERDR, Queue, Manual Mode, and workflow observation/recovery writers remain on
+their existing legacy/v2 compatibility paths. No in-place migration is executed
+and this adoption does not prove production hosting, sudden-power-loss
+durability, hostile-writer safety, or Windows parity.
+
 ## Remote Adapter
 
 Remote Mode is valid when the runtime runs on another machine and exports the

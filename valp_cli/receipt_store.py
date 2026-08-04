@@ -43,6 +43,8 @@ REJECTED_OUTCOME = "rejected"
 UNKNOWN_OR_COMMITTED_OUTCOME = "unknown_or_committed"
 
 _LOCK_RETRY_SECONDS = 0.01
+_WINDOWS_REPLACE_RETRY_SECONDS = 0.01
+_WINDOWS_REPLACE_TIMEOUT_SECONDS = 1.0
 _DIRECTORY_SYNC_UNSUPPORTED = {
     errno.EINVAL,
     getattr(errno, "ENOTSUP", errno.EINVAL),
@@ -215,6 +217,18 @@ def _sync_directory(directory: Path) -> bool:
     finally:
         os.close(descriptor)
     return True
+
+
+def _replace_file(source: str, target: Path) -> None:
+    deadline = time.monotonic() + _WINDOWS_REPLACE_TIMEOUT_SECONDS
+    while True:
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError as exc:
+            if getattr(exc, "winerror", None) not in {5, 32} or time.monotonic() >= deadline:
+                raise
+            time.sleep(_WINDOWS_REPLACE_RETRY_SECONDS)
 
 
 class ReceiptStore:
@@ -459,7 +473,7 @@ class ReceiptStore:
                     temporary.flush()
                     os.fsync(temporary.fileno())
                 self._ensure_regular(self.path)
-                os.replace(temporary_path, self.path)
+                _replace_file(temporary_path, self.path)
                 replaced = True
                 lock_state["replaced"] = True
                 temporary_path = None

@@ -163,7 +163,7 @@ class ReceiptStoreTests(unittest.TestCase):
                 canonical_json(accepted.receipt.canonical()).encode("utf-8"),
             )
             self.assertEqual(store.load(), accepted.ledger)
-            self.assertIs(store.directory_sync_supported, True)
+            self.assertIs(store.directory_sync_supported, os.name != "nt")
 
     def test_exact_retry_is_noop_and_byte_identical(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -335,6 +335,32 @@ class ReceiptStoreTests(unittest.TestCase):
                 self.assertEqual(raised.exception.outcome, "rejected")
                 self.assertEqual(path.read_bytes(), before)
 
+    def test_transient_windows_replace_conflict_is_retried(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "dispatch-receipts.jsonl"
+            accepted = make_accepted(self.empty_ledger(), "receipt-1")
+            real_replace = os.replace
+            conflict = PermissionError(errno.EACCES, "injected Windows sharing violation")
+            conflict.winerror = 5
+            calls = 0
+
+            def replace_after_conflict(source, target):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise conflict
+                return real_replace(source, target)
+
+            with patch("valp_cli.receipt_store.os.replace", side_effect=replace_after_conflict):
+                result = self.store(path).append(accepted)
+
+            self.assertEqual(result.variant, ReceiptWriteVariant.ACCEPTED)
+            self.assertEqual(calls, 2)
+            self.assertEqual(
+                path.read_bytes(),
+                canonical_json(accepted.receipt.canonical()).encode("utf-8"),
+            )
+
     def test_unlock_failure_after_replace_is_unknown_or_committed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "dispatch-receipts.jsonl"
@@ -362,8 +388,9 @@ class ReceiptStoreTests(unittest.TestCase):
             self.store(path).append(accepted)
             store = self.store(path)
 
-            self.assertIs(store.probe_directory_sync(), True)
-            self.assertIs(store.directory_sync_supported, True)
+            expected = os.name != "nt"
+            self.assertIs(store.probe_directory_sync(), expected)
+            self.assertIs(store.directory_sync_supported, expected)
             self.assertEqual(store.append(accepted).variant, ReceiptWriteVariant.NO_OP)
 
     def test_directory_fsync_after_replace_is_unknown_or_committed(self) -> None:

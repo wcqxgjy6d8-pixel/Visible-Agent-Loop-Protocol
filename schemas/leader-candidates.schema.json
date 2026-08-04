@@ -8,7 +8,45 @@
     "schema_version": {"const": "valp-leader-candidates.v1"},
     "installation_id": {"type": "string", "minLength": 1},
     "epoch": {"const": 0},
-    "candidates": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["principal_id", "principal_kind", "capabilities", "presence"], "properties": {"principal_id": {"type": "string", "minLength": 1}, "principal_kind": {"type": "string", "minLength": 1}, "capabilities": {"type": "array", "items": {"type": "string", "minLength": 1}}, "presence": {"type": "string", "minLength": 1}}}, "minItems": 1},
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["principal_id", "principal_kind", "agent_id", "agent_surface", "capabilities", "presence", "passport_ref", "passport_digest", "observed_session", "runtime"],
+        "properties": {
+          "principal_id": {"type": "string", "minLength": 1},
+          "principal_kind": {"const": "agent"},
+          "agent_id": {"type": "string", "minLength": 1},
+          "agent_surface": {"type": "string", "minLength": 1},
+          "capabilities": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "uniqueItems": true},
+          "presence": {"enum": ["pass", "warn"]},
+          "passport_ref": {"type": "string", "pattern": "^capability-passports/[0-9a-f]{64}\\.json$"},
+          "passport_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "observed_session": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["session_id", "token", "generation"],
+            "properties": {
+              "session_id": {"type": "string", "minLength": 1},
+              "token": {"type": "string", "minLength": 1},
+              "generation": {"type": "string", "minLength": 1}
+            }
+          },
+          "runtime": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["adapter_id", "adapter_class", "launch_argv", "version_command"],
+            "properties": {
+              "adapter_id": {"type": "string", "minLength": 1},
+              "adapter_class": {"type": "string", "minLength": 1},
+              "launch_argv": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
+              "version_command": {"type": "array", "items": {"type": "string", "minLength": 1}}
+            }
+          }
+        }
+      }
+    },
     "generated_at": {"type": "string", "minLength": 1}
   }
 }

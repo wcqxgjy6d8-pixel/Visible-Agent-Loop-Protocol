@@ -48,6 +48,8 @@ It must not hard-code Desktop, macOS paths, or one user's folder names.
         evidence-board.json
         visible-routing.md
         runtime-preflight.json
+        agent-sessions.json
+        agent-session-receipts.jsonl
         evidence-status.json
         evidence/
           wake-requests/

@@ -1,15 +1,27 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
 
-from valp_cli.control_plane import ControlPlaneError, InstallationCore, digest_without
+from valp_cli.cli import main
+from valp_cli.control_plane import (
+    ControlPlaneError,
+    InstallationCore,
+    digest_without,
+    leader_installation_root,
+)
+from valp_cli.herdr_adapter import HerdrSubmissionError
 from valp_cli.plugins import validate_plugin_manifest
 from valp_cli.task_control import init_task, task_state, transition_task
 from valp_cli.process_adapter import run_process
@@ -28,10 +40,823 @@ class ControlPlaneTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def test_leader_root_reuses_configured_installation_from_another_workspace(self) -> None:
+        global_root = self.workspace / "global-control"
+        caller_workspace = self.workspace / "another-window"
+        caller_workspace.mkdir()
+        InstallationCore(global_root).init()
+
+        with patch.dict(os.environ, {"VALP_CONTROL_ROOT": str(global_root)}):
+            resolved = leader_installation_root(caller_workspace)
+
+        self.assertEqual(resolved, global_root.resolve())
+
     def _bootstrap(self) -> None:
         self.core.init()
-        self.core.discover_candidates()
-        self.core.select_leader("manual-user")
+        self.core.discover_candidates([self._leader_passport()])
+        self.core.select_leader("agent-codex-session-a")
+        self.core.prepare_leader_start()
+        self.core.activate_leader(self._provisioned_leader())
+
+    def _leader_passport(
+        self,
+        *,
+        principal_id: str = "agent-codex-session-a",
+        agent_id: str = "codex",
+        session_id: str = "session-a",
+        leader_eligibility: str = "eligible",
+        launch_argv: list[str] | None = None,
+    ) -> dict:
+        return {
+            "schema_version": "valp-capability-passport.v1",
+            "generated_at": "2026-07-26T12:00:00Z",
+            "principal_id": principal_id,
+            "agent_id": agent_id,
+            "agent_surface": f"{agent_id}_cli",
+            "runtime_identity": {
+                "runtime": "HERDR",
+                "adapter_class": "pane_controller",
+                "session_id": session_id,
+                "session": {
+                    "status": "known",
+                    "token": f"sha256:{session_id}",
+                    "source": "test runtime metadata",
+                    "generation": "1",
+                },
+            },
+            "runtime": {
+                "adapter_id": "herdr",
+                "adapter_class": "pane_controller",
+                "launch_argv": launch_argv or ["/test/bin/codex", "--example-mode"],
+                "version_command": ["/test/bin/codex", "--version"],
+            },
+            "live_callability": {"status": "pass"},
+            "role_eligibility": {"leader": leader_eligibility},
+        }
+
+    def _provisioned_leader(self) -> dict:
+        return {
+            "adapter_id": "herdr",
+            "adapter_class": "pane_controller",
+            "principal_id": "agent-codex-session-a",
+            "agent_id": "codex",
+            "generation": 1,
+            "ownership": {
+                "scope": "installation",
+                "installation_id": self.core.state()["installation_id"],
+            },
+            "context": {"cwd": str(self.workspace.resolve())},
+            "launch": {"argv": ["/test/bin/codex", "--example-mode"]},
+            "focused_at_provisioning": False,
+            "runtime_scope": {
+                "kind": "workspace",
+                "ownership": "installation",
+                "workspace_id": "workspace-leader",
+            },
+            "runtime_identity": {
+                "session_id": "pane-leader-fresh",
+                "pane_id": "pane-leader-fresh",
+                "terminal_id": "terminal-leader-fresh",
+                "workspace_id": "workspace-leader",
+                "tab_id": "tab-leader-fresh",
+                "token": "sha256:" + ("1" * 64),
+            },
+            "health": {
+                "status": "pass",
+                "observed_at": "2026-07-26T12:01:00Z",
+                "evidence": {"agent_status": "idle"},
+            },
+            "provisioned_at": "2026-07-26T12:01:00Z",
+        }
+
+    def _block_first_leader_start(self) -> dict:
+        self.core.init()
+        self.core.discover_candidates([self._leader_passport()])
+        self.core.select_leader("agent-codex-session-a")
+        self.core.prepare_leader_start()
+        with self.assertRaises(ControlPlaneError):
+            self.core.fail_leader_activation(
+                "start",
+                adapter_id="herdr",
+                failure_class="HerdrSubmissionError",
+            )
+        return json.loads(
+            (self.root / "leader-session-receipts.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()[-1]
+        )
+
+    def test_candidate_discovery_uses_only_observed_launchable_passports(self) -> None:
+        self.core.init()
+
+        result = self.core.discover_candidates([
+            self._leader_passport(),
+            self._leader_passport(
+                principal_id="agent-claude-session-b",
+                agent_id="claude",
+                session_id="session-b",
+                leader_eligibility="blocked",
+                launch_argv=["/test/bin/claude"],
+            ),
+        ])
+
+        self.assertEqual(
+            [candidate["principal_id"] for candidate in result["candidates"]],
+            ["agent-codex-session-a"],
+        )
+        candidate = result["candidates"][0]
+        self.assertEqual(candidate["principal_kind"], "agent")
+        self.assertEqual(candidate["runtime"]["launch_argv"], ["/test/bin/codex", "--example-mode"])
+        self.assertEqual(candidate["runtime"]["adapter_id"], "herdr")
+        self.assertRegex(candidate["passport_digest"], r"^sha256:[0-9a-f]{64}$")
+        self.assertNotIn("manual-user", {item["principal_id"] for item in result["candidates"]})
+        self.assertNotIn("valp-reference-cli", {item["principal_id"] for item in result["candidates"]})
+
+    def test_leader_candidates_cli_uses_fresh_doctor_passports(self) -> None:
+        self.core.init()
+        output = io.StringIO()
+
+        with patch(
+            "valp_cli.cli.collect_doctor_report",
+            return_value=SimpleNamespace(capability_passports=[self._leader_passport()]),
+        ), contextlib.redirect_stdout(output):
+            code = main([
+                "leader",
+                "candidates",
+                "--workspace",
+                str(self.workspace),
+                "--json",
+            ])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(
+            [candidate["principal_id"] for candidate in payload["candidates"]],
+            ["agent-codex-session-a"],
+        )
+
+    def test_leader_selection_persists_intent_without_activation(self) -> None:
+        self.core.init()
+        self.core.discover_candidates([self._leader_passport()])
+
+        result = self.core.select_leader("agent-codex-session-a")
+
+        state = self.core.state()
+        self.assertEqual(state["status"], "awaiting_leader_start")
+        self.assertIsNone(state["active_leader"])
+        self.assertEqual(state["active_leader_epoch"], 0)
+        self.assertEqual(state["selected_leader"]["principal_id"], "agent-codex-session-a")
+        self.assertEqual(result["selection"]["proposed_leader_epoch"], 1)
+        self.assertEqual(result["selection"]["passport_ref"], state["selected_leader"]["passport_ref"])
+
+    def test_leader_start_activates_only_the_fresh_installation_owned_session(self) -> None:
+        self.core.init()
+        self.core.discover_candidates([self._leader_passport()])
+        self.core.select_leader("agent-codex-session-a")
+        provisioned = {
+            "adapter_id": "herdr",
+            "adapter_class": "pane_controller",
+            "principal_id": "agent-codex-session-a",
+            "agent_id": "codex",
+            "generation": 1,
+            "ownership": {
+                "scope": "installation",
+                "installation_id": self.core.state()["installation_id"],
+            },
+            "context": {"cwd": str(self.workspace.resolve())},
+            "launch": {"argv": ["/test/bin/codex", "--example-mode"]},
+            "focused_at_provisioning": False,
+            "runtime_scope": {
+                "kind": "workspace",
+                "ownership": "installation",
+                "workspace_id": "workspace-leader",
+            },
+            "runtime_identity": {
+                "session_id": "pane-leader-fresh",
+                "pane_id": "pane-leader-fresh",
+                "terminal_id": "terminal-leader-fresh",
+                "workspace_id": "workspace-leader",
+                "tab_id": "tab-leader-fresh",
+                "token": "sha256:" + ("1" * 64),
+            },
+            "health": {
+                "status": "pass",
+                "observed_at": "2026-07-26T12:01:00Z",
+                "evidence": {"agent_status": "idle"},
+            },
+            "provisioned_at": "2026-07-26T12:01:00Z",
+        }
+        output = io.StringIO()
+
+        with patch(
+            "valp_cli.cli.provision_herdr_leader_session",
+            return_value=provisioned,
+        ) as provision, contextlib.redirect_stdout(output):
+            code = main([
+                "leader",
+                "start",
+                "--workspace",
+                str(self.workspace),
+                "--json",
+            ])
+
+        self.assertEqual(code, 0)
+        provision.assert_called_once()
+        state = self.core.state()
+        self.assertEqual(state["status"], "active")
+        self.assertEqual(state["active_leader_epoch"], 1)
+        self.assertEqual(state["active_leader"]["principal_id"], "agent-codex-session-a")
+        self.assertNotIn("session_id", state["active_leader"])
+        binding = json.loads((self.root / "leader-session-binding.json").read_text(encoding="utf-8"))
+        self.assertEqual(binding["ownership"]["scope"], "installation")
+        self.assertEqual(binding["leader_epoch"], 1)
+        self.assertEqual(binding["runtime_identity"]["session_id"], "pane-leader-fresh")
+        receipts = [
+            json.loads(line)
+            for line in (self.root / "leader-session-receipts.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(
+            [receipt["receipt_type"] for receipt in receipts],
+            ["leader_session_provisioned", "leader_session_activated"],
+        )
+
+    def test_leader_show_reports_the_exact_active_session_binding(self) -> None:
+        self.core.init()
+        self.core.discover_candidates([self._leader_passport()])
+        self.core.select_leader("agent-codex-session-a")
+        self.core.prepare_leader_start()
+        self.core.activate_leader(self._provisioned_leader())
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            code = main([
+                "leader",
+                "show",
+                "--workspace",
+                str(self.workspace),
+                "--json",
+            ])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(output.getvalue())
+        binding = payload["leader_session"]
+        self.assertEqual(binding["runtime_identity"]["session_id"], "pane-leader-fresh")
+        self.assertEqual(binding["generation"], 1)
+        self.assertRegex(binding["launch"]["argv_digest"], r"^sha256:[0-9a-f]{64}$")
+        self.assertEqual(binding["health"]["status"], "pass")
+
+    def test_leader_start_provisioning_failure_records_blocked_receipt(self) -> None:
+        self.core.init()
+        self.core.discover_candidates([self._leader_passport()])
+        self.core.select_leader("agent-codex-session-a")
+
+        with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
+            "valp_cli.cli.provision_herdr_leader_session",
+            side_effect=HerdrSubmissionError("simulated provisioning failure"),
+        ):
+            with self.assertRaises(SystemExit) as context:
+                main([
+                    "leader",
+                    "start",
+                    "--workspace",
+                    str(self.workspace),
+                    "--json",
+                ])
+
+        self.assertIn("VALP-E-LEADER-UNREACHABLE", str(context.exception))
+        state = self.core.state()
+        self.assertEqual(state["status"], "blocked")
+        self.assertEqual(state["active_leader_epoch"], 0)
+        self.assertIsNone(state["active_leader"])
+        receipts = [
+            json.loads(line)
+            for line in (self.root / "leader-session-receipts.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(len(receipts), 1)
+        receipt = receipts[0]
+        self.assertEqual(receipt["receipt_type"], "leader_session_start_failed")
+        self.assertEqual(receipt["operation"], "start")
+        self.assertEqual(receipt["principal_id"], "agent-codex-session-a")
+        self.assertEqual(receipt["leader_epoch"], 1)
+        self.assertEqual(receipt["generation"], 1)
+        self.assertEqual(receipt["failure_code"], "VALP-E-LEADER-UNREACHABLE")
+        self.assertNotIn("binding_digest", receipt)
+        self.assertNotIn("runtime_session_id", receipt)
+        schema = json.loads(
+            (ROOT / "schemas" / "leader-session-receipt.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(list(Draft202012Validator(schema).iter_errors(receipt)), [])
+
+    def test_leader_start_rejects_invalid_runtime_binding_into_blocked_state(self) -> None:
+        self.core.init()
+        self.core.discover_candidates([self._leader_passport()])
+        self.core.select_leader("agent-codex-session-a")
+        invalid_binding = self._provisioned_leader()
+        invalid_binding["focused_at_provisioning"] = True
+
+        with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
+            "valp_cli.cli.provision_herdr_leader_session",
+            return_value=invalid_binding,
+        ):
+            with self.assertRaises(SystemExit) as context:
+                main([
+                    "leader",
+                    "start",
+                    "--workspace",
+                    str(self.workspace),
+                    "--json",
+                ])
+
+        self.assertIn("VALP-E-LEADER-UNREACHABLE", str(context.exception))
+        state = self.core.state()
+        self.assertEqual(state["status"], "blocked")
+        self.assertEqual(state["active_leader_epoch"], 0)
+        self.assertFalse((self.root / "leader-session-binding.json").exists())
+        receipts = [
+            json.loads(line)
+            for line in (self.root / "leader-session-receipts.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(receipts[-1]["receipt_type"], "leader_session_start_failed")
+        self.assertEqual(receipts[-1]["failure_class"], "LeaderSessionBindingValidationError")
+        self.assertNotIn("runtime_session_id", receipts[-1])
+
+    def test_leader_recover_start_requires_explicit_approval_before_runtime_access(self) -> None:
+        self._block_first_leader_start()
+
+        with patch("valp_cli.cli.recover_herdr_leader_session") as recover:
+            with self.assertRaises(SystemExit) as context:
+                main([
+                    "leader",
+                    "recover-start",
+                    "--workspace",
+                    str(self.workspace),
+                    "--session",
+                    "workspace-leader:pane-leader-fresh",
+                    "--json",
+                ])
+
+        self.assertIn("VALP-E-APPROVAL-REQUIRED", str(context.exception))
+        recover.assert_not_called()
+        self.assertEqual(self.core.state()["status"], "blocked")
+        self.assertEqual(self.core.state()["revision"], 6)
+
+    def test_leader_recover_start_rejects_a_nonmatching_latest_failed_receipt(self) -> None:
+        original = self._block_first_leader_start()
+        conflicting = {
+            **original,
+            "receipt_id": "leader-receipt-conflicting-recovery",
+            "operation": "recover-start",
+            "recorded_at": "2026-07-26T12:02:00Z",
+        }
+        conflicting["receipt_digest"] = digest_without(conflicting, "receipt_digest")
+        with (self.root / "leader-session-receipts.jsonl").open(
+            "a", encoding="utf-8"
+        ) as handle:
+            handle.write(json.dumps(conflicting, sort_keys=True) + "\n")
+
+        with patch("valp_cli.cli.recover_herdr_leader_session") as recover:
+            with self.assertRaises(SystemExit) as context:
+                main([
+                    "leader",
+                    "recover-start",
+                    "--workspace",
+                    str(self.workspace),
+                    "--session",
+                    "workspace-leader:pane-leader-fresh",
+                    "--approve",
+                    "--json",
+                ])
+
+        self.assertIn("VALP-E-REGISTRY-CONSISTENCY", str(context.exception))
+        recover.assert_not_called()
+        self.assertEqual(self.core.state()["status"], "blocked")
+
+    def test_leader_recover_start_activates_only_the_user_named_failed_session(self) -> None:
+        failed = self._block_first_leader_start()
+        recovered = self._provisioned_leader()
+        recovered["runtime_identity"]["session_id"] = "workspace-leader:pane-recovered"
+        recovered["runtime_identity"]["pane_id"] = "workspace-leader:pane-recovered"
+        recovered["runtime_identity"]["process_generation"] = "sha256:" + ("2" * 64)
+        recovered["runtime_identity"]["token"] = "sha256:" + ("3" * 64)
+        output = io.StringIO()
+
+        def recovered_session(*_args: object, **kwargs: object) -> dict:
+            return {
+                **recovered,
+                "recovery": kwargs["recovery_approval"],
+            }
+
+        with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
+            "valp_cli.cli.recover_herdr_leader_session",
+            side_effect=recovered_session,
+        ) as recover, contextlib.redirect_stdout(output):
+            code = main([
+                "leader",
+                "recover-start",
+                "--workspace",
+                str(self.workspace),
+                "--session",
+                "workspace-leader:pane-recovered",
+                "--approve",
+                "--json",
+            ])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["binding"]["runtime_identity"]["session_id"], "workspace-leader:pane-recovered")
+        self.assertEqual(recover.call_args.kwargs["session_id"], "workspace-leader:pane-recovered")
+        self.assertEqual(recover.call_args.kwargs["generation"], 1)
+        self.assertEqual(recover.call_args.kwargs["leader_epoch"], 1)
+        approval = recover.call_args.kwargs["recovery_approval"]
+        self.assertEqual(approval["failed_receipt_digest"], failed["receipt_digest"])
+        self.assertEqual(approval["approved_session_id"], "workspace-leader:pane-recovered")
+
+        state = self.core.state()
+        self.assertEqual(state["status"], "active")
+        self.assertEqual(state["active_leader_epoch"], 1)
+        binding = json.loads((self.root / "leader-session-binding.json").read_text(encoding="utf-8"))
+        self.assertNotIn("session_id", state["active_leader"])
+        self.assertEqual(binding["runtime_identity"]["session_id"], "workspace-leader:pane-recovered")
+        self.assertEqual(binding["recovery"]["approval_event_id"], approval["approval_event_id"])
+        self.assertEqual(binding["recovery"]["failed_receipt_digest"], failed["receipt_digest"])
+        binding_schema = json.loads(
+            (ROOT / "schemas" / "leader-session-binding.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            list(Draft202012Validator(binding_schema).iter_errors(binding)),
+            [],
+        )
+        receipts = [
+            json.loads(line)
+            for line in (self.root / "leader-session-receipts.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(
+            [receipt["receipt_type"] for receipt in receipts],
+            [
+                "leader_session_start_failed",
+                "leader_session_provisioned",
+                "leader_session_activated",
+            ],
+        )
+        self.assertEqual(receipts[0], failed)
+        self.assertEqual(receipts[1]["recovery"]["failed_receipt_digest"], failed["receipt_digest"])
+        self.assertEqual(receipts[2]["recovery"]["approved_session_id"], "workspace-leader:pane-recovered")
+        receipt_schema = json.loads(
+            (ROOT / "schemas" / "leader-session-receipt.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        for receipt in receipts:
+            self.assertEqual(
+                list(Draft202012Validator(receipt_schema).iter_errors(receipt)),
+                [],
+            )
+
+    def test_failed_leader_recovery_preserves_the_original_failed_receipt(self) -> None:
+        original = self._block_first_leader_start()
+
+        with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
+            "valp_cli.cli.recover_herdr_leader_session",
+            side_effect=HerdrSubmissionError("simulated recovery mismatch"),
+        ):
+            with self.assertRaises(SystemExit) as context:
+                main([
+                    "leader",
+                    "recover-start",
+                    "--workspace",
+                    str(self.workspace),
+                    "--session",
+                    "workspace-leader:pane-recovered",
+                    "--approve",
+                    "--json",
+                ])
+
+        self.assertIn("VALP-E-LEADER-UNREACHABLE", str(context.exception))
+        self.assertEqual(self.core.state()["status"], "blocked")
+        self.assertEqual(self.core.state()["active_leader_epoch"], 0)
+        receipts = [
+            json.loads(line)
+            for line in (self.root / "leader-session-receipts.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(receipts[0], original)
+        self.assertEqual(receipts[-1]["receipt_type"], "leader_session_start_failed")
+        self.assertEqual(receipts[-1]["operation"], "recover-start")
+        self.assertNotEqual(receipts[-1]["receipt_digest"], original["receipt_digest"])
+        self.assertEqual(
+            receipts[-1]["recovery"]["approved_session_id"],
+            "workspace-leader:pane-recovered",
+        )
+
+    def test_second_leader_start_opens_the_active_attachment_without_provisioning(self) -> None:
+        self.core.init()
+        self.core.discover_candidates([self._leader_passport()])
+        self.core.select_leader("agent-codex-session-a")
+        self.core.prepare_leader_start()
+        self.core.activate_leader(self._provisioned_leader())
+
+        with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
+            "valp_cli.cli.open_herdr_leader_session",
+            return_value={
+                "status": "opened",
+                "action": "focused_existing_attachment",
+                "session_id": "pane-leader-fresh",
+                "workspace_id": "workspace-leader",
+                "binding_digest": "sha256:" + ("a" * 64),
+            },
+        ) as opened, patch(
+            "valp_cli.cli.provision_herdr_leader_session"
+        ) as provision:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = main([
+                    "leader",
+                    "start",
+                    "--workspace",
+                    str(self.workspace),
+                    "--json",
+                ])
+
+        self.assertEqual(code, 0)
+        opened.assert_called_once()
+        provision.assert_not_called()
+        self.assertEqual(self.core.state()["active_leader_epoch"], 1)
+
+    def test_leader_open_reprovisions_only_when_the_attachment_is_gone(self) -> None:
+        self._bootstrap()
+        replacement = self._provisioned_leader()
+        replacement["generation"] = 2
+        replacement["runtime_identity"] = {
+            **replacement["runtime_identity"],
+            "session_id": "pane-leader-reopened",
+            "pane_id": "pane-leader-reopened",
+        }
+
+        with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
+            "valp_cli.cli.open_herdr_leader_session",
+            return_value={
+                "status": "missing",
+                "action": "reprovision_required",
+                "reason": "leader_attachment_not_found",
+            },
+        ), patch(
+            "valp_cli.cli.provision_herdr_leader_session",
+            return_value=replacement,
+        ) as provision:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = main([
+                    "leader",
+                    "open",
+                    "--workspace",
+                    str(self.workspace),
+                    "--json",
+                ])
+
+        self.assertEqual(code, 0)
+        provision.assert_called_once()
+        self.assertEqual(self.core.state()["active_leader_epoch"], 2)
+        self.assertEqual(
+            json.loads((self.root / "leader-session-binding.json").read_text(encoding="utf-8"))[
+                "runtime_identity"
+            ]["session_id"],
+            "pane-leader-reopened",
+        )
+
+    def test_explicit_leader_restart_fences_epoch_and_preserves_binding_history(self) -> None:
+        self.core.init()
+        self.core.discover_candidates([self._leader_passport()])
+        self.core.select_leader("agent-codex-session-a")
+        self.core.prepare_leader_start()
+        self.core.activate_leader(self._provisioned_leader())
+        first_binding = json.loads(
+            (self.root / "leader-session-binding.json").read_text(encoding="utf-8")
+        )
+        replacement = self._provisioned_leader()
+        replacement["generation"] = 2
+        replacement["runtime_scope"] = {
+            "kind": "workspace",
+            "ownership": "installation",
+            "workspace_id": "workspace-leader-2",
+        }
+        replacement["runtime_identity"] = {
+            "session_id": "pane-leader-fresh-2",
+            "pane_id": "pane-leader-fresh-2",
+            "terminal_id": "terminal-leader-fresh-2",
+            "workspace_id": "workspace-leader-2",
+            "tab_id": "tab-leader-fresh-2",
+            "token": "sha256:" + ("2" * 64),
+        }
+        replacement["provisioned_at"] = "2026-07-26T12:02:00Z"
+        output = io.StringIO()
+
+        with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
+            "valp_cli.cli.provision_herdr_leader_session",
+            return_value=replacement,
+        ) as provision, contextlib.redirect_stdout(output):
+            code = main([
+                "leader",
+                "restart",
+                "--workspace",
+                str(self.workspace),
+                "--json",
+            ])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(provision.call_args.kwargs["leader_epoch"], 2)
+        self.assertEqual(provision.call_args.kwargs["generation"], 2)
+        state = self.core.state()
+        self.assertEqual(state["active_leader_epoch"], 2)
+        self.assertNotIn("session_id", state["active_leader"])
+        historical = list((self.root / "leader-session-bindings").glob("*.json"))
+        historical_bindings = [json.loads(path.read_text(encoding="utf-8")) for path in historical]
+        self.assertIn(first_binding["binding_digest"], {
+            binding["binding_digest"] for binding in historical_bindings
+        })
+        receipts = [
+            json.loads(line)
+            for line in (self.root / "leader-session-receipts.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(receipts[-2]["receipt_type"], "leader_session_replaced")
+        self.assertEqual(receipts[-1]["receipt_type"], "leader_session_activated")
+        with self.assertRaises(ControlPlaneError) as stale:
+            current = self.core.state()
+            self.core._transition(
+                event_kind="test.stale_worker",
+                message_kind="command.test.stale_worker",
+                principal_id="old-leader",
+                principal_kind="installation-leader",
+                epoch=1,
+                expected_revision=current["revision"],
+                payload={},
+                target_status="degraded",
+                idempotency_key="stale-after-restart",
+            )
+        self.assertEqual(stale.exception.code, "VALP-E-LEADER-EPOCH")
+
+    def test_leader_restart_provisioning_failure_preserves_the_active_epoch(self) -> None:
+        self._bootstrap()
+        prior_binding = json.loads(
+            (self.root / "leader-session-binding.json").read_text(encoding="utf-8")
+        )
+
+        with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
+            "valp_cli.cli.provision_herdr_leader_session",
+            side_effect=HerdrSubmissionError("simulated restart failure"),
+        ):
+            with self.assertRaises(SystemExit) as context:
+                main([
+                    "leader",
+                    "restart",
+                    "--workspace",
+                    str(self.workspace),
+                    "--json",
+                ])
+
+        self.assertIn("VALP-E-LEADER-UNREACHABLE", str(context.exception))
+        state = self.core.state()
+        self.assertEqual(state["status"], "blocked")
+        self.assertEqual(state["active_leader_epoch"], 1)
+        self.assertNotIn("session_id", state["active_leader"])
+        self.assertEqual(
+            json.loads(
+                (self.root / "leader-session-binding.json").read_text(encoding="utf-8")
+            )["binding_digest"],
+            prior_binding["binding_digest"],
+        )
+        receipts = [
+            json.loads(line)
+            for line in (self.root / "leader-session-receipts.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(receipts[-1]["receipt_type"], "leader_session_start_failed")
+        self.assertEqual(receipts[-1]["operation"], "restart")
+        self.assertEqual(receipts[-1]["leader_epoch"], 2)
+        self.assertEqual(receipts[-1]["generation"], 2)
+        self.assertNotIn("replaced_binding_digest", receipts[-1])
+
+    def test_leader_rotation_provisions_replacement_before_changing_authority(self) -> None:
+        replacement_passport = self._leader_passport(
+            principal_id="agent-claude-session-b",
+            agent_id="claude",
+            session_id="session-b",
+            launch_argv=["/test/bin/claude"],
+        )
+        self.core.init()
+        self.core.discover_candidates([self._leader_passport(), replacement_passport])
+        self.core.select_leader("agent-codex-session-a")
+        self.core.prepare_leader_start()
+        self.core.activate_leader(self._provisioned_leader())
+        replacement = self._provisioned_leader()
+        replacement.update({
+            "principal_id": "agent-claude-session-b",
+            "agent_id": "claude",
+            "generation": 2,
+            "launch": {"argv": ["/test/bin/claude"]},
+            "runtime_scope": {
+                "kind": "workspace",
+                "ownership": "installation",
+                "workspace_id": "workspace-claude-leader",
+            },
+            "runtime_identity": {
+                "session_id": "pane-claude-leader",
+                "pane_id": "pane-claude-leader",
+                "terminal_id": "terminal-claude-leader",
+                "workspace_id": "workspace-claude-leader",
+                "tab_id": "tab-claude-leader",
+                "token": "sha256:" + ("3" * 64),
+            },
+        })
+
+        with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
+            "valp_cli.cli.provision_herdr_leader_session",
+            return_value=replacement,
+        ) as provision:
+            code = main([
+                "leader",
+                "rotate",
+                "agent-claude-session-b",
+                "--workspace",
+                str(self.workspace),
+                "--json",
+            ])
+
+        self.assertEqual(code, 0)
+        provision.assert_called_once()
+        state = self.core.state()
+        self.assertEqual(state["active_leader_epoch"], 2)
+        self.assertEqual(state["active_leader"]["principal_id"], "agent-claude-session-b")
+        self.assertNotIn("session_id", state["active_leader"])
+
+    def test_leader_rotation_provisioning_failure_does_not_activate_replacement(self) -> None:
+        replacement_passport = self._leader_passport(
+            principal_id="agent-claude-session-b",
+            agent_id="claude",
+            session_id="session-b",
+            launch_argv=["/test/bin/claude"],
+        )
+        self.core.init()
+        self.core.discover_candidates([self._leader_passport(), replacement_passport])
+        self.core.select_leader("agent-codex-session-a")
+        self.core.prepare_leader_start()
+        self.core.activate_leader(self._provisioned_leader())
+        prior_binding = json.loads(
+            (self.root / "leader-session-binding.json").read_text(encoding="utf-8")
+        )
+
+        with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
+            "valp_cli.cli.provision_herdr_leader_session",
+            side_effect=HerdrSubmissionError("simulated rotation failure"),
+        ):
+            with self.assertRaises(SystemExit) as context:
+                main([
+                    "leader",
+                    "rotate",
+                    "agent-claude-session-b",
+                    "--workspace",
+                    str(self.workspace),
+                    "--json",
+                ])
+
+        self.assertIn("VALP-E-LEADER-UNREACHABLE", str(context.exception))
+        state = self.core.state()
+        self.assertEqual(state["status"], "blocked")
+        self.assertEqual(state["active_leader_epoch"], 1)
+        self.assertEqual(state["active_leader"]["principal_id"], "agent-codex-session-a")
+        self.assertEqual(state["selected_leader"]["principal_id"], "agent-claude-session-b")
+        self.assertEqual(
+            json.loads(
+                (self.root / "leader-session-binding.json").read_text(encoding="utf-8")
+            )["binding_digest"],
+            prior_binding["binding_digest"],
+        )
+        receipts = [
+            json.loads(line)
+            for line in (self.root / "leader-session-receipts.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(receipts[-1]["receipt_type"], "leader_session_start_failed")
+        self.assertEqual(receipts[-1]["operation"], "rotate")
+        self.assertEqual(receipts[-1]["principal_id"], "agent-claude-session-b")
+        self.assertEqual(receipts[-1]["leader_epoch"], 2)
+        self.assertEqual(receipts[-1]["generation"], 2)
 
     def test_bootstrap_requires_explicit_leader_selection(self) -> None:
         self.core.init()
@@ -133,6 +958,7 @@ class ControlPlaneTests(unittest.TestCase):
             "protocol-manifest.json": "protocol-manifest.schema.json",
             "state.json": "executable-state.schema.json",
             "leader-candidates.json": "leader-candidates.schema.json",
+            "leader-session-binding.json": "leader-session-binding.schema.json",
             "capability-registry.json": "capability-registry.schema.json",
             "evidence-manifest.json": "evidence-manifest.schema.json",
         }
@@ -141,7 +967,12 @@ class ControlPlaneTests(unittest.TestCase):
                 schema = json.loads((ROOT / "schemas" / schema_name).read_text(encoding="utf-8"))
                 value = json.loads((self.root / artifact).read_text(encoding="utf-8"))
                 self.assertEqual(list(Draft202012Validator(schema).iter_errors(value)), [])
-        for artifact, schema_name in (("messages.jsonl", "message.schema.json"), ("events.jsonl", "event.schema.json")):
+        for artifact, schema_name in (
+            ("messages.jsonl", "message.schema.json"),
+            ("events.jsonl", "event.schema.json"),
+            ("leader-selections.jsonl", "leader-selection.schema.json"),
+            ("leader-session-receipts.jsonl", "leader-session-receipt.schema.json"),
+        ):
             schema = json.loads((ROOT / "schemas" / schema_name).read_text(encoding="utf-8"))
             validator = Draft202012Validator(schema)
             for line in (self.root / artifact).read_text(encoding="utf-8").splitlines():

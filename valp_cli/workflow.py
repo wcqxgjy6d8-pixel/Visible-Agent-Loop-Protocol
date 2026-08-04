@@ -26,9 +26,13 @@ from .control_contract import (
 )
 from .delegation import build_delegation_policy, validate_delegation_policy
 from .herdr_adapter import (
+    HERDR_PANE_LIST_STDOUT_LIMIT,
     HerdrSubmissionError,
     describe_herdr_submission,
+    detect_herdr_session_provisioning_capability,
     detect_herdr_submission_capability,
+    opaque_process_generation,
+    provision_herdr_agent_session,
     submit_herdr_dispatch,
 )
 from .model_identity import (
@@ -87,7 +91,17 @@ PROFILE_ROLE_REQUIREMENTS = {
     "prototype": ["coordinator", "prototype", "implementer"],
 }
 
+RUNTIME_DISPATCH_RETRYABLE_STOP_REASONS = {
+    "runtime dispatch failure",
+    # Compatibility for tasks blocked before provisioning failures were folded
+    # into the common runtime dispatch failure state.
+    "runtime session provisioning failure",
+    "runtime preflight failure",
+    "owned session model readiness pending",
+}
+
 UI_ATTENTION_PROFILES = {"apple-app", "web-frontend", "prototype"}
+TASK_RUNTIME_CAPABILITIES_REF = "runtime/task-capabilities.json"
 
 ATTENTION_HEAD_ROLES = {
     "state_gate": "coordinator",
@@ -689,6 +703,9 @@ def resolve_runtime(runtime: str | None = None) -> str:
 
 
 def runtime_from_adapter_record(runtime: dict[str, Any]) -> str:
+    adapter_id = str(runtime.get("id") or "").lower()
+    if adapter_id in {"manual", "queue", "langgraph", "herdr"}:
+        return adapter_id
     runtime_class = str(runtime.get("class") or "").lower()
     runtime_name = str(runtime.get("name") or "").lower()
     if runtime_class == "manual" or runtime_name == "manual":
@@ -740,8 +757,105 @@ def load_local_capabilities(root: Path | None = None) -> dict[str, Any]:
     }
 
 
+def load_dispatch_capabilities(
+    root: Path,
+    directory: Path,
+    routing: dict[str, Any],
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    capabilities = load_local_capabilities(root)
+    routing_marker = routing.get("task_runtime_capabilities")
+    state_marker = state.get("task_runtime_capabilities")
+    if routing_marker is None and state_marker is None:
+        return capabilities
+    if (
+        not isinstance(routing_marker, dict)
+        or not isinstance(state_marker, dict)
+        or routing_marker != state_marker
+    ):
+        raise SystemExit("Task runtime capability marker is missing or inconsistent")
+    digest = str(routing_marker.get("digest") or "")
+    if (
+        routing_marker.get("status") != "recorded"
+        or routing_marker.get("ref") != TASK_RUNTIME_CAPABILITIES_REF
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+    ):
+        raise SystemExit("Task runtime capability marker is invalid")
+
+    capability_path = directory / TASK_RUNTIME_CAPABILITIES_REF
+    if not capability_path.is_file():
+        raise SystemExit("Task runtime capability record is missing")
+    raw = capability_path.read_bytes()
+    observed_digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    if observed_digest != digest:
+        raise SystemExit("Task runtime capability digest mismatch")
+    task_capabilities = read_json_strict(capability_path)
+    task_agents = task_capabilities.get("agents")
+    if (
+        task_capabilities.get("schema_version") != "valp-agent-capabilities.v1"
+        or not isinstance(task_agents, dict)
+    ):
+        raise SystemExit("Task runtime capability record is invalid")
+
+    merged = json.loads(json.dumps(capabilities))
+    merged_agents = merged.get("agents")
+    if not isinstance(merged_agents, dict):
+        raise SystemExit("Current capability evidence has no Agent registry")
+    override_count = 0
+    for agent, task_info in task_agents.items():
+        if agent not in merged_agents or not isinstance(merged_agents.get(agent), dict):
+            raise SystemExit(
+                f"Task runtime capability Agent is absent from current capability evidence: {agent}"
+            )
+        if not isinstance(task_info, dict):
+            raise SystemExit(f"Task runtime capability Agent record is invalid: {agent}")
+        task_runtime = task_info.get("runtime")
+        if not isinstance(task_runtime, dict):
+            raise SystemExit(f"Task runtime capability runtime record is invalid: {agent}")
+        merged_runtime = merged_agents[agent].get("runtime")
+        if not isinstance(merged_runtime, dict):
+            merged_runtime = {}
+            merged_agents[agent]["runtime"] = merged_runtime
+        for field in ("launch_argv", "version_command"):
+            if field not in task_runtime:
+                continue
+            argv = task_runtime.get(field)
+            if (
+                not isinstance(argv, list)
+                or not argv
+                or not all(isinstance(item, str) and item.strip() for item in argv)
+            ):
+                raise SystemExit(
+                    f"Task runtime capability {field} is invalid for Agent {agent}"
+                )
+            merged_runtime[field] = [str(item) for item in argv]
+            override_count += 1
+    if override_count == 0:
+        raise SystemExit("Task runtime capability record contains no runtime command overrides")
+    return merged
+
+
 def load_local_overlay(root: Path | None = None) -> dict[str, Any]:
     return read_json(local_overlay_path(root))
+
+
+def capability_runtime_argv_by_agent(
+    agents: dict[str, Any],
+    field: str,
+) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    if not isinstance(agents, dict):
+        return result
+    for agent, info in agents.items():
+        runtime = info.get("runtime") if isinstance(info, dict) else None
+        argv = runtime.get(field) if isinstance(runtime, dict) else None
+        if (
+            isinstance(argv, list)
+            and argv
+            and all(isinstance(item, str) and item.strip() for item in argv)
+        ):
+            result[str(agent)] = [str(item) for item in argv]
+    return result
 
 
 def scan_workspace(root: Path, task_id: str | None = None, runtime: str | None = None) -> dict[str, Any]:
@@ -750,7 +864,15 @@ def scan_workspace(root: Path, task_id: str | None = None, runtime: str | None =
     overlay_path = local_overlay_path(root)
     capabilities = load_local_capabilities(root)
     overlay = load_local_overlay(root)
-    capabilities["runtime_preflight"] = collect_runtime_preflight(list((capabilities.get("agents") or {}).keys()), runtime=runtime)
+    agents = capabilities.get("agents") or {}
+    launch_argv_by_agent = capability_runtime_argv_by_agent(agents, "launch_argv")
+    version_command_by_agent = capability_runtime_argv_by_agent(agents, "version_command")
+    capabilities["runtime_preflight"] = collect_runtime_preflight(
+        list(agents.keys()),
+        runtime=runtime,
+        launch_argv_by_agent=launch_argv_by_agent,
+        version_command_by_agent=version_command_by_agent,
+    )
     capabilities["last_valp_scan_at"] = now_iso()
     capabilities["capabilities_source_ref"] = str(capabilities_path) if read_json(capabilities_path) else None
     capabilities["local_overlay_ref"] = str(overlay_path) if overlay else None
@@ -1109,17 +1231,186 @@ def enforce_iteration_budget(
     return budget
 
 
+def late_owned_session_model_readiness_recovery_pending(
+    directory: Path,
+    state: dict[str, Any],
+    phases: list[tuple[str, str]] | None,
+) -> bool:
+    if not phases:
+        return False
+    task_id = str(state.get("task_id") or directory.name)
+    model_block = read_json(directory / "model-identity-dispatch-block.json")
+    if (
+        model_block.get("status") != "blocked"
+        or model_block.get("task_id") != task_id
+        or model_block.get("reason") != "owned_session_model_readiness_timeout"
+    ):
+        return False
+
+    target_work_items = {f"{role}:{agent}" for agent, role in phases}
+    target_agents = {agent for agent, _role in phases}
+    try:
+        dispatch_receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
+        session_receipts = read_json_lines_strict(directory / "agent-session-receipts.jsonl")
+        timeline_events = read_json_lines_strict(directory / "timeline.jsonl")
+    except SystemExit:
+        return False
+    for event in timeline_events:
+        if event.get("event") != "dispatch_submit_failed":
+            continue
+        work_item_id = str(event.get("work_item_id") or "")
+        if work_item_id in target_work_items:
+            return False
+        if not work_item_id and str(event.get("agent") or "") in target_agents:
+            return False
+    for receipt in dispatch_receipts:
+        if receipt.get("event") not in DELIVERY_RECEIPT_EVENTS:
+            continue
+        work_item_id = str(receipt.get("work_item_id") or "")
+        if work_item_id in target_work_items:
+            return False
+        if not work_item_id and str(receipt.get("agent") or "") in target_agents:
+            return False
+
+    projection = read_json(directory / "agent-sessions.json")
+    if (
+        projection.get("schema_version") != "valp-agent-sessions.v1"
+        or projection.get("task_id") != task_id
+        or projection.get("adapter") != "herdr"
+        or projection.get("status") != "ready"
+    ):
+        return False
+    bindings = projection.get("bindings")
+    if not isinstance(bindings, dict):
+        return False
+
+    for agent in target_agents:
+        binding = bindings.get(agent)
+        if not isinstance(binding, dict):
+            return False
+        ownership = binding.get("ownership") or {}
+        identity = binding.get("runtime_identity") or {}
+        generation = binding.get("generation")
+        if (
+            binding.get("agent") != agent
+            or binding.get("dispatch_eligible") is not True
+            or binding.get("focused_at_provisioning") is not False
+            or ownership.get("scope") != "task"
+            or ownership.get("task_id") != task_id
+            or type(generation) is not int
+            or generation < 1
+            or not str(identity.get("pane_id") or "")
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(identity.get("token") or ""))
+        ):
+            return False
+        matching_receipts = [
+            receipt
+            for receipt in session_receipts
+            if receipt.get("schema_version") == "valp-agent-session-receipt.v1"
+            and receipt.get("adapter") == "herdr"
+            and receipt.get("task_id") == task_id
+            and receipt.get("agent") == agent
+            and receipt.get("event") == "agent_session_provisioned"
+            and receipt.get("binding_ref") == "agent-sessions.json"
+            and receipt.get("generation") == generation
+            and receipt.get("identity_token") == identity.get("token")
+            and receipt.get("ownership") == ownership
+            and receipt.get("context") == binding.get("context")
+            and receipt.get("launch") == binding.get("launch")
+            and receipt.get("runtime_scope") == binding.get("runtime_scope")
+            and receipt.get("runtime_identity") == identity
+            and receipt.get("focused_at_provisioning") is False
+        ]
+        if len(matching_receipts) != 1:
+            return False
+    return True
+
+
 def runtime_dispatch_retry_pending(
     directory: Path,
     state: dict[str, Any],
     runtime_kind: str,
+    phases: list[tuple[str, str]] | None = None,
 ) -> bool:
     budget = read_json(directory / "iteration-budget.json")
-    return (
+    if not (
         runtime_kind == "herdr"
         and state.get("status") == "dispatching"
         and budget.get("status") == "blocked"
-        and budget.get("stop_reason") == "runtime dispatch failure"
+    ):
+        return False
+    reason = budget.get("stop_reason")
+    if reason in RUNTIME_DISPATCH_RETRYABLE_STOP_REASONS:
+        return True
+    if reason == "runtime dispatch retry exhausted":
+        return late_owned_session_model_readiness_recovery_pending(
+            directory,
+            state,
+            phases,
+        )
+    if reason != "dynamic model identity changed after routing":
+        return False
+    preflight = read_json(directory / "runtime-preflight.json")
+    model_block = read_json(directory / "model-identity-dispatch-block.json")
+    records = list((preflight.get("agents") or {}).values())
+    return bool(
+        model_block.get("status") == "blocked"
+        and model_block.get("errors")
+        and records
+        and all(
+            ((record.get("session_binding") or {}).get("status") == "bound")
+            and ((record.get("model_probe") or {}).get("status") in {"unsupported", "unavailable"})
+            for record in records
+            if isinstance(record, dict)
+        )
+    )
+
+
+def owned_session_launch_replacement_pending(
+    directory: Path,
+    state: dict[str, Any],
+    phases: list[tuple[str, str]],
+) -> bool:
+    if len(phases) != 1 or state.get("status") != "dispatching":
+        return False
+    budget = read_json(directory / "iteration-budget.json")
+    block = read_json(directory / "agent-session-block.json")
+    if (
+        budget.get("status") != "blocked"
+        or budget.get("stop_reason") != "runtime dispatch retry exhausted"
+        or block.get("status") != "blocked"
+        or block.get("reason") != "HERDR task-owned session binding metadata conflicts"
+    ):
+        return False
+    agent, role = phases[0]
+    work_item_id = f"{role}:{agent}"
+    try:
+        receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
+        timeline = read_json_lines_strict(directory / "timeline.jsonl")
+    except SystemExit:
+        return False
+    if any(
+        event.get("event") == "dispatch_submit_failed"
+        and (
+            event.get("work_item_id") == work_item_id
+            or (
+                not event.get("work_item_id")
+                and event.get("agent") == agent
+            )
+        )
+        for event in timeline
+    ):
+        return False
+    return not any(
+        receipt.get("event") in DELIVERY_RECEIPT_EVENTS
+        and (
+            receipt.get("work_item_id") == work_item_id
+            or (
+                not receipt.get("work_item_id")
+                and receipt.get("agent") == agent
+            )
+        )
+        for receipt in receipts
     )
 
 
@@ -1127,11 +1418,17 @@ def resume_runtime_dispatch_retry(
     directory: Path,
     routing: dict[str, Any],
     phases: list[tuple[str, str]],
+    *,
+    expected_stop_reason: str | None = None,
 ) -> dict[str, Any]:
     with task_state_lock(directory):
         state = read_json(directory / "state.json")
         budget = read_json(directory / "iteration-budget.json")
-        if not runtime_dispatch_retry_pending(directory, state, "herdr"):
+        retry_state_matches = (
+            budget.get("status") == "blocked"
+            and budget.get("stop_reason") == expected_stop_reason
+        ) if expected_stop_reason else runtime_dispatch_retry_pending(directory, state, "herdr")
+        if not retry_state_matches:
             raise SystemExit("Runtime dispatch retry state changed before recovery")
         budget["status"] = "active"
         budget["stop_reason"] = None
@@ -1144,6 +1441,114 @@ def resume_runtime_dispatch_retry(
             work_item_ids=[f"{role}:{agent}" for agent, role in phases],
         )
         return budget
+
+
+def await_owned_session_model_preflight(
+    agent_names: list[str],
+    runtime_kind: str,
+    session_bindings: dict[str, Any],
+    initial_preflight: dict[str, Any],
+    *,
+    version_command_by_agent: dict[str, list[str]] | None = None,
+    max_attempts: int = 20,
+    interval_seconds: float = 0.25,
+) -> dict[str, Any]:
+    def pending_agents(preflight_record: dict[str, Any]) -> list[str]:
+        pending: list[str] = []
+        for agent in agent_names:
+            agent_record = ((preflight_record.get("agents") or {}).get(agent) or {})
+            probe = agent_record.get("model_probe") or {}
+            agent_status = str(agent_record.get("agent_status") or "unknown").strip().lower()
+            if (
+                probe.get("status") != "observed"
+                or (probe.get("session_identity") or {}).get("status") != "known"
+                or agent_status not in {"idle", "working"}
+            ):
+                pending.append(agent)
+        return pending
+
+    preflight = initial_preflight
+    attempts = 1
+    while attempts < max_attempts:
+        pending = pending_agents(preflight)
+        if not pending:
+            break
+        time.sleep(interval_seconds)
+        preflight = collect_runtime_preflight(
+            agent_names,
+            runtime=runtime_kind,
+            session_bindings=session_bindings,
+            version_command_by_agent=version_command_by_agent,
+        )
+        attempts += 1
+    pending = pending_agents(preflight)
+    preflight.setdefault("checks", {})["owned_session_model_readiness"] = {
+        "status": "pass" if not pending else "warn",
+        "attempts": attempts,
+        "pending_agents": pending,
+    }
+    return preflight
+
+
+def merge_task_owned_runtime_preflight(
+    previous: dict[str, Any],
+    current: dict[str, Any],
+    selected_agents: list[str],
+    task_id: str,
+) -> dict[str, Any]:
+    previous_agents = previous.get("agents") if isinstance(previous.get("agents"), dict) else {}
+    current_agents = current.get("agents") if isinstance(current.get("agents"), dict) else {}
+    merged_agents: dict[str, Any] = {}
+
+    for agent in selected_agents:
+        current_record = current_agents.get(agent)
+        if isinstance(current_record, dict):
+            merged_agents[agent] = current_record
+            continue
+        previous_record = previous_agents.get(agent)
+        if not isinstance(previous_record, dict):
+            continue
+        binding = previous_record.get("session_binding")
+        ownership = binding.get("ownership") if isinstance(binding, dict) else {}
+        if (
+            isinstance(binding, dict)
+            and binding.get("status") == "bound"
+            and isinstance(ownership, dict)
+            and ownership.get("task_id") == task_id
+        ):
+            merged_agents[agent] = previous_record
+
+    pending_agents = []
+    for agent in selected_agents:
+        record = merged_agents.get(agent) or {}
+        probe = record.get("model_probe") or {}
+        session = probe.get("session_identity") or {}
+        if probe.get("status") != "observed" or session.get("status") != "known":
+            pending_agents.append(agent)
+
+    checks = dict(current.get("checks") or {})
+    checks["owned_session_model_readiness"] = {
+        "status": "pass" if not pending_agents else "warn",
+        "pending_agents": pending_agents,
+    }
+    statuses = [
+        str(record.get("status") or "warn")
+        for record in merged_agents.values()
+        if isinstance(record, dict)
+    ]
+    if current.get("status") == "fail" or "fail" in statuses:
+        status = "fail"
+    elif pending_agents or current.get("status") == "warn" or "warn" in statuses:
+        status = "warn"
+    else:
+        status = "pass"
+
+    return {
+        **current,
+        "status": status,
+        "checks": checks,
+        "agents": merged_agents,
+    }
 
 
 def provider_reachable_match(agent: str, match: dict[str, Any]) -> bool:
@@ -2326,14 +2731,23 @@ def route_task(
     # slices are written only for the Leader-declared Agents after validation.
     skill_recommendations = run_skill_recommendations(root, task_id, profile, prompt)
     routing_evaluated_at = now_iso()
-    enforce_model_role_gate = resolve_runtime(runtime) != "manual"
+    runtime_kind = resolve_runtime(runtime)
+    dynamic_model_discovery_required = runtime_kind != "manual"
+    runtime_checks = (capabilities.get("runtime_preflight") or {}).get("checks") or {}
+    herdr_owned_session_gate_deferred = bool(
+        runtime_kind == "herdr"
+        and (runtime_checks.get("session_provisioning") or {}).get("status") == "pass"
+    )
+    enforce_route_model_role_gate = bool(
+        dynamic_model_discovery_required and not herdr_owned_session_gate_deferred
+    )
     candidate_scores = score_candidates(
         profile,
         agents,
         feedback_history,
         skill_recommendations,
         runtime_preflight=capabilities.get("runtime_preflight") or {},
-        enforce_model_role_gate=enforce_model_role_gate,
+        enforce_model_role_gate=enforce_route_model_role_gate,
         evaluated_at=routing_evaluated_at,
     )
     selected_agents = list(dict.fromkeys(role_assignments.values()))
@@ -2359,7 +2773,7 @@ def route_task(
     blocked_model_roles = [
         role
         for role in ("implementer", "reviewer")
-        if enforce_model_role_gate
+        if enforce_route_model_role_gate
         and role in role_assignments
         and role in (candidate_scores.get(role_assignments[role], {}).get("model_role_gate", {}).get("blocked_roles") or [])
     ]
@@ -2368,14 +2782,18 @@ def route_task(
         for role in blocked_model_roles
     )
     model_role_gate = {
-        "enforced": enforce_model_role_gate,
+        "enforced": dynamic_model_discovery_required,
         "status": "blocked" if blocked_model_roles else "pass",
         "blocked_roles": blocked_model_roles,
         "fallback_modes": ["discovery", "prototype", "manual"] if blocked_model_roles else [],
         "reason": (
             "No candidate has an observed, current model identity bound to a known runtime session."
             if blocked_model_roles
-            else "High-risk model identity requirements are satisfied or not applicable."
+            else (
+                "Model identity eligibility is deferred to task-owned session preflight before HERDR delivery."
+                if herdr_owned_session_gate_deferred
+                else "High-risk model identity requirements are satisfied or not applicable."
+            )
         ),
     }
     capabilities_missing = list(assignment_blockers)
@@ -2451,6 +2869,13 @@ def route_task(
                 iteration_budget["stop_reason"] = "reroute budget exhausted"
                 write_json(directory / "iteration-budget.json", iteration_budget)
                 raise SystemExit("Routing blocked by iteration budget: reroute budget exhausted")
+            if (
+                iteration_budget.get("stop_reason")
+                == "runtime dispatch retry exhausted"
+                and existing_routing.get("role_assignments") != role_assignments
+            ):
+                iteration_budget["status"] = "active"
+                iteration_budget["stop_reason"] = None
             record_reroute_evidence(directory, task_id, existing_routing, reroute_count)
         refresh_iteration_budget(directory, existing_routing, iteration_budget, reroute_count)
         if iteration_budget.get("status") != "active":
@@ -2587,7 +3012,7 @@ def route_task(
             overlay,
             preflight,
             evaluated_at=routing_evaluated_at,
-            dynamic_discovery_required=enforce_model_role_gate,
+            dynamic_discovery_required=dynamic_model_discovery_required,
         ),
         "runtime_task_state_mapping": RUNTIME_TASK_STATE_MAPPING,
         "squad_routing": {"used": False},
@@ -2896,6 +3321,7 @@ def runtime_adapter_record(preflight: dict[str, Any] | None = None, runtime: str
 
     if runtime_kind == "queue":
         return {
+            "id": "queue",
             "class": "daemon_queue",
             "name": "VALP headless queue",
             "full_mode_capable": True,
@@ -2904,6 +3330,7 @@ def runtime_adapter_record(preflight: dict[str, Any] | None = None, runtime: str
         }
     if runtime_kind == "langgraph":
         return {
+            "id": "langgraph",
             "class": "hosted_local_platform",
             "name": "LangGraph API",
             "full_mode_capable": preflight.get("status") != "fail",
@@ -2912,6 +3339,7 @@ def runtime_adapter_record(preflight: dict[str, Any] | None = None, runtime: str
         }
     if runtime_kind == "herdr":
         return {
+            "id": "herdr",
             "class": "pane_controller",
             "name": "HERDR",
             "full_mode_capable": bool(shutil.which("herdr")) and preflight.get("status") != "fail",
@@ -2919,6 +3347,7 @@ def runtime_adapter_record(preflight: dict[str, Any] | None = None, runtime: str
             "preflight": preflight,
         }
     return {
+        "id": "manual",
         "class": "manual",
         "name": "manual",
         "full_mode_capable": False,
@@ -2927,7 +3356,239 @@ def runtime_adapter_record(preflight: dict[str, Any] | None = None, runtime: str
     }
 
 
-def collect_runtime_preflight(agent_names: list[str] | None = None, runtime: str | None = None) -> dict[str, Any]:
+def herdr_launch_argv_for(agent: str, capabilities: dict[str, Any]) -> list[str]:
+    info = ((capabilities.get("agents") or {}).get(agent) or {})
+    runtime = info.get("runtime") if isinstance(info.get("runtime"), dict) else {}
+    configured = runtime.get("launch_argv")
+    if (
+        isinstance(configured, list)
+        and configured
+        and all(isinstance(item, str) and item.strip() for item in configured)
+    ):
+        argv = [str(item) for item in configured]
+    else:
+        argv = []
+    if not argv:
+        return []
+    entrypoint = argv[0]
+    separators = [separator for separator in (os.sep, os.altsep) if separator]
+    has_path_component = any(separator in entrypoint for separator in separators)
+    if has_path_component and not Path(entrypoint).is_absolute():
+        raise HerdrSubmissionError(
+            f"HERDR Agent {agent} launch executable {entrypoint!r} is not absolute; "
+            "configure an absolute runtime.launch_argv or use a bare command"
+        )
+    resolved = shutil.which(entrypoint)
+    if not resolved:
+        raise HerdrSubmissionError(
+            f"HERDR cannot resolve Agent {agent} launch executable {entrypoint!r} "
+            "to an executable absolute path; configure an absolute runtime.launch_argv"
+        )
+    resolved_path = Path(resolved)
+    if not resolved_path.is_absolute():
+        resolved_path = resolved_path.resolve()
+    argv[0] = str(resolved_path)
+    return argv
+
+
+def ensure_herdr_agent_sessions(
+    root: Path,
+    directory: Path,
+    task_id: str,
+    agent_names: list[str],
+    capabilities: dict[str, Any],
+    *,
+    allow_launch_argv_change: bool = False,
+) -> dict[str, Any]:
+    herdr = shutil.which("herdr")
+    if not herdr:
+        raise HerdrSubmissionError("HERDR session provisioning is unavailable: herdr command not found")
+    projection_path = directory / "agent-sessions.json"
+    receipts_path = directory / "agent-session-receipts.jsonl"
+    with task_state_lock(directory):
+        projection_exists = projection_path.exists()
+        if projection_exists:
+            projection = read_json_strict(projection_path)
+            if (
+                projection.get("schema_version") != "valp-agent-sessions.v1"
+                or projection.get("task_id") != task_id
+                or projection.get("adapter") != "herdr"
+                or projection.get("status") not in {"provisioning", "ready"}
+                or not isinstance(projection.get("bindings"), dict)
+            ):
+                raise HerdrSubmissionError("HERDR task-owned session projection conflicts")
+        else:
+            projection = {
+                "schema_version": "valp-agent-sessions.v1",
+                "task_id": task_id,
+                "adapter": "herdr",
+                "status": "provisioning",
+                "bindings": {},
+                "updated_at": now_iso(),
+            }
+        receipts = read_json_lines_strict(receipts_path)
+        receipt_errors: list[str] = []
+        bindings = projection.get("bindings") or {}
+        if receipts and not projection_exists:
+            receipt_errors.append("receipts exist without an Agent session projection")
+        if [record.get("event_sequence") for record in receipts] != list(
+            range(1, len(receipts) + 1)
+        ):
+            receipt_errors.append("event_sequence is not contiguous")
+        for index, record in enumerate(receipts, 1):
+            if record.get("schema_version") != "valp-agent-session-receipt.v1":
+                receipt_errors.append(f"line {index} has an invalid schema_version")
+            if record.get("adapter") != "herdr":
+                receipt_errors.append(f"line {index} belongs to another adapter")
+            if record.get("task_id") != task_id:
+                receipt_errors.append(f"line {index} belongs to another task")
+            if record.get("event") not in {
+                "agent_session_provisioned",
+                "agent_session_reused",
+            }:
+                receipt_errors.append(f"line {index} has an invalid event")
+            if record.get("binding_ref") != "agent-sessions.json":
+                receipt_errors.append(f"line {index} has an invalid binding ref")
+            if type(record.get("generation")) is not int or int(record["generation"]) < 1:
+                receipt_errors.append(f"line {index} has an invalid generation")
+            if not re.fullmatch(
+                r"sha256:[0-9a-f]{64}",
+                str(record.get("identity_token") or ""),
+            ):
+                receipt_errors.append(f"line {index} has an invalid identity token")
+            if record.get("focused_at_provisioning") is not False:
+                receipt_errors.append(
+                    f"line {index} does not prove non-focused provisioning"
+                )
+        unknown_receipt_agents = sorted(
+            {
+                str(record.get("agent") or "")
+                for record in receipts
+                if str(record.get("agent") or "") not in bindings
+            }
+        )
+        if unknown_receipt_agents:
+            receipt_errors.append(
+                "receipts have no projected binding for: " + ", ".join(unknown_receipt_agents)
+            )
+        for agent, binding in bindings.items():
+            if not isinstance(binding, dict):
+                receipt_errors.append(f"{agent}: projected binding is not an object")
+                continue
+            if binding.get("focused_at_provisioning") is not False:
+                receipt_errors.append(
+                    f"{agent}: projected binding does not prove non-focused provisioning"
+                )
+            generation = binding.get("generation")
+            identity = binding.get("runtime_identity") or {}
+            provisioned = [
+                record
+                for record in receipts
+                if record.get("agent") == agent
+                and record.get("event") == "agent_session_provisioned"
+            ]
+            provisioned_generations = sorted(
+                record.get("generation")
+                for record in provisioned
+                if type(record.get("generation")) is int
+            )
+            if type(generation) is not int or provisioned_generations != list(
+                range(1, int(generation or 0) + 1)
+            ):
+                receipt_errors.append(
+                    f"{agent}: provisioning generations do not match the current binding"
+                )
+                continue
+            current_provisioning_receipt = next(
+                (
+                    record
+                    for record in provisioned
+                    if record.get("generation") == generation
+                ),
+                None,
+            )
+            if not current_provisioning_receipt or any(
+                (
+                    current_provisioning_receipt.get("adapter") != "herdr",
+                    current_provisioning_receipt.get("identity_token") != identity.get("token"),
+                    current_provisioning_receipt.get("ownership") != binding.get("ownership"),
+                    current_provisioning_receipt.get("context") != binding.get("context"),
+                    current_provisioning_receipt.get("launch") != binding.get("launch"),
+                    current_provisioning_receipt.get("runtime_scope") != binding.get("runtime_scope"),
+                    current_provisioning_receipt.get("runtime_identity") != identity,
+                )
+            ):
+                receipt_errors.append(
+                    f"{agent}: current binding has no matching provisioning receipt"
+                )
+        if receipt_errors:
+            raise HerdrSubmissionError(
+                "HERDR task-owned session receipt ledger conflicts: "
+                + "; ".join(receipt_errors[:5])
+            )
+        sequence = max(
+            [
+                int(record.get("event_sequence"))
+                for record in receipts
+                if type(record.get("event_sequence")) is int
+            ],
+            default=0,
+        )
+        for agent in agent_names:
+            launch_argv = herdr_launch_argv_for(agent, capabilities)
+            if not launch_argv:
+                raise HerdrSubmissionError(
+                    f"HERDR has no task-owned session launch entrypoint for Agent {agent}"
+                )
+            binding = provision_herdr_agent_session(
+                herdr,
+                task_id=task_id,
+                agent=agent,
+                project_root=root,
+                launch_argv=launch_argv,
+                existing_binding=(projection.get("bindings") or {}).get(agent),
+                run_command=run_command,
+                allow_launch_argv_change=allow_launch_argv_change,
+            )
+            projection["bindings"][agent] = binding
+            projection["status"] = "provisioning"
+            projection["updated_at"] = now_iso()
+            write_json(projection_path, projection)
+            sequence += 1
+            append_json_line_durable(
+                receipts_path,
+                {
+                    "schema_version": "valp-agent-session-receipt.v1",
+                    "adapter": "herdr",
+                    "task_id": task_id,
+                    "event_sequence": sequence,
+                    "ts": now_iso(),
+                    "agent": agent,
+                    "event": f"agent_session_{binding['lifecycle']}",
+                    "binding_ref": "agent-sessions.json",
+                    "generation": binding["generation"],
+                    "identity_token": binding["runtime_identity"]["token"],
+                    "ownership": binding["ownership"],
+                    "context": binding["context"],
+                    "launch": binding["launch"],
+                    "focused_at_provisioning": binding["focused_at_provisioning"],
+                    "runtime_scope": binding["runtime_scope"],
+                    "runtime_identity": binding["runtime_identity"],
+                },
+            )
+        projection["status"] = "ready"
+        projection["updated_at"] = now_iso()
+        write_json(projection_path, projection)
+    return projection
+
+
+def collect_runtime_preflight(
+    agent_names: list[str] | None = None,
+    runtime: str | None = None,
+    session_bindings: dict[str, Any] | None = None,
+    launch_argv_by_agent: dict[str, list[str]] | None = None,
+    version_command_by_agent: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
     runtime_kind = resolve_runtime(runtime)
     if runtime_kind == "manual":
         return collect_manual_preflight(agent_names)
@@ -2937,7 +3598,12 @@ def collect_runtime_preflight(agent_names: list[str] | None = None, runtime: str
         from .langgraph_adapter import collect_langgraph_preflight
 
         return collect_langgraph_preflight(agent_names)
-    return collect_herdr_preflight(agent_names)
+    return collect_herdr_preflight(
+        agent_names,
+        session_bindings=session_bindings,
+        launch_argv_by_agent=launch_argv_by_agent,
+        version_command_by_agent=version_command_by_agent,
+    )
 
 
 def runtime_preflight_for_agents(
@@ -2991,8 +3657,9 @@ def model_probe_from_runtime_metadata(
     runtime_metadata = metadata.get("runtime") if isinstance(metadata.get("runtime"), dict) else {}
     identity_metadata = metadata.get("model_identity") if isinstance(metadata.get("model_identity"), dict) else {}
     model_metadata = metadata.get("model") if isinstance(metadata.get("model"), dict) else {}
+    token_metadata = metadata.get("tokens") if isinstance(metadata.get("tokens"), dict) else {}
     model_id = first_value(
-        [metadata, runtime_metadata, identity_metadata],
+        [metadata, runtime_metadata, identity_metadata, token_metadata],
         "active_model_id",
         "model_id",
         "active_model",
@@ -3003,13 +3670,13 @@ def model_probe_from_runtime_metadata(
     if model_id == "unknown" and isinstance(metadata.get("model"), str):
         model_id = str(metadata["model"]).strip() or "unknown"
     provider = first_value(
-        [metadata, runtime_metadata, identity_metadata, model_metadata],
+        [metadata, runtime_metadata, identity_metadata, model_metadata, token_metadata],
         "model_provider",
         "provider",
         "provider_name",
     )
     reasoning_mode = first_value(
-        [metadata, runtime_metadata, identity_metadata, model_metadata],
+        [metadata, runtime_metadata, identity_metadata, model_metadata, token_metadata],
         "reasoning_mode",
         "reasoning",
         "effort",
@@ -3065,59 +3732,6 @@ def model_probe_from_runtime_metadata(
             "generation": generation,
         },
     }
-
-
-def visible_model_metadata_for_agent(agent: str, text: str) -> dict[str, str]:
-    lines = [line.strip() for line in text.splitlines() if line.strip()][-8:]
-    if agent == "codex":
-        pattern = re.compile(
-            r"^(?P<model>[A-Za-z0-9][A-Za-z0-9._:/-]{1,80})\s+"
-            r"(?P<reasoning>low|medium|high|xhigh)\s+·(?:\s+.*)?$",
-            re.IGNORECASE,
-        )
-        for line in reversed(lines):
-            match = pattern.fullmatch(line)
-            if match:
-                return {
-                    "model_id": match.group("model"),
-                    "reasoning_mode": match.group("reasoning").lower(),
-                }
-    if agent == "claude":
-        pattern = re.compile(
-            r"^\[(?P<provider>[A-Za-z0-9][A-Za-z0-9._ -]{0,40})\]\s+"
-            r"(?P<model>[A-Za-z0-9][A-Za-z0-9._:/-]{1,80})\s+"
-            r"[░█]+\s+\d{1,3}%.*$"
-        )
-        for line in reversed(lines):
-            match = pattern.fullmatch(line)
-            if match:
-                return {
-                    "model_id": match.group("model"),
-                    "provider": match.group("provider"),
-                }
-    if agent == "hermes":
-        pattern = re.compile(
-            r"^(?:\u2695\s+)?(?P<model>[A-Za-z0-9][A-Za-z0-9._:/-]{1,80})\s+"
-            r"·\s+\d{1,3}%(?:\s+·.*)?$"
-        )
-        for line in reversed(lines):
-            match = pattern.fullmatch(line)
-            if match:
-                return {"model_id": match.group("model")}
-    if agent == "agy":
-        pattern = re.compile(
-            r"^\?\s+for shortcuts\s+(?P<model>[A-Za-z0-9][A-Za-z0-9 ._:/+-]{1,80}?)\s+"
-            r"\((?P<reasoning>low|medium|high)\)$",
-            re.IGNORECASE,
-        )
-        for line in reversed(lines):
-            match = pattern.fullmatch(line)
-            if match:
-                return {
-                    "model_id": match.group("model"),
-                    "reasoning_mode": match.group("reasoning").lower(),
-                }
-    return {}
 
 
 def collect_manual_preflight(agent_names: list[str] | None = None) -> dict[str, Any]:
@@ -3179,7 +3793,92 @@ def collect_queue_preflight(agent_names: list[str] | None = None) -> dict[str, A
     }
 
 
-def collect_herdr_preflight(agent_names: list[str] | None = None) -> dict[str, Any]:
+def task_owned_agent_state_observation(
+    pane: dict[str, Any],
+    binding: dict[str, Any] | None,
+) -> dict[str, Any]:
+    native_state = str(pane.get("agent_status") or "unknown").strip().lower()
+    if not isinstance(binding, dict):
+        return {
+            "status": "unbound",
+            "source": "herdr_runtime",
+            "state": native_state,
+            "native_state": native_state,
+        }
+    tokens = pane.get("tokens") if isinstance(pane.get("tokens"), dict) else {}
+    reporter_keys = {
+        "valp_agent_state",
+        "valp_agent_state_source",
+        "valp_agent_state_sequence",
+        "valp_agent_state_generation",
+        "valp_agent_session_id",
+    }
+    if not reporter_keys.intersection(tokens):
+        return {
+            "status": "unreported",
+            "source": "herdr_runtime",
+            "state": native_state,
+            "native_state": native_state,
+        }
+
+    reporter_state = str(tokens.get("valp_agent_state") or "").strip().lower()
+    reporter_source = str(tokens.get("valp_agent_state_source") or "").strip()
+    reporter_session_id = str(tokens.get("valp_agent_session_id") or "").strip()
+    sequence_text = str(tokens.get("valp_agent_state_sequence") or "").strip()
+    generation_text = str(tokens.get("valp_agent_state_generation") or "").strip()
+    ownership = binding.get("ownership") if isinstance(binding.get("ownership"), dict) else {}
+    bound_task_id = str(ownership.get("task_id") or "").strip()
+    bound_agent = str(binding.get("agent") or "").strip()
+    conflicts: list[str] = []
+    if reporter_state not in {"idle", "working", "blocked"}:
+        conflicts.append("state")
+    if not reporter_source:
+        conflicts.append("source")
+    if (
+        not reporter_session_id
+        or not bound_task_id
+        or not bound_agent
+        or not reporter_session_id.startswith(f"{bound_task_id}:{bound_agent}:")
+    ):
+        conflicts.append("session_id")
+    try:
+        sequence = int(sequence_text)
+    except ValueError:
+        sequence = 0
+    if sequence < 1:
+        conflicts.append("sequence")
+    try:
+        generation = int(generation_text)
+    except ValueError:
+        generation = 0
+    if generation != binding.get("generation"):
+        conflicts.append("generation")
+    if conflicts:
+        return {
+            "status": "conflict",
+            "source": "task_owned_reporter",
+            "state": "unknown",
+            "native_state": native_state,
+            "conflicts": conflicts,
+        }
+    return {
+        "status": "bound",
+        "source": "task_owned_reporter",
+        "state": reporter_state,
+        "native_state": native_state,
+        "reporter_source": reporter_source,
+        "sequence": sequence,
+        "session_id": reporter_session_id,
+        "generation": generation,
+    }
+
+
+def collect_herdr_preflight(
+    agent_names: list[str] | None = None,
+    session_bindings: dict[str, Any] | None = None,
+    launch_argv_by_agent: dict[str, list[str]] | None = None,
+    version_command_by_agent: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
     herdr = shutil.which("herdr")
     preflight: dict[str, Any] = {
         "generated_at": now_iso(),
@@ -3195,6 +3894,10 @@ def collect_herdr_preflight(agent_names: list[str] | None = None) -> dict[str, A
 
     submission_capability = detect_herdr_submission_capability(herdr, run_command)
     preflight["checks"]["submission_transport"] = submission_capability
+    preflight["checks"]["session_provisioning"] = detect_herdr_session_provisioning_capability(
+        herdr,
+        run_command,
+    )
 
     status_result = run_command([herdr, "status", "--json"], timeout=5.0)
     status_json = parse_json_stdout(status_result)
@@ -3207,65 +3910,162 @@ def collect_herdr_preflight(agent_names: list[str] | None = None) -> dict[str, A
         "server_version": (status_json.get("server") or {}).get("version"),
     }
 
-    pane_result = run_command([herdr, "pane", "list"], timeout=5.0)
-    pane_json = parse_json_stdout(pane_result)
-    panes = (((pane_json.get("result") or {}).get("panes")) or []) if pane_json else []
+    if session_bindings is None:
+        pane_commands = [[herdr, "pane", "list"]]
+        queried_workspaces: list[str] = []
+    else:
+        queried_workspaces = sorted(
+            {
+                str(((binding or {}).get("runtime_identity") or {}).get("workspace_id") or "").strip()
+                for binding in session_bindings.values()
+                if isinstance(binding, dict)
+                and str(((binding.get("runtime_identity") or {}).get("workspace_id") or "")).strip()
+            }
+        )
+        pane_commands = [
+            [herdr, "pane", "list", "--workspace", workspace_id]
+            for workspace_id in queried_workspaces
+        ]
+    pane_results = [
+        run_command(
+            command,
+            timeout=5.0,
+            stdout_limit=HERDR_PANE_LIST_STDOUT_LIMIT,
+        )
+        for command in pane_commands
+    ]
+    panes: list[dict[str, Any]] = []
+    seen_pane_ids: set[str] = set()
+    for pane_result in pane_results:
+        pane_json = parse_json_stdout(pane_result)
+        for pane in (((pane_json.get("result") or {}).get("panes")) or []) if pane_json else []:
+            if not isinstance(pane, dict):
+                continue
+            pane_id = str(pane.get("pane_id") or "")
+            if pane_id and pane_id not in seen_pane_ids:
+                panes.append(pane)
+                seen_pane_ids.add(pane_id)
     preflight["checks"]["pane_list"] = {
-        "status": "pass" if pane_result.get("ok") else "fail",
+        "status": "pass" if pane_results and all(result.get("ok") for result in pane_results) else "fail",
         "count": len(panes),
+        "workspace_ids": queried_workspaces,
     }
 
-    panes_by_agent = {
-        str(pane.get("agent")): pane
-        for pane in panes
-        if pane.get("agent")
-    }
-    for agent in agent_names or sorted(panes_by_agent):
-        pane = panes_by_agent.get(agent)
+    panes_by_agent: dict[str, dict[str, Any]] = {}
+    session_panes_by_agent: dict[str, list[dict[str, Any]]] = {}
+    binding_errors: dict[str, str] = {}
+    if session_bindings is None:
+        for pane in panes:
+            agent = str(pane.get("agent") or "").strip()
+            if not agent:
+                continue
+            session_panes_by_agent.setdefault(agent, []).append(pane)
+        panes_by_agent = {
+            agent: session_panes[0]
+            for agent, session_panes in session_panes_by_agent.items()
+        }
+    else:
+        for agent in agent_names or []:
+            binding = session_bindings.get(agent) if isinstance(session_bindings, dict) else None
+            identity = binding.get("runtime_identity") if isinstance(binding, dict) else None
+            pane_id = str((identity or {}).get("pane_id") or "")
+            pane = next(
+                (
+                    item
+                    for item in panes
+                    if isinstance(item, dict) and str(item.get("pane_id") or "") == pane_id
+                ),
+                None,
+            )
+            if not isinstance(binding, dict) or not pane_id or pane is None:
+                binding_errors[agent] = "Task-owned session binding is absent from the runtime."
+                continue
+            observed_identity = {
+                key: str(pane.get(key) or "")
+                for key in ("pane_id", "terminal_id", "workspace_id", "tab_id")
+            }
+            recorded_identity = {
+                key: str((identity or {}).get(key) or "")
+                for key in ("pane_id", "terminal_id", "workspace_id", "tab_id")
+            }
+            reported_agent = str(pane.get("agent") or "")
+            reported_cwd = str(pane.get("cwd") or "")
+            if (
+                observed_identity != recorded_identity
+                or reported_agent != agent
+                or not reported_cwd
+                or Path(reported_cwd).resolve()
+                != Path(str((binding.get("context") or {}).get("cwd") or "")).resolve()
+            ):
+                binding_errors[agent] = "Task-owned session binding conflicts with fresh runtime identity."
+                continue
+            panes_by_agent[agent] = pane
+    def build_agent_record(
+        agent: str,
+        pane: dict[str, Any] | None,
+        binding: dict[str, Any] | None,
+        binding_error: str | None,
+    ) -> dict[str, Any]:
+        binding = session_bindings.get(agent) if isinstance(session_bindings, dict) else None
+        launch_argv = (
+            ((binding or {}).get("launch") or {}).get("argv")
+            or (launch_argv_by_agent or {}).get(agent)
+        )
         runtime_metadata = dict(pane or {})
         if pane:
             pane_id = str(pane.get("pane_id"))
+            runtime_metadata["session_id"] = pane_id
             process_result = run_command([herdr, "pane", "process-info", "--pane", pane_id], timeout=5.0)
             process_json = parse_json_stdout(process_result)
             process_info = (process_json.get("result") or {}).get("process_info") or {}
             process_group = process_info.get("foreground_process_group_id")
             if isinstance(process_group, (str, int)) and str(process_group).strip():
-                runtime_metadata["session_change_token"] = f"foreground-process-group:{process_group}"
-            visible_result = run_command(
-                [herdr, "pane", "read", pane_id, "--source", "visible", "--lines", "12", "--format", "text"],
-                timeout=5.0,
-            )
-            visible_json = parse_json_stdout(visible_result)
-            visible_text = str((((visible_json.get("result") or {}).get("read") or {}).get("text")) or "")
-            if not visible_text and visible_result.get("ok"):
-                visible_text = str(visible_result.get("stdout") or "")
-            for key, value in visible_model_metadata_for_agent(agent, visible_text).items():
-                runtime_metadata.setdefault(key, value)
+                session_generation = opaque_process_generation(process_group)
+                runtime_metadata["session_change_token"] = session_generation
+                runtime_metadata["session_generation"] = session_generation
         agent_record = {
             "status": "warn",
+            "session_id": str((pane or {}).get("pane_id") or "unknown"),
             "agent_status": None,
             "pane_id": None,
             "terminal_size": None,
             "min_terminal_size": AGENT_MIN_TERMINAL_SIZE.get(agent, DEFAULT_MIN_TERMINAL_SIZE),
             "terminal_size_status": "unknown",
-            "cli": cli_preflight_for_agent(agent),
+            "cli": cli_preflight_for_agent(
+                agent,
+                launch_argv=launch_argv,
+                version_command=(version_command_by_agent or {}).get(agent),
+            ),
             "model_probe": model_probe_from_runtime_metadata(
                 agent,
                 runtime_metadata,
-                source="HERDR pane adapter metadata and visible footer",
+                source="HERDR pane adapter structured metadata",
             ),
             "notes": [],
         }
+        if session_bindings is not None:
+            agent_record["session_binding"] = {
+                "status": "bound" if binding_error is None else "conflict",
+                "ref": "agent-sessions.json",
+                "generation": (binding or {}).get("generation"),
+                "identity_token": ((binding or {}).get("runtime_identity") or {}).get("token"),
+                "ownership": (binding or {}).get("ownership"),
+            }
+        if binding_error is not None:
+            agent_record["status"] = "fail"
+            agent_record["notes"].append(binding_error)
+            return agent_record
         if not pane:
             agent_record["status"] = "warn"
             agent_record["model_probe"]["status"] = "unavailable"
             agent_record["notes"].append("No current pane was reported for this agent.")
-            preflight["agents"][agent] = agent_record
-            continue
+            return agent_record
 
         pane_id = str(pane.get("pane_id"))
         agent_record["pane_id"] = pane_id
-        agent_record["agent_status"] = pane.get("agent_status")
+        state_observation = task_owned_agent_state_observation(pane, binding)
+        agent_record["agent_status"] = state_observation["state"]
+        agent_record["agent_status_observation"] = state_observation
         layout_result = run_command([herdr, "pane", "layout", "--pane", pane_id], timeout=5.0)
         layout_json = parse_json_stdout(layout_result)
         rect = pane_rect_from_layout(layout_json, pane_id)
@@ -3282,12 +4082,47 @@ def collect_herdr_preflight(agent_names: list[str] | None = None) -> dict[str, A
 
         cli_status = (agent_record.get("cli") or {}).get("status")
         terminal_status = agent_record.get("terminal_size_status")
-        if terminal_status == "fail" or cli_status == "fail":
+        agent_status = str(agent_record.get("agent_status") or "unknown").strip().lower()
+        if state_observation.get("status") == "conflict":
+            agent_record["status"] = "fail"
+            agent_record["notes"].append(
+                "Task-owned structured Agent state conflicts with the accepted binding: "
+                + ", ".join(state_observation.get("conflicts") or [])
+            )
+        elif session_bindings is not None and agent_status not in {"idle", "working"}:
+            agent_record["status"] = "fail"
+            agent_record["notes"].append(
+                "Task-owned session has no structured idle/working Agent state."
+            )
+        elif terminal_status == "fail" or cli_status == "fail":
             agent_record["status"] = "fail"
         elif terminal_status == "unknown" or cli_status == "warn":
             agent_record["status"] = "warn"
         else:
             agent_record["status"] = "pass"
+        return agent_record
+
+    for agent in agent_names or sorted(panes_by_agent):
+        binding = session_bindings.get(agent) if isinstance(session_bindings, dict) else None
+        if session_bindings is None:
+            session_records = [
+                build_agent_record(agent, pane, None, None)
+                for pane in session_panes_by_agent.get(agent, [])
+            ]
+            if session_records:
+                agent_record = dict(session_records[0])
+                agent_record["sessions"] = session_records
+                statuses = {str(record.get("status") or "warn") for record in session_records}
+                agent_record["status"] = "fail" if "fail" in statuses else "warn" if "warn" in statuses else "pass"
+            else:
+                agent_record = build_agent_record(agent, None, None, None)
+        else:
+            agent_record = build_agent_record(
+                agent,
+                panes_by_agent.get(agent),
+                binding,
+                binding_errors.get(agent),
+            )
         preflight["agents"][agent] = agent_record
 
     if any(isinstance(check, dict) and check.get("status") == "fail" for check in preflight["checks"].values()):
@@ -3307,16 +4142,27 @@ def pane_rect_from_layout(layout_json: dict[str, Any], pane_id: str) -> dict[str
     return {}
 
 
-def cli_preflight_for_agent(agent: str) -> dict[str, Any]:
-    command_by_agent = {
-        "agy": ["agy", "--version"],
-        "claude": ["claude", "--version"],
-        "codex": ["codex", "--version"],
-        "hermes": ["hermes", "--version"],
-    }
-    command = command_by_agent.get(agent)
+def cli_preflight_for_agent(
+    agent: str,
+    launch_argv: list[str] | None = None,
+    version_command: list[str] | None = None,
+) -> dict[str, Any]:
+    if (
+        isinstance(version_command, list)
+        and version_command
+        and all(isinstance(item, str) and item.strip() for item in version_command)
+    ):
+        command = [str(item) for item in version_command]
+    else:
+        command = None
     if not command:
-        return {"status": "warn", "message": "No CLI version probe is defined for this agent."}
+        return {
+            "status": "warn",
+            "message": (
+                f"Agent {agent} has no capability-declared runtime.version_command; "
+                "no CLI version probe was attempted."
+            ),
+        }
     if not shutil.which(command[0]):
         return {"status": "warn", "command": command, "message": "CLI command was not found on PATH."}
     result = run_command(command, timeout=5.0)
@@ -3392,6 +4238,7 @@ def dynamic_model_dispatch_errors(
     phases: list[tuple[str, str]],
     *,
     evaluated_at: str | None = None,
+    allow_session_rebinding: bool = False,
 ) -> list[str]:
     routed_matrix = routing.get("provider_matrix") or {}
     awareness = routed_matrix.get("model_awareness") or {}
@@ -3420,10 +4267,11 @@ def dynamic_model_dispatch_errors(
         eligibility_key = "implementer" if role == "implementer" else "final_reviewer"
         if fresh_identity["role_eligibility"][eligibility_key] != "eligible":
             errors.append(f"{role}:{agent} active model identity is not eligible at dispatch preflight")
-        routed_fingerprint = (routed_identity.get("history_binding") or {}).get("fingerprint")
-        fresh_fingerprint = (fresh_identity.get("history_binding") or {}).get("fingerprint")
-        if not routed_fingerprint or routed_fingerprint != fresh_fingerprint:
-            errors.append(f"{role}:{agent} model/session/freshness binding changed after routing")
+        if not allow_session_rebinding:
+            routed_fingerprint = (routed_identity.get("history_binding") or {}).get("fingerprint")
+            fresh_fingerprint = (fresh_identity.get("history_binding") or {}).get("fingerprint")
+            if not routed_fingerprint or routed_fingerprint != fresh_fingerprint:
+                errors.append(f"{role}:{agent} model/session/freshness binding changed after routing")
     return list(dict.fromkeys(errors))
 
 
@@ -3460,6 +4308,9 @@ def write_dispatches(
         slice_ref = (routing.get("skill_recommendation_slices") or {}).get(agent)
         control_slice_ref = (routing.get("control_slices") or {}).get(agent)
         contract_record = routing.get("control_contract") or {}
+        task_directory_ref = relative_ref(directory, root)
+        task_contract_ref = relative_ref(directory / CONTROL_CONTRACT_REF, root)
+        task_control_slice_ref = relative_ref(directory / str(control_slice_ref or ""), root)
         control_slice = read_json(directory / str(control_slice_ref or "")) if control_slice_ref else {}
         control_errors = validate_control_slice(
             control_slice,
@@ -3519,7 +4370,7 @@ Payload budget: {actual_chars}/{budget['max_chars']} chars.
 
 ## VALP Control Contract (Load First)
 
-Load `{CONTROL_CONTRACT_REF}` first; slice `{control_slice_ref}`; mismatch blocks.
+Load task-local `{task_contract_ref}` first; slice `{task_control_slice_ref}`; mismatch blocks.
 
 {compact_control_slice}
 
@@ -3529,7 +4380,7 @@ Load `{CONTROL_CONTRACT_REF}` first; slice `{control_slice_ref}`; mismatch block
 
 ## Role
 
-Role: `{budget['role']}`. See `routing.json` for capability evidence.
+Role: `{budget['role']}`. Evidence: `routing.json`.
 
 ## Task Brief
 
@@ -3540,7 +4391,7 @@ Role: `{budget['role']}`. See `routing.json` for capability evidence.
 The coordinator/leader owns dispatch precision. Load:
 
 {core_task_refs}
-- Budget/gates: `iteration-budget.json`, `submission-dependencies.json`, `delegation-policy.json`
+- Task directory: `{task_directory_ref}`; budget/gates: `iteration-budget.json`, `submission-dependencies.json`, `delegation-policy.json`
 
 ## Payload Budget
 
@@ -3552,7 +4403,7 @@ The coordinator/leader owns dispatch precision. Load:
 
 ## Permission Boundary
 
-- Honor approval gates; write expected evidence only unless edits are permitted; cite runtime proof.
+- Honor gates; write only expected evidence unless edits are permitted. Cite runtime proof.
 - Do not write skills, plugins, memory, MCP configuration, or agent configuration while delegated.
 
 ## Expected Evidence
@@ -3585,6 +4436,11 @@ control_contract_status: honored
             (
                 bounded_text(task_brief, 160),
                 "- See `context-pack.json` and `visible-routing.md`.",
+                minimal_skills,
+            ),
+            (
+                "See task refs.",
+                "- See refs.",
                 minimal_skills,
             ),
         ]
@@ -3862,6 +4718,90 @@ def write_queue_submission(
     return queue_record
 
 
+def write_herdr_transport_receipt(
+    directory: Path,
+    task_id: str,
+    target: str,
+    role: str,
+    expected: list[str],
+    proof: dict[str, Any],
+) -> dict[str, Any]:
+    if (
+        proof.get("runtime") != "HERDR"
+        or proof.get("proof_class") != "transport_only"
+        or proof.get("transport_mode") != "pane_send_text_enter"
+    ):
+        raise SystemExit("HERDR transport receipt requires explicit transport-only proof")
+    dependency_document = read_json(directory / "submission-dependencies.json")
+    identity = next(
+        (
+            item
+            for item in dependency_document.get("work_items") or []
+            if isinstance(item, dict)
+            and item.get("agent") == target
+            and item.get("role") == role
+        ),
+        work_item_identity(task_id, target, role),
+    )
+    with task_state_lock(directory):
+        existing_receipts = load_dispatch_receipts(directory, task_id)
+        logical_receipts = [
+            receipt
+            for receipt in existing_receipts
+            if receipt.get("schema_version") == "valp-dispatch-receipt.v2"
+            and receipt.get("task_id") == task_id
+            and receipt.get("agent") == target
+            and receipt.get("role") == role
+            and receipt.get("work_item_id") == identity["work_item_id"]
+            and receipt.get("dispatch_id") == identity["dispatch_id"]
+            and receipt.get("dispatch_generation") == identity["dispatch_generation"]
+            and receipt.get("event") == "dispatch_inserted"
+        ]
+        if logical_receipts:
+            if len(logical_receipts) != 1 or any(
+                receipt.get("dispatch_ref") != f"agents/{target}/dispatch.md"
+                or receipt.get("expected_refs") != expected
+                or receipt.get("proof") != proof
+                for receipt in logical_receipts
+            ):
+                raise SystemExit("Existing HERDR transport receipt conflicts with the routed work item")
+            return logical_receipts[0]
+        event_sequence = max(
+            [
+                int(record["event_sequence"])
+                for record in existing_receipts
+                if record.get("schema_version") == "valp-dispatch-receipt.v2"
+                and type(record.get("event_sequence")) is int
+            ],
+            default=0,
+        ) + 1
+        receipt = {
+            "schema_version": "valp-dispatch-receipt.v2",
+            "receipt_id": (
+                f"{task_id}:{identity['work_item_id']}:{identity['dispatch_id']}:"
+                f"{identity['dispatch_generation']}:dispatch_inserted"
+            ),
+            "task_id": task_id,
+            "event_sequence": event_sequence,
+            "ts": now_iso(),
+            "agent": target,
+            "role": role,
+            "work_item_id": identity["work_item_id"],
+            "dispatch_id": identity["dispatch_id"],
+            "dispatch_generation": identity["dispatch_generation"],
+            "event": "dispatch_inserted",
+            "dispatch_ref": f"agents/{target}/dispatch.md",
+            "expected_refs": expected,
+            "proof": proof,
+            "summary": (
+                "The packaged HERDR adapter inserted the dispatch and sent Enter. "
+                "This is transport proof only; operation is Manual-degraded."
+            ),
+        }
+        append_json_line_durable(directory / "dispatch-receipts.jsonl", receipt)
+        return receipt
+
+
 def write_herdr_submission_receipt(
     directory: Path,
     task_id: str,
@@ -3871,6 +4811,10 @@ def write_herdr_submission_receipt(
     proof: dict[str, Any],
     recovery: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if proof.get("runtime") != "HERDR" or proof.get("proof_class") != "agent_invocation":
+        raise SystemExit(
+            "HERDR dispatch_submitted requires independent Agent invocation proof"
+        )
     dependency_document = read_json(directory / "submission-dependencies.json")
     identity = next(
         (
@@ -5894,8 +6838,6 @@ def incomplete_submission_recovery_context(
     prior_retries = [
         receipt for receipt in identity_receipts if receipt.get("retry_generation") is not None
     ]
-    if prior_retries:
-        raise SystemExit("Incomplete submission recovery was already attempted for this work item")
     originating = [
         receipt
         for receipt in identity_receipts
@@ -5910,12 +6852,36 @@ def incomplete_submission_recovery_context(
         )
     complete, existing_refs, _missing_refs = herdr_expected_ref_status(directory, expected)
     if complete:
+        completion_submission = originating[0]
+        if prior_retries:
+            expected_recovery_proof = {
+                "kind": "incomplete_submission",
+                "retry_generation": retry_generation,
+                "originating_submission_receipt_id": originating[0]["receipt_id"],
+                "control_contract_digest": digest,
+            }
+            retry_submissions = [
+                receipt
+                for receipt in prior_retries
+                if receipt.get("event") == "dispatch_submitted"
+                and receipt.get("retry_generation") == retry_generation
+                and has_concrete_runtime_submission_proof(receipt)
+                and (receipt.get("proof") or {}).get("runtime") == "HERDR"
+                and (receipt.get("proof") or {}).get("recovery") == expected_recovery_proof
+            ]
+            if len(prior_retries) != 1 or len(retry_submissions) != 1:
+                raise SystemExit(
+                    "Incomplete submission recovery found conflicting retry receipt identity"
+                )
+            completion_submission = retry_submissions[0]
         return {
             "action": "reconcile_completion",
-            "originating_submission": originating[0],
+            "originating_submission": completion_submission,
             "existing_refs": existing_refs,
             "work_item_id": work_item["work_item_id"],
         }
+    if prior_retries:
+        raise SystemExit("Incomplete submission recovery was already attempted for this work item")
     if existing_refs:
         raise SystemExit(
             "Incomplete submission recovery requires all expected evidence to be valid or all to remain absent or invalid"
@@ -5940,6 +6906,7 @@ def dispatch_task(
     proof_seconds: float | None = None,
     recover_incomplete: bool = False,
     retry_generation: int | None = None,
+    replace_owned_session_launch: bool = False,
 ) -> list[str]:
     for label, value in (
         ("Evidence wait", wait_seconds),
@@ -5958,6 +6925,13 @@ def dispatch_task(
             raise SystemExit("Incomplete submission recovery requires --retry-generation")
     elif retry_generation is not None:
         raise SystemExit("--retry-generation requires --recover-incomplete")
+    if replace_owned_session_launch and (
+        not submit or agent == "all" or role is None or recover_incomplete
+    ):
+        raise SystemExit(
+            "--replace-owned-session-launch requires --submit, one explicit --agent and --role, "
+            "and cannot be combined with --recover-incomplete"
+        )
     root = workspace_root(root)
     directory = task_dir(root, task_id)
     routing = read_json(directory / "routing.json")
@@ -6151,9 +7125,23 @@ def dispatch_task(
             completion_receipt_id=completion_receipt["receipt_id"],
         )
         return [f"Reconciled late expected evidence for {phases[0][1]}:{phases[0][0]}"]
+    launch_replacement_retry = bool(
+        submit
+        and replace_owned_session_launch
+        and runtime_kind == "herdr"
+        and owned_session_launch_replacement_pending(directory, state, phases)
+    )
     runtime_retry = bool(
         submit
-        and runtime_dispatch_retry_pending(directory, state, runtime_kind)
+        and (
+            runtime_dispatch_retry_pending(directory, state, runtime_kind, phases)
+            or launch_replacement_retry
+        )
+    )
+    runtime_retry_reason = (
+        read_json(directory / "iteration-budget.json").get("stop_reason")
+        if runtime_retry
+        else None
     )
     if submit and not runtime_retry:
         enforce_iteration_budget(directory, routing, state, phases)
@@ -6179,7 +7167,86 @@ def dispatch_task(
     if manual_mode and submit:
         raise SystemExit("Manual Mode cannot use --submit. Copy dispatches manually and record ordered manual attestations.")
 
-    preflight = collect_runtime_preflight(targets, runtime=runtime_kind)
+    capabilities = load_dispatch_capabilities(root, directory, routing, state)
+    capability_agents = capabilities.get("agents") or {}
+    launch_argv_by_agent = capability_runtime_argv_by_agent(
+        capability_agents,
+        "launch_argv",
+    )
+    version_command_by_agent = capability_runtime_argv_by_agent(
+        capability_agents,
+        "version_command",
+    )
+    session_projection: dict[str, Any] = {}
+    session_bindings: dict[str, Any] | None = None
+    if submit and runtime_kind == "herdr":
+        try:
+            session_projection = ensure_herdr_agent_sessions(
+                root,
+                directory,
+                task_id,
+                targets,
+                capabilities,
+                allow_launch_argv_change=replace_owned_session_launch,
+            )
+            session_bindings = session_projection.get("bindings") or {}
+        except HerdrSubmissionError as exc:
+            write_json(
+                directory / "agent-session-block.json",
+                {
+                    "schema_version": "valp-agent-session-block.v1",
+                    "task_id": task_id,
+                    "status": "blocked",
+                    "reason": str(exc),
+                    "recorded_at": now_iso(),
+                },
+            )
+            budget = read_json(directory / "iteration-budget.json")
+            if budget:
+                budget["status"] = "blocked"
+                budget["stop_reason"] = (
+                    "runtime dispatch retry exhausted"
+                    if runtime_retry
+                    else "runtime dispatch failure"
+                )
+                write_json(directory / "iteration-budget.json", budget)
+            append_timeline_event(
+                directory,
+                "agent_session_provision_failed",
+                str(exc),
+                work_item_ids=[f"{target_role}:{target}" for target, target_role in phases],
+                attempt="retry" if runtime_retry else "initial",
+            )
+            raise SystemExit(f"HERDR task-owned session provisioning failed: {exc}") from exc
+    preflight = collect_runtime_preflight(
+        targets,
+        runtime=runtime_kind,
+        session_bindings=session_bindings,
+        launch_argv_by_agent=launch_argv_by_agent,
+        version_command_by_agent=version_command_by_agent,
+    )
+    if any(
+        isinstance(binding, dict) and binding.get("lifecycle") == "provisioned"
+        for binding in (session_bindings or {}).values()
+    ):
+        preflight = await_owned_session_model_preflight(
+            targets,
+            runtime_kind,
+            session_bindings or {},
+            preflight,
+            version_command_by_agent=version_command_by_agent,
+        )
+    if session_projection:
+        previous_preflight = (
+            (routing.get("runtime_adapter") or {}).get("preflight")
+            or read_json(directory / "runtime-preflight.json")
+        )
+        preflight = merge_task_owned_runtime_preflight(
+            previous_preflight,
+            preflight,
+            selected_agents,
+            task_id,
+        )
     failed = [
         name
         for name, record in (preflight.get("agents") or {}).items()
@@ -6190,25 +7257,56 @@ def dispatch_task(
         budget = read_json(directory / "iteration-budget.json")
         if budget:
             budget["status"] = "blocked"
-            budget["stop_reason"] = "runtime preflight failure"
+            budget["stop_reason"] = (
+                "runtime dispatch retry exhausted"
+                if runtime_retry
+                else "runtime dispatch failure"
+            )
             write_json(directory / "iteration-budget.json", budget)
         target_summary = ", ".join(failed) if failed else "runtime checks"
+        append_timeline_event(
+            directory,
+            "runtime_preflight_failed",
+            f"Runtime preflight failed for: {target_summary}",
+            work_item_ids=[f"{target_role}:{target}" for target, target_role in phases],
+            attempt="retry" if runtime_retry else "initial",
+        )
         raise SystemExit("Runtime preflight failed for: " + target_summary)
     write_json(directory / "runtime-preflight.json", preflight)
-    model_dispatch_errors = dynamic_model_dispatch_errors(
-        routing,
-        (load_local_capabilities(root).get("agents") or {}),
-        load_local_overlay(root),
-        preflight,
-        phases,
+    model_dispatch_errors = (
+        dynamic_model_dispatch_errors(
+            routing,
+            (capabilities.get("agents") or {}),
+            load_local_overlay(root),
+            preflight,
+            phases,
+            allow_session_rebinding=bool(session_bindings),
+        )
+        if submit
+        else []
     )
     if model_dispatch_errors:
+        readiness_pending: list[str] = []
+        for target, _target_role in phases:
+            agent_preflight = ((preflight.get("agents") or {}).get(target) or {})
+            probe = agent_preflight.get("model_probe") or {}
+            if (
+                probe.get("status") != "observed"
+                or (probe.get("session_identity") or {}).get("status") != "known"
+            ):
+                readiness_pending.append(target)
+        block_reason = (
+            "owned_session_model_readiness_timeout"
+            if readiness_pending
+            else "dynamic_model_identity_mismatch"
+        )
         write_json(
             directory / "model-identity-dispatch-block.json",
             {
                 "schema_version": "valp-model-identity-dispatch-block.v1",
                 "task_id": task_id,
                 "status": "blocked",
+                "reason": block_reason,
                 "errors": model_dispatch_errors,
                 "runtime_preflight_ref": "runtime-preflight.json",
                 "recorded_at": now_iso(),
@@ -6217,11 +7315,46 @@ def dispatch_task(
         budget = read_json(directory / "iteration-budget.json")
         if budget:
             budget["status"] = "blocked"
-            budget["stop_reason"] = "dynamic model identity changed after routing"
+            budget["stop_reason"] = (
+                "runtime dispatch retry exhausted"
+                if runtime_retry
+                else (
+                    "owned session model readiness pending"
+                    if readiness_pending
+                    else "dynamic model identity changed after routing"
+                )
+            )
             write_json(directory / "iteration-budget.json", budget)
         raise SystemExit("Dispatch blocked by dynamic model identity gate: " + "; ".join(model_dispatch_errors))
+    if session_projection:
+        session_marker = {
+            "status": "ready",
+            "ref": "agent-sessions.json",
+            "receipts_ref": "agent-session-receipts.jsonl",
+        }
+        routing["agent_sessions"] = session_marker
+        routing.setdefault("runtime_adapter", {})["preflight"] = preflight
+        routing["provider_matrix"] = provider_matrix_for(
+            selected_agents,
+            capabilities.get("agents") or {},
+            load_local_overlay(root),
+            preflight,
+            evaluated_at=now_iso(),
+            dynamic_discovery_required=True,
+        )
+        write_json(directory / "routing.json", routing)
+        state["agent_sessions"] = session_marker
+        state["runtime_adapter"] = routing["runtime_adapter"]
+        state["provider_matrix"] = {"status": "scanned", "ref": "routing.json"}
+        state["updated_at"] = now_iso()
+        write_json(directory / "state.json", state)
     if runtime_retry:
-        resume_runtime_dispatch_retry(directory, routing, phases)
+        resume_runtime_dispatch_retry(
+            directory,
+            routing,
+            phases,
+            expected_stop_reason=runtime_retry_reason,
+        )
     if submit and runtime_kind in {"herdr", "langgraph", "queue"}:
         write_wait_policy_for_phases(
             directory,
@@ -6307,7 +7440,29 @@ def dispatch_task(
                     dispatch_path=directory / dispatch_ref,
                     run_command=run_command,
                     proof_seconds=proof_seconds,
+                    session_binding=(session_bindings or {}).get(target),
                 )
+                if proof.get("proof_class") == "transport_only":
+                    transport_receipt = write_herdr_transport_receipt(
+                        directory,
+                        task_id,
+                        target,
+                        target_role,
+                        expected,
+                        proof,
+                    )
+                    append_timeline_event(
+                        directory,
+                        "dispatch_inserted",
+                        "HERDR transport inserted the dispatch without independent Agent invocation proof",
+                        agent=target,
+                        role=target_role,
+                        receipt_id=transport_receipt["receipt_id"],
+                        mode="manual_degraded",
+                    )
+                    raise HerdrSubmissionError(
+                        "HERDR pane transport is Manual-degraded and cannot produce dispatch_submitted"
+                    )
                 submission_receipt = write_herdr_submission_receipt(
                     directory,
                     task_id,

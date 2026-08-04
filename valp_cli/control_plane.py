@@ -21,8 +21,10 @@ INSTALLATION_STATUS = {
     "bootstrapping",
     "discovering_leader_candidates",
     "awaiting_leader_selection",
+    "awaiting_leader_start",
     "activating_leader",
     "active",
+    "restarting_leader",
     "reconciling_capabilities",
     "rotating_leader",
     "migrating",
@@ -36,15 +38,17 @@ LEGAL_TRANSITIONS = {
     "uninitialized": {"bootstrapping"},
     "bootstrapping": {"discovering_leader_candidates", "blocked"},
     "discovering_leader_candidates": {"awaiting_leader_selection", "blocked"},
-    "awaiting_leader_selection": {"activating_leader", "blocked"},
+    "awaiting_leader_selection": {"awaiting_leader_start", "blocked"},
+    "awaiting_leader_start": {"activating_leader", "blocked"},
     "activating_leader": {"active", "blocked"},
-    "active": {"reconciling_capabilities", "migrating", "rotating_leader", "degraded", "blocked", "retired"},
+    "active": {"restarting_leader", "reconciling_capabilities", "migrating", "rotating_leader", "degraded", "blocked", "retired"},
+    "restarting_leader": {"active", "blocked"},
     "reconciling_capabilities": {"active", "degraded", "blocked"},
     "rotating_leader": {"active", "blocked"},
     "migrating": {"active", "rollback_required", "blocked"},
     "rollback_required": {"active", "blocked"},
     "degraded": {"reconciling_capabilities", "rotating_leader", "migrating", "blocked", "retired"},
-    "blocked": {"active", "retired"},
+    "blocked": {"activating_leader", "active", "retired"},
     "retired": set(),
 }
 
@@ -58,7 +62,10 @@ BOOTSTRAP_READ_ONLY_KINDS = {
 BOOTSTRAP_CORE_KINDS = BOOTSTRAP_READ_ONLY_KINDS | {
     "command.installation.init",
     "command.leader.select",
+    "command.leader.start",
+    "command.leader.recover_start",
     "event.leader.activated",
+    "result.leader.activation_failed",
 }
 
 REQUIRED_FILES = (
@@ -66,6 +73,7 @@ REQUIRED_FILES = (
     "protocol-manifest.json",
     "state.json",
     "leader-selections.jsonl",
+    "leader-session-receipts.jsonl",
     "capability-observations.jsonl",
     "capability-registry.json",
     "messages.jsonl",
@@ -163,6 +171,27 @@ def installation_root(workspace: Path, root: Path | None = None) -> Path:
     return (root or (workspace.resolve() / ".valp")).expanduser().resolve()
 
 
+def leader_installation_root(workspace: Path, root: Path | None = None) -> Path:
+    """Resolve the installation Leader from any caller workspace.
+
+    A workspace-local control root remains authoritative when it already
+    exists. Otherwise an initialized user-level root is reused so opening the
+    Leader from another terminal does not create a second installation.
+    """
+    if root is not None:
+        return installation_root(workspace, root)
+    workspace_root = installation_root(workspace)
+    if (workspace_root / "installation.json").is_file():
+        return workspace_root
+    configured_root = os.environ.get("VALP_CONTROL_ROOT", "").strip()
+    if configured_root:
+        return Path(configured_root).expanduser().resolve()
+    user_root = (Path.home() / ".valp").expanduser().resolve()
+    if (user_root / "installation.json").is_file():
+        return user_root
+    return workspace_root
+
+
 def safe_control_ref(ref: str) -> str:
     candidate = Path(ref)
     if not ref or candidate.is_absolute() or "\\" in ref or ":" in ref:
@@ -187,6 +216,7 @@ def _empty_state(installation_id: str) -> dict[str, Any]:
         "installation_id": installation_id,
         "revision": 0,
         "status": "uninitialized",
+        "selected_leader": None,
         "active_leader": None,
         "active_leader_epoch": 0,
         "registry_revision": 0,
@@ -200,6 +230,18 @@ def _empty_state(installation_id: str) -> dict[str, Any]:
 
 def _state_digest(state: dict[str, Any]) -> str:
     return digest_without(state, "projection_digest")
+
+
+def _authority_view(state: dict[str, Any]) -> dict[str, Any]:
+    """Hide legacy attachment hints from the installation authority view."""
+    active = state.get("active_leader")
+    if not isinstance(active, dict) or "session_id" not in active:
+        return state
+    normalized = dict(state)
+    normalized["active_leader"] = {
+        key: value for key, value in active.items() if key != "session_id"
+    }
+    return normalized
 
 
 class InstallationCore:
@@ -271,7 +313,7 @@ class InstallationCore:
         state = read_json(self.state_path)
         if state.get("projection_digest") != _state_digest(state):
             raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "State projection digest mismatch", state_effect="blocked")
-        return state
+        return _authority_view(state)
 
     def _manifest(self) -> dict[str, Any]:
         return read_json(self._path("protocol-manifest.json"))
@@ -302,7 +344,7 @@ class InstallationCore:
                 "message": ["valp-message.v1"],
                 "event": ["valp-event.v1"],
             },
-            "required_core_message_kinds": sorted(BOOTSTRAP_READ_ONLY_KINDS | {"command.leader.select", "command.leader.rotate", "command.capabilities.reconcile"}),
+            "required_core_message_kinds": sorted(BOOTSTRAP_READ_ONLY_KINDS | {"command.leader.select", "command.leader.start", "command.leader.recover_start", "command.leader.restart", "command.leader.rotate", "command.capabilities.reconcile"}),
             "enabled_extension_namespaces": [],
             "digest_algorithms": ["sha256"],
             "migration_paths": ["0.2.0->0.3.0-draft"],
@@ -447,13 +489,15 @@ class InstallationCore:
         next_state["active_leader_epoch"] = state["active_leader_epoch"]
         if "active_leader" in payload:
             next_state["active_leader"] = payload["active_leader"]
+        if "selected_leader" in payload:
+            next_state["selected_leader"] = payload["selected_leader"]
         if "active_leader_epoch" in payload:
             next_state["active_leader_epoch"] = payload["active_leader_epoch"]
         if "registry_revision" in payload:
             next_state["registry_revision"] = payload["registry_revision"]
         if target_status == "blocked":
             next_state["active_blockers"] = list(payload.get("active_blockers") or [event_kind])
-        elif target_status in {"active", "awaiting_leader_selection", "discovering_leader_candidates"}:
+        elif target_status in {"active", "awaiting_leader_selection", "awaiting_leader_start", "discovering_leader_candidates"}:
             next_state["active_blockers"] = []
         next_state["projection_digest"] = _state_digest(next_state)
         content_digest = digest_value({
@@ -513,7 +557,7 @@ class InstallationCore:
         write_json(self.installation_path, installation)
         return message["result"]
 
-    def discover_candidates(self) -> dict[str, Any]:
+    def discover_candidates(self, passports: Iterable[dict[str, Any]] | None = None) -> dict[str, Any]:
         state = self.state()
         if state["status"] == "bootstrapping":
             self._transition(
@@ -530,10 +574,64 @@ class InstallationCore:
             state = self.state()
         if state["status"] != "discovering_leader_candidates":
             raise ControlPlaneError("VALP-E-STATE-TRANSITION", "Candidate discovery requires discovering_leader_candidates")
-        candidates = [
-            {"principal_id": "manual-user", "principal_kind": "human", "capabilities": ["coordination", "approval", "review"], "presence": "available"},
-            {"principal_id": "valp-reference-cli", "principal_kind": "runtime-controller", "capabilities": ["coordination", "state", "audit"], "presence": "local"},
-        ]
+        candidates: list[dict[str, Any]] = []
+        passport_directory = self._path("capability-passports")
+        passport_directory.mkdir(parents=True, exist_ok=True)
+        for passport in passports or []:
+            if not isinstance(passport, dict):
+                continue
+            principal_id = str(passport.get("principal_id") or "").strip()
+            runtime = passport.get("runtime") if isinstance(passport.get("runtime"), dict) else {}
+            launch_argv = runtime.get("launch_argv")
+            roles = passport.get("role_eligibility") if isinstance(passport.get("role_eligibility"), dict) else {}
+            live = passport.get("live_callability") if isinstance(passport.get("live_callability"), dict) else {}
+            session = ((passport.get("runtime_identity") or {}).get("session") or {}) if isinstance(passport.get("runtime_identity"), dict) else {}
+            if (
+                not principal_id
+                or roles.get("leader") != "eligible"
+                or live.get("status") not in {"pass", "warn"}
+                or session.get("status") != "known"
+                or not isinstance(launch_argv, list)
+                or not launch_argv
+                or not all(isinstance(item, str) and item.strip() for item in launch_argv)
+                or not str(runtime.get("adapter_id") or "").strip()
+                or not str(runtime.get("adapter_class") or "").strip()
+            ):
+                continue
+            passport_digest = digest_value(passport)
+            passport_ref = f"capability-passports/{passport_digest.removeprefix('sha256:')}.json"
+            write_json(self._path(passport_ref), passport)
+            capabilities = sorted(
+                role
+                for role, eligibility in roles.items()
+                if eligibility == "eligible"
+            ) or ["leader"]
+            candidates.append({
+                "principal_id": principal_id,
+                "principal_kind": "agent",
+                "agent_id": str(passport.get("agent_id") or principal_id),
+                "agent_surface": str(passport.get("agent_surface") or "unknown"),
+                "capabilities": capabilities,
+                "presence": str(live.get("status") or "unknown"),
+                "passport_ref": passport_ref,
+                "passport_digest": passport_digest,
+                "observed_session": {
+                    "session_id": str((passport.get("runtime_identity") or {}).get("session_id") or "unknown"),
+                    "token": str(session.get("token") or "unknown"),
+                    "generation": str(session.get("generation") or "unknown"),
+                },
+                "runtime": {
+                    "adapter_id": str(runtime["adapter_id"]),
+                    "adapter_class": str(runtime["adapter_class"]),
+                    "launch_argv": [str(item) for item in launch_argv],
+                    "version_command": [
+                        str(item)
+                        for item in runtime.get("version_command") or []
+                        if isinstance(item, str) and item.strip()
+                    ],
+                },
+            })
+        candidates.sort(key=lambda candidate: candidate["principal_id"])
         write_json(self._path("leader-candidates.json"), {
             "schema_version": "valp-leader-candidates.v1",
             "installation_id": state["installation_id"],
@@ -561,54 +659,679 @@ class InstallationCore:
         candidates = read_json(self._path("leader-candidates.json")).get("candidates") or []
         if principal_id not in {candidate.get("principal_id") for candidate in candidates}:
             raise ControlPlaneError("VALP-E-PERMISSION-DENIED", "Leader must be selected from observed candidates")
+        candidate = next(candidate for candidate in candidates if candidate["principal_id"] == principal_id)
         selection = {
             "schema_version": "valp-leader-selection.v1",
             "selection_id": _new_id("selection"),
             "installation_id": state["installation_id"],
             "principal_id": principal_id,
-            "principal_kind": next(candidate["principal_kind"] for candidate in candidates if candidate["principal_id"] == principal_id),
+            "principal_kind": candidate["principal_kind"],
             "selected_by": "user",
             "selection_reason": "explicit user selection",
             "approved_at": utc_now(),
             "previous_leader_epoch": 0,
-            "new_leader_epoch": 1,
+            "proposed_leader_epoch": 1,
+            "passport_ref": candidate["passport_ref"],
+            "passport_digest": candidate["passport_digest"],
         }
         append_jsonl(self._path("leader-selections.jsonl"), selection)
-        activating = self._transition(
+        recorded = self._transition(
             event_kind="leader_selection_approved",
             message_kind="command.leader.select",
             principal_id="user",
             principal_kind="human",
             epoch=0,
             expected_revision=state["revision"],
-            payload={"selected_principal_id": principal_id, "selection_id": selection["selection_id"]},
-            target_status="activating_leader",
+            payload={
+                "selected_principal_id": principal_id,
+                "selection_id": selection["selection_id"],
+                "selected_leader": {
+                    "principal_id": principal_id,
+                    "principal_kind": candidate["principal_kind"],
+                    "agent_id": candidate["agent_id"],
+                    "agent_surface": candidate["agent_surface"],
+                    "selection_id": selection["selection_id"],
+                    "passport_ref": candidate["passport_ref"],
+                    "passport_digest": candidate["passport_digest"],
+                    "runtime": candidate["runtime"],
+                },
+            },
+            target_status="awaiting_leader_start",
             idempotency_key="leader-selection-" + principal_id,
         )
+        return {"selection": selection, "recording": recorded}
+
+    def prepare_leader_start(self) -> dict[str, Any]:
         state = self.state()
+        if state["status"] != "awaiting_leader_start":
+            raise ControlPlaneError(
+                "VALP-E-STATE-TRANSITION",
+                "Leader start requires an inactive selected Leader",
+            )
+        selected = state.get("selected_leader")
+        if not isinstance(selected, dict) or not selected.get("principal_id"):
+            raise ControlPlaneError(
+                "VALP-E-REGISTRY-CONSISTENCY",
+                "Leader start requires persisted selection evidence",
+            )
+        proposed_epoch = state["active_leader_epoch"] + 1
+        started = self._transition(
+            event_kind="leader_start_requested",
+            message_kind="command.leader.start",
+            principal_id="bootstrap-controller",
+            principal_kind="bootstrap-controller",
+            epoch=0,
+            expected_revision=state["revision"],
+            payload={
+                "selected_principal_id": selected["principal_id"],
+                "selection_id": selected["selection_id"],
+                "proposed_leader_epoch": proposed_epoch,
+            },
+            target_status="activating_leader",
+            idempotency_key=f"leader-start-{selected['selection_id']}-{proposed_epoch}",
+        )
+        return {
+            "selected_leader": selected,
+            "proposed_leader_epoch": proposed_epoch,
+            "start": started,
+        }
+
+    def prepare_leader_start_recovery(
+        self,
+        session_id: str,
+        *,
+        approve: bool = False,
+    ) -> dict[str, Any]:
+        if not approve:
+            raise ControlPlaneError(
+                "VALP-E-APPROVAL-REQUIRED",
+                "Leader start recovery requires explicit user approval",
+            )
+        approved_session_id = str(session_id or "").strip()
+        if not approved_session_id or approved_session_id != session_id:
+            raise ControlPlaneError(
+                "VALP-E-MESSAGE-SCHEMA",
+                "Leader start recovery requires one exact runtime session id",
+            )
+        state = self.state()
+        binding_path = self._path("leader-session-binding.json")
+        selected = state.get("selected_leader")
+        if (
+            state["status"] != "blocked"
+            or state["active_leader_epoch"] != 0
+            or state.get("active_leader") is not None
+            or binding_path.exists()
+            or state.get("active_blockers") != ["leader_activation_failed"]
+            or not isinstance(selected, dict)
+        ):
+            raise ControlPlaneError(
+                "VALP-E-STATE-TRANSITION",
+                "Leader start recovery requires the exact blocked first-start state",
+            )
+
+        selections = read_jsonl(self._path("leader-selections.jsonl"))
+        selection = selections[-1] if selections else None
+        if (
+            not isinstance(selection, dict)
+            or selection.get("installation_id") != state["installation_id"]
+            or selection.get("selection_id") != selected.get("selection_id")
+            or selection.get("principal_id") != selected.get("principal_id")
+            or selection.get("passport_ref") != selected.get("passport_ref")
+            or selection.get("passport_digest") != selected.get("passport_digest")
+            or selection.get("previous_leader_epoch") != 0
+            or selection.get("proposed_leader_epoch") != 1
+        ):
+            raise ControlPlaneError(
+                "VALP-E-REGISTRY-CONSISTENCY",
+                "Leader start recovery selection evidence changed or is incomplete",
+                state_effect="blocked",
+            )
+        passport_ref = safe_control_ref(str(selected.get("passport_ref") or ""))
+        passport = read_json(self._path(passport_ref))
+        if digest_value(passport) != selected.get("passport_digest"):
+            raise ControlPlaneError(
+                "VALP-E-REGISTRY-CONSISTENCY",
+                "Leader start recovery passport digest mismatch",
+                state_effect="blocked",
+            )
+
+        events = read_jsonl(self._path("events.jsonl"))
+        blocking_event = events[-1] if events else None
+        if (
+            not isinstance(blocking_event, dict)
+            or blocking_event.get("event_id") != state.get("last_event_id")
+            or blocking_event.get("event_digest") != state.get("last_event_digest")
+            or blocking_event.get("event_digest") != digest_without(blocking_event, "event_digest")
+            or blocking_event.get("event_kind") != "leader_activation_failed"
+            or blocking_event.get("leader_epoch") != 0
+        ):
+            raise ControlPlaneError(
+                "VALP-E-REGISTRY-CONSISTENCY",
+                "Leader start recovery blocking event is missing or invalid",
+                state_effect="blocked",
+            )
+
+        receipts = read_jsonl(self._path("leader-session-receipts.jsonl"))
+        failed_receipt = receipts[-1] if receipts else None
+        if (
+            not isinstance(failed_receipt, dict)
+            or failed_receipt.get("receipt_digest")
+            != digest_without(failed_receipt, "receipt_digest")
+            or failed_receipt.get("schema_version")
+            != "valp-leader-session-receipt.v1"
+            or failed_receipt.get("receipt_type")
+            != "leader_session_start_failed"
+            or failed_receipt.get("installation_id") != state["installation_id"]
+            or failed_receipt.get("principal_id") != selected.get("principal_id")
+            or failed_receipt.get("leader_epoch") != 1
+            or failed_receipt.get("generation") != 1
+            or failed_receipt.get("operation") != "start"
+            or failed_receipt.get("adapter_id")
+            != (selected.get("runtime") or {}).get("adapter_id")
+            or failed_receipt.get("blocking_event_id")
+            != blocking_event.get("event_id")
+        ):
+            raise ControlPlaneError(
+                "VALP-E-REGISTRY-CONSISTENCY",
+                "Leader start recovery requires the latest exact blocking failed-start receipt",
+                state_effect="blocked",
+            )
+        event_payload = blocking_event.get("payload") or {}
+        if (
+            event_payload.get("operation") != "start"
+            or event_payload.get("selected_principal_id") != selected.get("principal_id")
+            or event_payload.get("proposed_leader_epoch") != 1
+            or event_payload.get("proposed_generation") != 1
+        ):
+            raise ControlPlaneError(
+                "VALP-E-REGISTRY-CONSISTENCY",
+                "Leader start recovery blocking event does not match the failed receipt",
+                state_effect="blocked",
+            )
+
+        approval_payload = {
+            "approved_session_id": approved_session_id,
+            "selected_principal_id": selected["principal_id"],
+            "selection_id": selected["selection_id"],
+            "passport_digest": selected["passport_digest"],
+            "failed_receipt_id": failed_receipt["receipt_id"],
+            "failed_receipt_digest": failed_receipt["receipt_digest"],
+            "blocking_event_id": blocking_event["event_id"],
+            "proposed_leader_epoch": 1,
+            "proposed_generation": 1,
+        }
+        approved = self._transition(
+            event_kind="leader_start_recovery_approved",
+            message_kind="command.leader.recover_start",
+            principal_id="user",
+            principal_kind="human",
+            epoch=0,
+            expected_revision=state["revision"],
+            payload=approval_payload,
+            target_status="activating_leader",
+            idempotency_key=(
+                "leader-start-recovery-"
+                + failed_receipt["receipt_digest"].removeprefix("sha256:")
+                + "-"
+                + hashlib.sha256(approved_session_id.encode("utf-8")).hexdigest()
+            ),
+        )
+        recovery_approval = {
+            "approval_event_id": approved["event_id"],
+            "approved_session_id": approved_session_id,
+            "failed_receipt_id": failed_receipt["receipt_id"],
+            "failed_receipt_digest": failed_receipt["receipt_digest"],
+        }
+        return {
+            "selected_leader": selected,
+            "proposed_leader_epoch": 1,
+            "generation": 1,
+            "recovery_approval": recovery_approval,
+            "recovery": approved,
+        }
+
+    def prepare_leader_restart(self) -> dict[str, Any]:
+        state = self.state()
+        if state["status"] != "active" or state["active_leader_epoch"] < 1:
+            raise ControlPlaneError(
+                "VALP-E-STATE-TRANSITION",
+                "Leader restart requires one active Leader authority and runtime attachment",
+            )
+        selected = state.get("selected_leader")
+        binding_path = self._path("leader-session-binding.json")
+        binding = read_json(binding_path) if binding_path.exists() else None
+        if (
+            not isinstance(selected, dict)
+            or not isinstance(binding, dict)
+            or binding.get("binding_digest") != digest_without(binding, "binding_digest")
+            or binding.get("status") != "active"
+            or binding.get("leader_epoch") != state["active_leader_epoch"]
+            or binding.get("principal_id") != selected.get("principal_id")
+        ):
+            raise ControlPlaneError(
+                "VALP-E-REGISTRY-CONSISTENCY",
+                "Leader restart requires the exact healthy active binding",
+                state_effect="blocked",
+            )
+        proposed_epoch = state["active_leader_epoch"] + 1
+        generation = int(binding["generation"]) + 1
+        started = self._transition(
+            event_kind="leader_restart_requested",
+            message_kind="command.leader.restart",
+            principal_id="user",
+            principal_kind="human",
+            epoch=state["active_leader_epoch"],
+            expected_revision=state["revision"],
+            payload={
+                "selected_principal_id": selected["principal_id"],
+                "selection_id": selected["selection_id"],
+                "prior_binding_digest": binding["binding_digest"],
+                "proposed_leader_epoch": proposed_epoch,
+                "proposed_generation": generation,
+            },
+            target_status="restarting_leader",
+            idempotency_key=f"leader-restart-{binding['binding_digest']}-{proposed_epoch}",
+        )
+        return {
+            "selected_leader": selected,
+            "prior_binding": binding,
+            "proposed_leader_epoch": proposed_epoch,
+            "generation": generation,
+            "restart": started,
+        }
+
+    def fail_leader_activation(
+        self,
+        operation: str,
+        *,
+        adapter_id: str,
+        failure_class: str,
+    ) -> None:
+        state = self.state()
+        expected_status = {
+            "start": "activating_leader",
+            "recover-start": "activating_leader",
+            "restart": "restarting_leader",
+            "rotate": "rotating_leader",
+        }.get(operation)
+        if expected_status is None or state["status"] != expected_status:
+            raise ControlPlaneError(
+                "VALP-E-STATE-TRANSITION",
+                "Leader activation failure requires a prepared start, recovery, restart, or rotation",
+            )
+        selected = state.get("selected_leader")
+        if not isinstance(selected, dict) or not selected.get("principal_id"):
+            raise ControlPlaneError(
+                "VALP-E-REGISTRY-CONSISTENCY",
+                "Leader activation failure is missing selected Leader evidence",
+                state_effect="blocked",
+            )
+        prior_binding = None
+        if state["active_leader_epoch"] >= 1:
+            binding_path = self._path("leader-session-binding.json")
+            prior_binding = read_json(binding_path) if binding_path.exists() else None
+        recovery_approval = None
+        if operation == "recover-start":
+            events = read_jsonl(self._path("events.jsonl"))
+            approval_event = events[-1] if events else None
+            approval_payload = (
+                approval_event.get("payload")
+                if isinstance(approval_event, dict)
+                and isinstance(approval_event.get("payload"), dict)
+                else {}
+            )
+            if (
+                not isinstance(approval_event, dict)
+                or approval_event.get("event_id") != state.get("last_event_id")
+                or approval_event.get("event_digest") != state.get("last_event_digest")
+                or approval_event.get("event_kind")
+                != "leader_start_recovery_approved"
+            ):
+                raise ControlPlaneError(
+                    "VALP-E-REGISTRY-CONSISTENCY",
+                    "Leader recovery failure is missing its approval event",
+                    state_effect="blocked",
+                )
+            recovery_approval = {
+                "approval_event_id": approval_event["event_id"],
+                "approved_session_id": approval_payload.get("approved_session_id"),
+                "failed_receipt_id": approval_payload.get("failed_receipt_id"),
+                "failed_receipt_digest": approval_payload.get(
+                    "failed_receipt_digest"
+                ),
+            }
+        generation = int((prior_binding or {}).get("generation") or 0) + 1
+        proposed_epoch = state["active_leader_epoch"] + 1
+        failure = ControlPlaneError(
+            "VALP-E-LEADER-UNREACHABLE",
+            "The selected runtime adapter could not provision the Leader session",
+            state_effect="blocked",
+        )
+        blocked = self._transition(
+            event_kind="leader_activation_failed",
+            message_kind="result.leader.activation_failed",
+            principal_id="reference-runtime-adapter",
+            principal_kind="runtime-adapter",
+            epoch=state["active_leader_epoch"],
+            expected_revision=state["revision"],
+            payload={
+                "selected_principal_id": selected["principal_id"],
+                "operation": operation,
+                "adapter_id": adapter_id,
+                "failure_code": failure.code,
+                "failure_class": failure_class,
+                "proposed_leader_epoch": proposed_epoch,
+                "proposed_generation": generation,
+                "active_blockers": ["leader_activation_failed"],
+                **(
+                    {"recovery": recovery_approval}
+                    if recovery_approval is not None
+                    else {}
+                ),
+            },
+            target_status="blocked",
+            idempotency_key=(
+                f"leader-activation-failed-{operation}-{selected['selection_id']}-"
+                f"{proposed_epoch}-{generation}"
+            ),
+        )
+        receipt = {
+            "schema_version": "valp-leader-session-receipt.v1",
+            "receipt_id": _new_id("leader-receipt"),
+            "receipt_type": "leader_session_start_failed",
+            "installation_id": state["installation_id"],
+            "principal_id": selected["principal_id"],
+            "leader_epoch": proposed_epoch,
+            "generation": generation,
+            "operation": operation,
+            "adapter_id": adapter_id,
+            "failure_code": failure.code,
+            "failure_class": failure_class,
+            "failure_message": str(failure),
+            "blocking_event_id": blocked["event_id"],
+            "recorded_at": utc_now(),
+            **(
+                {"recovery": recovery_approval}
+                if recovery_approval is not None
+                else {}
+            ),
+        }
+        receipt["receipt_digest"] = digest_without(receipt, "receipt_digest")
+        append_jsonl(self._path("leader-session-receipts.jsonl"), receipt)
+        self._failure(
+            failure,
+            message_id=blocked["message_id"],
+            phase="leader_activation",
+        )
+        raise failure
+
+    def activate_leader(self, provisioned: dict[str, Any]) -> dict[str, Any]:
+        state = self.state()
+        first_start = state["status"] == "activating_leader" and state["active_leader_epoch"] == 0
+        restarting = state["status"] == "restarting_leader" and state["active_leader_epoch"] >= 1
+        rotating = state["status"] == "rotating_leader" and state["active_leader_epoch"] >= 1
+        events = read_jsonl(self._path("events.jsonl"))
+        prepared_event = events[-1] if events else None
+        if (
+            not isinstance(prepared_event, dict)
+            or prepared_event.get("event_id") != state.get("last_event_id")
+            or prepared_event.get("event_digest") != state.get("last_event_digest")
+            or prepared_event.get("event_digest")
+            != digest_without(prepared_event, "event_digest")
+        ):
+            raise ControlPlaneError(
+                "VALP-E-REGISTRY-CONSISTENCY",
+                "Leader activation prepared event is missing or invalid",
+                state_effect="blocked",
+            )
+        recovering = (
+            first_start
+            and prepared_event.get("event_kind")
+            == "leader_start_recovery_approved"
+        )
+        operation = (
+            "recover-start"
+            if recovering
+            else "start"
+            if first_start
+            else "restart"
+            if restarting
+            else "rotate"
+        )
+        if not first_start and not restarting and not rotating:
+            raise ControlPlaneError(
+                "VALP-E-STATE-TRANSITION",
+                "Leader activation requires a prepared start or fenced restart",
+            )
+        selected = state.get("selected_leader")
+        if not isinstance(selected, dict):
+            raise ControlPlaneError(
+                "VALP-E-REGISTRY-CONSISTENCY",
+                "Leader activation is missing selected Leader evidence",
+            )
+        installation = self._installation()
+        expected_launch = ((selected.get("runtime") or {}).get("launch_argv") or [])
+        runtime_identity = provisioned.get("runtime_identity") if isinstance(provisioned.get("runtime_identity"), dict) else {}
+        health = provisioned.get("health") if isinstance(provisioned.get("health"), dict) else {}
+        ownership = provisioned.get("ownership") if isinstance(provisioned.get("ownership"), dict) else {}
+        runtime_scope = provisioned.get("runtime_scope") if isinstance(provisioned.get("runtime_scope"), dict) else {}
+        context = provisioned.get("context") if isinstance(provisioned.get("context"), dict) else {}
+        launch = provisioned.get("launch") if isinstance(provisioned.get("launch"), dict) else {}
+        recovery = provisioned.get("recovery") if isinstance(provisioned.get("recovery"), dict) else None
+        generation = provisioned.get("generation")
+        prior_binding = None
+        if restarting or rotating:
+            prior_binding = read_json(self._path("leader-session-binding.json"))
+            if prior_binding.get("binding_digest") != digest_without(prior_binding, "binding_digest"):
+                raise ControlPlaneError(
+                    "VALP-E-REGISTRY-CONSISTENCY",
+                    "Prior Leader binding digest mismatch",
+                    state_effect="blocked",
+                )
+        leader_epoch = state["active_leader_epoch"] + 1
+        expected_generation = 1 if first_start else int((prior_binding or {}).get("generation") or 0) + 1
+        validation_errors: list[str] = []
+        if provisioned.get("principal_id") != selected.get("principal_id"):
+            validation_errors.append("principal identity mismatch")
+        if provisioned.get("adapter_id") != (selected.get("runtime") or {}).get("adapter_id"):
+            validation_errors.append("adapter id mismatch")
+        if provisioned.get("adapter_class") != (selected.get("runtime") or {}).get("adapter_class"):
+            validation_errors.append("adapter class mismatch")
+        if ownership != {
+            "scope": "installation",
+            "installation_id": installation["installation_id"],
+        }:
+            validation_errors.append("ownership is not installation-scoped")
+        if runtime_scope.get("ownership") != "installation":
+            validation_errors.append("runtime scope is not installation-owned")
+        if launch.get("argv") != expected_launch:
+            validation_errors.append("launch argv differs from selected passport")
+        if provisioned.get("focused_at_provisioning") is not False:
+            validation_errors.append("Leader session is focused or focus is unproven")
+        if type(generation) is not int or generation != expected_generation:
+            validation_errors.append(f"Leader session generation must be {expected_generation}")
+        if health.get("status") != "pass" or not health.get("observed_at"):
+            validation_errors.append("Leader health proof did not pass")
+        if not str(context.get("cwd") or "").strip():
+            validation_errors.append("Leader context is missing")
+        if not str(runtime_identity.get("session_id") or "").strip():
+            validation_errors.append("Leader runtime session id is missing")
+        if not str(runtime_identity.get("token") or "").startswith("sha256:"):
+            validation_errors.append("Leader runtime identity token is missing")
+        expected_recovery = None
+        if recovering:
+            prepared_payload = prepared_event.get("payload") or {}
+            expected_recovery = {
+                "approval_event_id": prepared_event["event_id"],
+                "approved_session_id": prepared_payload.get("approved_session_id"),
+                "failed_receipt_id": prepared_payload.get("failed_receipt_id"),
+                "failed_receipt_digest": prepared_payload.get("failed_receipt_digest"),
+            }
+            if recovery != expected_recovery:
+                validation_errors.append("Leader recovery approval evidence mismatch")
+            if runtime_identity.get("session_id") != expected_recovery["approved_session_id"]:
+                validation_errors.append("Leader recovery returned a different runtime session")
+        elif recovery is not None:
+            validation_errors.append("Unexpected Leader recovery evidence")
+        if validation_errors:
+            self.fail_leader_activation(
+                operation,
+                adapter_id=str(provisioned.get("adapter_id") or "unknown"),
+                failure_class="LeaderSessionBindingValidationError",
+            )
+            raise AssertionError("Invalid Leader session binding must fail closed")
+
+        launch_argv_digest = digest_value(expected_launch)
+        binding = {
+            "schema_version": "valp-leader-session-binding.v1",
+            "installation_id": installation["installation_id"],
+            "principal_id": selected["principal_id"],
+            "principal_kind": selected["principal_kind"],
+            "agent_id": str(provisioned.get("agent_id") or selected["principal_id"]),
+            "selection_id": selected["selection_id"],
+            "passport_ref": selected["passport_ref"],
+            "passport_digest": selected["passport_digest"],
+            "leader_epoch": leader_epoch,
+            "adapter_id": provisioned["adapter_id"],
+            "adapter_class": provisioned["adapter_class"],
+            "generation": generation,
+            "ownership": ownership,
+            "context": context,
+            "launch": {"argv": expected_launch, "argv_digest": launch_argv_digest},
+            "focused_at_provisioning": False,
+            "runtime_scope": runtime_scope,
+            "runtime_identity": runtime_identity,
+            "health": health,
+            "status": "active",
+            "provisioned_at": provisioned["provisioned_at"],
+            "activated_at": utc_now(),
+            "replaces_binding_digest": (prior_binding or {}).get("binding_digest"),
+            "binding_digest": "",
+        }
+        if expected_recovery is not None:
+            binding["recovery"] = expected_recovery
+        binding["binding_digest"] = digest_without(binding, "binding_digest")
+        write_json(self._path("leader-session-binding.json"), binding)
+        history_ref = (
+            f"leader-session-bindings/epoch-{leader_epoch}-generation-{generation}-"
+            f"{binding['binding_digest'].removeprefix('sha256:')[:16]}.json"
+        )
+        write_json(self._path(history_ref), binding)
+
+        def append_receipt(receipt_type: str, **extra: Any) -> dict[str, Any]:
+            receipt = {
+                "schema_version": "valp-leader-session-receipt.v1",
+                "receipt_id": _new_id("leader-receipt"),
+                "receipt_type": receipt_type,
+                "installation_id": installation["installation_id"],
+                "principal_id": selected["principal_id"],
+                "leader_epoch": leader_epoch,
+                "generation": generation,
+                "binding_ref": "leader-session-binding.json",
+                "binding_digest": binding["binding_digest"],
+                "runtime_session_id": runtime_identity["session_id"],
+                "recorded_at": utc_now(),
+                **extra,
+            }
+            receipt["receipt_digest"] = digest_without(receipt, "receipt_digest")
+            append_jsonl(self._path("leader-session-receipts.jsonl"), receipt)
+            return receipt
+
+        provisioned_receipt = append_receipt(
+            "leader_session_provisioned",
+            health_status=health["status"],
+            binding_history_ref=history_ref,
+            **({"recovery": expected_recovery} if expected_recovery is not None else {}),
+        )
+        replaced_receipt = None
+        if prior_binding is not None:
+            replaced_receipt = append_receipt(
+                "leader_session_replaced",
+                replaced_binding_digest=prior_binding["binding_digest"],
+                replaced_epoch=prior_binding["leader_epoch"],
+                replaced_generation=prior_binding["generation"],
+            )
         activated = self._transition(
             event_kind="leader_activated",
             message_kind="event.leader.activated",
             principal_id="bootstrap-controller",
             principal_kind="bootstrap-controller",
-            epoch=0,
+            epoch=0 if first_start else state["active_leader_epoch"],
             expected_revision=state["revision"],
-            payload={"active_leader": {"principal_id": principal_id, "principal_kind": selection["principal_kind"]}, "active_leader_epoch": 1},
+            payload={
+                "active_leader": {
+                    "principal_id": selected["principal_id"],
+                    "principal_kind": selected["principal_kind"],
+                    "binding_ref": "leader-session-binding.json",
+                    "binding_digest": binding["binding_digest"],
+                    "generation": generation,
+                },
+                "active_leader_epoch": leader_epoch,
+                **({"recovery": expected_recovery} if expected_recovery is not None else {}),
+            },
             target_status="active",
-            idempotency_key="leader-activate-1-" + principal_id,
+            idempotency_key=f"leader-activate-{leader_epoch}-{selected['selection_id']}",
         )
-        return {"selection": selection, "activation": activated}
+        activated_receipt = append_receipt(
+            "leader_session_activated",
+            activation_event_id=activated["event_id"],
+            **({"recovery": expected_recovery} if expected_recovery is not None else {}),
+        )
+        return {
+            "binding": binding,
+            "provisioned_receipt": provisioned_receipt,
+            "replaced_receipt": replaced_receipt,
+            "activation": activated,
+            "activated_receipt": activated_receipt,
+        }
 
     def rotate_leader(self, principal_id: str) -> dict[str, Any]:
         state = self.state()
-        if state["status"] not in {"active", "degraded"}:
-            raise ControlPlaneError("VALP-E-STATE-TRANSITION", "Leader rotation requires active or degraded installation")
+        if state["status"] != "active":
+            raise ControlPlaneError("VALP-E-STATE-TRANSITION", "Leader rotation requires an active installation")
         if principal_id == (state.get("active_leader") or {}).get("principal_id"):
             raise ControlPlaneError("VALP-E-PERMISSION-DENIED", "Replacement leader must be different")
         candidates = read_json(self._path("leader-candidates.json")).get("candidates") if self._path("leader-candidates.json").exists() else []
         if principal_id not in {candidate.get("principal_id") for candidate in candidates}:
             raise ControlPlaneError("VALP-E-PERMISSION-DENIED", "Replacement leader must have current discovery evidence")
+        candidate = next(candidate for candidate in candidates if candidate["principal_id"] == principal_id)
+        prior_binding = read_json(self._path("leader-session-binding.json"))
+        if (
+            prior_binding.get("binding_digest") != digest_without(prior_binding, "binding_digest")
+            or prior_binding.get("leader_epoch") != state["active_leader_epoch"]
+        ):
+            raise ControlPlaneError(
+                "VALP-E-REGISTRY-CONSISTENCY",
+                "Leader rotation requires the exact active binding",
+                state_effect="blocked",
+            )
         old_epoch = state["active_leader_epoch"]
+        new_epoch = old_epoch + 1
+        selection = {
+            "schema_version": "valp-leader-selection.v1",
+            "selection_id": _new_id("selection"),
+            "installation_id": state["installation_id"],
+            "principal_id": principal_id,
+            "principal_kind": candidate["principal_kind"],
+            "selected_by": "user",
+            "selection_reason": "explicit user-approved Leader rotation",
+            "approved_at": utc_now(),
+            "previous_leader_epoch": old_epoch,
+            "proposed_leader_epoch": new_epoch,
+            "passport_ref": candidate["passport_ref"],
+            "passport_digest": candidate["passport_digest"],
+        }
+        append_jsonl(self._path("leader-selections.jsonl"), selection)
+        selected_leader = {
+            "principal_id": principal_id,
+            "principal_kind": candidate["principal_kind"],
+            "agent_id": candidate["agent_id"],
+            "agent_surface": candidate["agent_surface"],
+            "selection_id": selection["selection_id"],
+            "passport_ref": candidate["passport_ref"],
+            "passport_digest": candidate["passport_digest"],
+            "runtime": candidate["runtime"],
+        }
         rotating = self._transition(
             event_kind="leader_rotation_approved",
             message_kind="command.leader.rotate",
@@ -616,24 +1339,25 @@ class InstallationCore:
             principal_kind="human",
             epoch=old_epoch,
             expected_revision=state["revision"],
-            payload={"replacement_principal_id": principal_id, "old_epoch": old_epoch},
+            payload={
+                "replacement_principal_id": principal_id,
+                "old_epoch": old_epoch,
+                "selected_leader": selected_leader,
+                "selection_id": selection["selection_id"],
+                "prior_binding_digest": prior_binding["binding_digest"],
+                "proposed_leader_epoch": new_epoch,
+            },
             target_status="rotating_leader",
             idempotency_key=f"leader-rotate-{old_epoch}-{principal_id}",
         )
-        state = self.state()
-        new_epoch = old_epoch + 1
-        completed = self._transition(
-            event_kind="leader_rotation_completed",
-            message_kind="event.leader.rotation.completed",
-            principal_id="bootstrap-controller",
-            principal_kind="bootstrap-controller",
-            epoch=old_epoch,
-            expected_revision=state["revision"],
-            payload={"active_leader": {"principal_id": principal_id, "principal_kind": "runtime-controller"}, "active_leader_epoch": new_epoch, "old_epoch": old_epoch},
-            target_status="active",
-            idempotency_key=f"leader-rotation-complete-{new_epoch}-{principal_id}",
-        )
-        return {"rotation": rotating, "completed": completed, "new_epoch": new_epoch}
+        return {
+            "selection": selection,
+            "selected_leader": selected_leader,
+            "prior_binding": prior_binding,
+            "rotation": rotating,
+            "proposed_leader_epoch": new_epoch,
+            "generation": int(prior_binding["generation"]) + 1,
+        }
 
     def reconcile_capabilities(self, observations: Iterable[dict[str, Any]]) -> dict[str, Any]:
         state = self.state()
@@ -919,10 +1643,34 @@ class InstallationCore:
         return current
 
     def status(self) -> dict[str, Any]:
-        state = self.replay()
+        state = _authority_view(self.replay())
+        leader_session = None
+        binding_path = self._path("leader-session-binding.json")
+        if binding_path.exists():
+            leader_session = read_json(binding_path)
+            if leader_session.get("binding_digest") != digest_without(
+                leader_session,
+                "binding_digest",
+            ):
+                raise ControlPlaneError(
+                    "VALP-E-REGISTRY-CONSISTENCY",
+                    "Leader session binding digest mismatch",
+                    state_effect="blocked",
+                )
+            active = state.get("active_leader") if isinstance(state.get("active_leader"), dict) else {}
+            if state.get("status") == "active" and (
+                active.get("binding_digest") != leader_session.get("binding_digest")
+                or state.get("active_leader_epoch") != leader_session.get("leader_epoch")
+            ):
+                raise ControlPlaneError(
+                    "VALP-E-REGISTRY-CONSISTENCY",
+                    "Active Leader authority conflicts with its runtime attachment record",
+                    state_effect="blocked",
+                )
         return {
             "installation": self._installation(),
             "state": state,
+            "leader_session": leader_session,
             "root": str(self.root),
             "hello": self.hello(),
         }

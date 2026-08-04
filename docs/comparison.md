@@ -35,10 +35,14 @@ terminal emulator, database, or operating system.
 
 HERDR is the reference runtime for Full Mode.
 
-As checked on 2026-07-06, HERDR is public at
-<https://github.com/ogulcancelik/herdr>, includes source and project files, and
-uses AGPL-3.0-or-later plus a commercial license option. VALP should not
-describe HERDR as closed source.
+As checked on 2026-07-28, HERDR is public at
+<https://github.com/ogulcancelik/herdr> and includes source and project files.
+The immutable `v0.7.5` tag and Homebrew stable artifact are
+`AGPL-3.0-or-later` with a commercial license option. Upstream `master` was
+relicensed to `Apache-2.0` by commit `cd5ea1be0e69` on 2026-07-22, after
+`v0.7.5`; the tagged and Homebrew artifacts did not change retroactively. VALP
+should not describe HERDR as closed source or collapse these versioned license
+surfaces into one claim.
 
 In VALP terms, HERDR is expected to provide runtime capabilities such as:
 
@@ -54,6 +58,14 @@ evidence store
 ```
 
 HERDR is not the protocol itself.
+
+For the current versioned reference path, Full Mode submission proof uses a
+structured `herdr agent get` baseline followed by `herdr agent prompt <target>
+<payload> --wait --until working --timeout <ms>`. The `agent_prompted` response
+must preserve the routed Agent identity and advance integer `state_change_seq`.
+Older pane insertion, Enter, and status observation can record only
+`dispatch_inserted`; it remains `Manual-degraded` and cannot record
+`dispatch_submitted`.
 
 ## Hermes MoA And Delegation
 

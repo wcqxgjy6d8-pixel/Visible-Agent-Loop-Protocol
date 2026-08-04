@@ -3,13 +3,54 @@
   "$id": "https://valp.dev/schema/valp-executable-state.v1.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "installation_id", "revision", "status", "active_leader", "active_leader_epoch", "registry_revision", "active_blockers", "last_event_id", "last_event_digest", "updated_at", "projection_digest"],
+  "required": ["schema_version", "installation_id", "revision", "status", "selected_leader", "active_leader", "active_leader_epoch", "registry_revision", "active_blockers", "last_event_id", "last_event_digest", "updated_at", "projection_digest"],
   "properties": {
     "schema_version": {"const": "valp-executable-state.v1"},
     "installation_id": {"type": "string", "minLength": 1},
     "revision": {"type": "integer", "minimum": 0},
-    "status": {"enum": ["uninitialized", "bootstrapping", "discovering_leader_candidates", "awaiting_leader_selection", "activating_leader", "active", "reconciling_capabilities", "rotating_leader", "migrating", "rollback_required", "degraded", "blocked", "retired"]},
-    "active_leader": {"type": ["object", "null"], "additionalProperties": false, "required": ["principal_id", "principal_kind"], "properties": {"principal_id": {"type": "string", "minLength": 1}, "principal_kind": {"type": "string", "minLength": 1}}},
+    "status": {"enum": ["uninitialized", "bootstrapping", "discovering_leader_candidates", "awaiting_leader_selection", "awaiting_leader_start", "activating_leader", "active", "restarting_leader", "reconciling_capabilities", "rotating_leader", "migrating", "rollback_required", "degraded", "blocked", "retired"]},
+    "selected_leader": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["principal_id", "principal_kind", "agent_id", "agent_surface", "selection_id", "passport_ref", "passport_digest", "runtime"],
+      "properties": {
+        "principal_id": {"type": "string", "minLength": 1},
+        "principal_kind": {"const": "agent"},
+        "agent_id": {"type": "string", "minLength": 1},
+        "agent_surface": {"type": "string", "minLength": 1},
+        "selection_id": {"type": "string", "minLength": 1},
+        "passport_ref": {"type": "string", "minLength": 1},
+        "passport_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["adapter_id", "adapter_class", "launch_argv", "version_command"],
+          "properties": {
+            "adapter_id": {"type": "string", "minLength": 1},
+            "adapter_class": {"type": "string", "minLength": 1},
+            "launch_argv": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
+            "version_command": {"type": "array", "items": {"type": "string", "minLength": 1}}
+          }
+        }
+      }
+    },
+    "active_leader": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["principal_id", "principal_kind", "binding_ref", "binding_digest", "generation"],
+      "properties": {
+        "principal_id": {"type": "string", "minLength": 1},
+        "principal_kind": {"const": "agent"},
+        "binding_ref": {"const": "leader-session-binding.json"},
+        "binding_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Deprecated runtime attachment hint; Leader authority is not bound to this session."
+        },
+        "generation": {"type": "integer", "minimum": 1}
+      }
+    },
     "active_leader_epoch": {"type": "integer", "minimum": 0},
     "registry_revision": {"type": "integer", "minimum": 0},
     "active_blockers": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},

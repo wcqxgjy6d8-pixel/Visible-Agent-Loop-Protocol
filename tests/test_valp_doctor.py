@@ -12,6 +12,7 @@ from valp_cli.doctor import (
     DoctorCheck,
     DoctorReport,
     audit_status_to_doctor_status,
+    commission_capability_passports,
     collect_doctor_report,
     render_markdown_report,
     resolve_report_path,
@@ -33,6 +34,49 @@ class ValpDoctorTests(unittest.TestCase):
                     patch("valp_cli.doctor.runtime_checks", return_value=[]), \
                     patch("valp_cli.doctor.collect_runtime_preflight", return_value=preflight):
                 return collect_doctor_report(root)
+
+    def test_doctor_passes_capability_declared_runtime_commands_to_preflight(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "source": "test registry",
+            "agents": {
+                "example-agent": {
+                    "active": True,
+                    "role": ["review"],
+                    "runtime": {
+                        "launch_argv": ["example-agent", "run"],
+                        "version_command": ["example-agent", "version"],
+                    },
+                }
+            },
+        }
+        preflight_result = {
+            "runtime": "manual",
+            "adapter_class": "manual",
+            "status": "not_applicable",
+            "agents": {"example-agent": {"status": "warn"}},
+        }
+        with patch(
+            "valp_cli.doctor.load_local_capabilities",
+            return_value=capabilities,
+        ), patch(
+            "valp_cli.doctor.load_local_overlay",
+            return_value={},
+        ), patch(
+            "valp_cli.doctor.collect_runtime_preflight",
+            return_value=preflight_result,
+        ) as preflight:
+            commission_capability_passports(
+                Path("/example/workspace"),
+                evaluated_at="2026-07-26T00:00:00Z",
+            )
+
+        preflight.assert_called_once_with(
+            ["example-agent"],
+            runtime="auto",
+            launch_argv_by_agent={"example-agent": ["example-agent", "run"]},
+            version_command_by_agent={"example-agent": ["example-agent", "version"]},
+        )
 
     def test_doctor_commissions_capability_passport_with_observed_model_identity(self) -> None:
         capabilities = {
@@ -362,7 +406,12 @@ class ValpDoctorTests(unittest.TestCase):
             "agents": {
                 "codex": {
                     "active": True,
-                    "role": ["implementation"],
+                    "role": ["leader", "implementation"],
+                    "runtime": {
+                        "adapter_id": "herdr",
+                        "launch_argv": ["/test/bin/codex", "--example-mode"],
+                        "version_command": ["/test/bin/codex", "--version"],
+                    },
                     "model_identity": {
                         "agent_surface": "codex_cli",
                         "declared_model": {
@@ -423,6 +472,12 @@ class ValpDoctorTests(unittest.TestCase):
             [(item["runtime_identity"]["session_id"], item["model_identity"]["observed_model"]["model_id"]) for item in passports],
             [("session-1", "model-a"), ("session-2", "model-b")],
         )
+        self.assertEqual(len({item["principal_id"] for item in passports}), 2)
+        self.assertEqual(
+            [item["runtime"]["launch_argv"] for item in passports],
+            [["/test/bin/codex", "--example-mode"], ["/test/bin/codex", "--example-mode"]],
+        )
+        self.assertTrue(all(item["runtime"]["adapter_id"] == "herdr" for item in passports))
 
     def test_doctor_prefers_live_runtime_capability_discovery_over_static_registry_hints(self) -> None:
         capabilities = {

@@ -56,6 +56,18 @@ runtime record. A dry-run dispatch, a local sub-agent result, a simulated
 review, or a manually appended `dispatch_completed` receipt is not HERDR/live
 runtime proof.
 
+For tasks that claim the owned-session contract, a HERDR
+`dispatch_submitted` proof must also cite `agent-sessions.json`, the accepted
+binding generation, identity token, and ownership record. The same generation
+and token must exist in `agent-session-receipts.jsonl`. A pane id, matching
+Agent label, or working-state event without that chain is not Full Mode
+provenance.
+
+If an outer Agent stays idle while child work runs, its adapter must export a
+structured child-job identity or event bound to the accepted session and
+current dispatch. Visible counters, labels, conversation text, and dispatch
+content cannot produce `dispatch_submitted`.
+
 Deterministic Full/Remote suspension accepts only an identity-matching
 `dispatch_submitted` receipt with concrete adapter proof. A missing or empty
 proof object and `manual_delivery_attested` do not satisfy the suspension entry

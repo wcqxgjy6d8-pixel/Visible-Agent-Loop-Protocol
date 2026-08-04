@@ -2,6 +2,7 @@
 .agents/
 /agents/
 .herdr-loop/
+.valp/
 .playwright-cli/
 node_modules/
 dist/

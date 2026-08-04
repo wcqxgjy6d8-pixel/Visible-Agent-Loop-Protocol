@@ -1,6 +1,6 @@
 {
   "generated_at": "2026-07-15T12:24:47Z",
-  "runtime_id": "herdr-local",
+  "runtime_id": "example-runtime",
   "model_awareness": {
     "required": true,
     "dynamic_discovery_required": true,
@@ -9,31 +9,31 @@
     "unknown_providers": []
   },
   "providers": {
-    "codex": {
-      "provider_name": "CodexPlusPlus",
+    "implementer-agent": {
+      "provider_name": "example-provider-a",
       "model_selection": "runtime_observed",
-      "agent_surface": "codex_cli",
+      "agent_surface": "example-cli-a",
       "model_identity": {
-        "agent_surface": "codex_cli",
-        "provider": "CodexPlusPlus",
+        "agent_surface": "example-cli-a",
+        "provider": "example-provider-a",
         "reasoning_mode": "high",
         "permissions": ["task-local-evidence"],
         "context": {"hard_compression_pct": 65},
         "task_evidence": ["evidence/model-observations-start.md"],
         "declared_model": {
-          "model_id": "gpt-5.6-sol",
-          "provider": "CodexPlusPlus",
+          "model_id": "example-model-a-declared",
+          "provider": "example-provider-a",
           "reasoning_mode": "xhigh",
-          "source": "Codex declaration",
+          "source": "illustrative capability declaration",
           "timestamp": "2026-07-15T12:24:47Z",
           "confidence": "high",
           "freshness": "current"
         },
         "observed_model": {
-          "model_id": "gpt-5.6-luna",
-          "provider": "CodexPlusPlus",
+          "model_id": "example-model-a-observed",
+          "provider": "example-provider-a",
           "reasoning_mode": "high",
-          "source": "HERDR worker pane",
+          "source": "example adapter observation",
           "timestamp": "2026-07-15T12:24:47Z",
           "confidence": "high",
           "freshness": "current"
@@ -45,14 +45,14 @@
           "observed_at": "2026-07-15T12:24:47Z",
           "ttl_seconds": 3600,
           "model": {
-            "model_id": "gpt-5.6-luna",
-            "provider": "CodexPlusPlus",
+            "model_id": "example-model-a-observed",
+            "provider": "example-provider-a",
             "reasoning_mode": "high",
             "confidence": "high"
           },
           "session_identity": {
             "status": "known",
-            "token": "sha256:example-codex-session",
+            "token": "sha256:example-session-a",
             "source": "example adapter generation",
             "generation": "7"
           }
@@ -66,13 +66,13 @@
           "details": "Runtime observation differs from declaration."
         },
         "history_binding": {
-          "agent_surface": "codex_cli",
-          "model_id": "gpt-5.6-luna",
-          "provider": "CodexPlusPlus",
+          "agent_surface": "example-cli-a",
+          "model_id": "example-model-a-observed",
+          "provider": "example-provider-a",
           "reasoning_mode": "high",
           "freshness": "current",
-          "session_token": "sha256:example-codex-session",
-          "fingerprint": "5899faff75d73d747cec5fd4aca33c0790bf36010c7f81ec8e4c4e0d3228c3b5"
+          "session_token": "sha256:example-session-a",
+          "fingerprint": "f93948a6e2137b8514f0dd31f2e61568b2e0a376930dad1f703ea47cdd7c64e2"
         },
         "history_invalidation_reasons": [
           "declared and observed model identities differ"
@@ -88,31 +88,31 @@
       "context": {"hard_compression_pct": 65},
       "task_evidence": ["evidence/model-observations-start.md"]
     },
-    "claude": {
-      "provider_name": "configured-relay",
+    "reviewer-agent": {
+      "provider_name": "example-provider-b",
       "model_selection": "observed_model",
-      "agent_surface": "claude",
+      "agent_surface": "example-cli-b",
       "model_identity": {
-        "agent_surface": "claude",
-        "provider": "configured-relay",
+        "agent_surface": "example-cli-b",
+        "provider": "example-provider-b",
         "reasoning_mode": "unknown",
         "permissions": ["read-only-review"],
         "context": {"hard_compression_pct": 70},
         "task_evidence": ["evidence/model-observations-start.md"],
         "declared_model": {
-          "model_id": "deepseek-v4-pro",
-          "provider": "configured-relay",
+          "model_id": "example-model-b",
+          "provider": "example-provider-b",
           "reasoning_mode": "unknown",
-          "source": "configured relay observation",
+          "source": "illustrative capability declaration",
           "timestamp": "2026-07-15T12:24:47Z",
           "confidence": "high",
           "freshness": "current"
         },
         "observed_model": {
-          "model_id": "deepseek-v4-pro",
-          "provider": "configured-relay",
+          "model_id": "example-model-b",
+          "provider": "example-provider-b",
           "reasoning_mode": "unknown",
-          "source": "HERDR reviewer pane",
+          "source": "example adapter observation",
           "timestamp": "2026-07-15T12:24:47Z",
           "confidence": "high",
           "freshness": "current"
@@ -124,14 +124,14 @@
           "observed_at": "2026-07-15T12:24:47Z",
           "ttl_seconds": 3600,
           "model": {
-            "model_id": "deepseek-v4-pro",
-            "provider": "configured-relay",
+            "model_id": "example-model-b",
+            "provider": "example-provider-b",
             "reasoning_mode": "unknown",
             "confidence": "high"
           },
           "session_identity": {
             "status": "known",
-            "token": "sha256:example-claude-session",
+            "token": "sha256:example-session-b",
             "source": "example adapter generation",
             "generation": "12"
           }
@@ -145,13 +145,13 @@
           "details": "Declared and observed identities match."
         },
         "history_binding": {
-          "agent_surface": "claude",
-          "model_id": "deepseek-v4-pro",
-          "provider": "configured-relay",
+          "agent_surface": "example-cli-b",
+          "model_id": "example-model-b",
+          "provider": "example-provider-b",
           "reasoning_mode": "unknown",
           "freshness": "current",
-          "session_token": "sha256:example-claude-session",
-          "fingerprint": "f2cb52b487516fd5b496eb26eb65c87d8e133300ad9341d4fc23e106b065de89"
+          "session_token": "sha256:example-session-b",
+          "fingerprint": "12e9b7b4cba3f1cb643e8aed4f8d185fe0d549430db3e8eb761c59c1d7171ac2"
         },
         "history_invalidation_reasons": [],
         "history_status": "valid",

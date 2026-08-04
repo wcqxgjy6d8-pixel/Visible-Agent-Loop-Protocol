@@ -1,0 +1,55 @@
+{
+  "schema_version": "valp-agent-capabilities.v1",
+  "updated_at": "2026-07-24T00:00:00Z",
+  "source": "Illustrative optional Qwen Code interoperability example; not a default or an observed local configuration",
+  "agents": {
+    "qwen": {
+      "active": true,
+      "role": [
+        "implementation",
+        "verification"
+      ],
+      "mcp_servers": [],
+      "skills": [],
+      "strengths": [
+        "source inspection",
+        "tool execution",
+        "test execution"
+      ],
+      "must_not_do": [
+        "must not bypass approval gates",
+        "must not treat a configured model as an observed runtime model",
+        "must not expose provider credentials"
+      ],
+      "provider": {
+        "name": "operator-selected-provider",
+        "evidence_kind": "illustrative declaration; replace with current non-secret provider evidence",
+        "credentials_recorded": false
+      },
+      "runtime": {
+        "adapter": "example-runtime-adapter",
+        "addressable_agent": "qwen",
+        "cli": "qwen",
+        "launch_argv": [
+          "qwen"
+        ],
+        "version_command": [
+          "qwen",
+          "--version"
+        ],
+        "model_flag": "--model"
+      },
+      "model_identity": {
+        "agent_surface": "qwen_code_cli",
+        "provider": "operator-selected-provider",
+        "declared_model": {
+          "model_id": "qwen-example-model",
+          "source": "illustrative placeholder; replace with current runtime evidence",
+          "timestamp": "2026-07-24T00:00:00Z",
+          "confidence": "high",
+          "freshness": "current"
+        }
+      }
+    }
+  }
+}

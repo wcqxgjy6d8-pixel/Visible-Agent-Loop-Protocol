@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-leader-session-receipt.v1.json",
+  "title": "VALP Installation Leader Session Receipt",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "receipt_id",
+    "receipt_type",
+    "installation_id",
+    "principal_id",
+    "leader_epoch",
+    "generation",
+    "recorded_at",
+    "receipt_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-leader-session-receipt.v1"},
+    "receipt_id": {"type": "string", "minLength": 1},
+    "receipt_type": {"enum": ["leader_session_provisioned", "leader_session_replaced", "leader_session_activated", "leader_session_start_failed"]},
+    "installation_id": {"type": "string", "minLength": 1},
+    "principal_id": {"type": "string", "minLength": 1},
+    "leader_epoch": {"type": "integer", "minimum": 1},
+    "generation": {"type": "integer", "minimum": 1},
+    "binding_ref": {"const": "leader-session-binding.json"},
+    "binding_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "runtime_session_id": {"type": "string", "minLength": 1},
+    "recorded_at": {"type": "string", "minLength": 1},
+    "receipt_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"receipt_type": {"const": "leader_session_start_failed"}},
+        "required": ["receipt_type"]
+      },
+      "then": {
+        "required": [
+          "operation",
+          "adapter_id",
+          "failure_code",
+          "failure_class",
+          "failure_message",
+          "blocking_event_id"
+        ],
+        "properties": {
+          "operation": {"enum": ["start", "recover-start", "restart", "rotate"]},
+          "adapter_id": {"type": "string", "minLength": 1},
+          "failure_code": {"const": "VALP-E-LEADER-UNREACHABLE"},
+          "failure_class": {"type": "string", "minLength": 1},
+          "failure_message": {"type": "string", "minLength": 1},
+          "blocking_event_id": {"type": "string", "minLength": 1}
+        },
+        "not": {
+          "anyOf": [
+            {"required": ["binding_ref"]},
+            {"required": ["binding_digest"]},
+            {"required": ["runtime_session_id"]}
+          ]
+        }
+      },
+      "else": {
+        "required": ["binding_ref", "binding_digest", "runtime_session_id"]
+      }
+    }
+  ],
+  "additionalProperties": true
+}

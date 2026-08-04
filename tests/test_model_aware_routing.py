@@ -19,7 +19,6 @@ from valp_cli.workflow import (
     read_json,
     route_task,
     score_candidates,
-    visible_model_metadata_for_agent,
 )
 
 
@@ -70,14 +69,21 @@ class ModelAwareRoutingTests(unittest.TestCase):
                 return {
                     "ok": True,
                     "exit_code": 0,
-                    "stdout": "herdr agent prompt <target> <text>\nherdr agent wait <target>",
+                    "stdout": "herdr agent start <name> -- <argv...>\nherdr agent prompt <target> <text>\nherdr agent wait <target>",
+                    "stderr": "",
+                }
+            if command[1:] == ["workspace", "--help"]:
+                return {
+                    "ok": True,
+                    "exit_code": 0,
+                    "stdout": "herdr workspace create [--cwd PATH] [--no-focus]",
                     "stderr": "",
                 }
             if command[1:] == ["pane", "--help"]:
                 return {
                     "ok": True,
                     "exit_code": 0,
-                    "stdout": "herdr pane send-text <pane> <text>\nherdr pane send-keys <pane> <key>",
+                    "stdout": "herdr pane move <pane> --new-tab\nherdr pane send-text <pane> <text>\nherdr pane send-keys <pane> <key>",
                     "stderr": "",
                 }
             if command[1:] == ["status", "--json"]:
@@ -127,7 +133,11 @@ class ModelAwareRoutingTests(unittest.TestCase):
 
         with patch("valp_cli.workflow.shutil.which", side_effect=lambda name: f"/test/{name}"):
             with patch("valp_cli.workflow.run_command", side_effect=fake_run):
-                preflight = collect_herdr_preflight(["codex"])
+                preflight = collect_herdr_preflight(
+                    ["codex"],
+                    launch_argv_by_agent={"codex": ["codex"]},
+                    version_command_by_agent={"codex": ["codex", "version"]},
+                )
 
         probe = preflight["agents"]["codex"]["model_probe"]
         self.assertEqual(preflight["status"], "pass")
@@ -135,7 +145,7 @@ class ModelAwareRoutingTests(unittest.TestCase):
         self.assertEqual(probe["model"]["model_id"], "model-live")
         self.assertEqual(probe["session_identity"]["status"], "known")
 
-    def test_herdr_preflight_observes_codex_model_from_visible_footer(self) -> None:
+    def test_herdr_preflight_does_not_treat_visible_text_as_model_evidence(self) -> None:
         def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
             if command[1:] == ["status", "--json"]:
                 payload = {"client": {"version": "1"}, "server": {"version": "1"}}
@@ -175,12 +185,7 @@ class ModelAwareRoutingTests(unittest.TestCase):
                     }
                 }
             elif command[1:3] == ["pane", "read"]:
-                return {
-                    "ok": True,
-                    "exit_code": 0,
-                    "stdout": "private conversation text\n\n› Prompt\n\n  gpt-5.6-sol xhigh · ~\n",
-                    "stderr": "",
-                }
+                raise AssertionError("unstructured pane text must not be read for model evidence")
             else:
                 return {
                     "ok": True,
@@ -200,49 +205,9 @@ class ModelAwareRoutingTests(unittest.TestCase):
                 preflight = collect_herdr_preflight(["codex"])
 
         probe = preflight["agents"]["codex"]["model_probe"]
-        serialized = json.dumps(probe)
-        self.assertEqual(probe["status"], "observed")
-        self.assertEqual(probe["model"]["model_id"], "gpt-5.6-sol")
-        self.assertEqual(probe["model"]["reasoning_mode"], "xhigh")
+        self.assertEqual(probe["status"], "unsupported")
+        self.assertEqual(probe["model"]["model_id"], "unknown")
         self.assertEqual(probe["session_identity"]["status"], "known")
-        self.assertNotIn("terminal-private-9", serialized)
-        self.assertNotIn("4321", serialized)
-        self.assertNotIn("private conversation text", serialized)
-
-    def test_visible_model_metadata_parses_claude_footer(self) -> None:
-        metadata = visible_model_metadata_for_agent(
-            "claude",
-            "conversation mentions deepseek-v4-pro\n"
-            "[PONYTAIL] deepseek-v4-pro ░░░░ 4%  in:44,77…\n"
-            "bypass permissions on\n",
-        )
-
-        self.assertEqual(
-            metadata,
-            {"model_id": "deepseek-v4-pro", "provider": "PONYTAIL"},
-        )
-
-    def test_visible_model_metadata_parses_hermes_footer(self) -> None:
-        metadata = visible_model_metadata_for_agent(
-            "hermes",
-            "conversation text\n"
-            " ⚕ deepseek-v4-pro · 7% · 31m\n"
-            "❯\n",
-        )
-
-        self.assertEqual(metadata, {"model_id": "deepseek-v4-pro"})
-
-    def test_visible_model_metadata_parses_agy_footer(self) -> None:
-        metadata = visible_model_metadata_for_agent(
-            "agy",
-            "private account line must be ignored\n"
-            "? for shortcuts                             Gemini 3.5 Flash (High)\n",
-        )
-
-        self.assertEqual(
-            metadata,
-            {"model_id": "Gemini 3.5 Flash", "reasoning_mode": "high"},
-        )
 
     def test_herdr_preflight_session_token_changes_with_foreground_process(self) -> None:
         foreground_pid = 4321
@@ -289,7 +254,7 @@ class ModelAwareRoutingTests(unittest.TestCase):
                 return {
                     "ok": True,
                     "exit_code": 0,
-                    "stdout": "› Prompt\n\n  gpt-5.6-sol xhigh · ~\n",
+                    "stdout": "› Prompt\n\n  example-model-a xhigh · ~\n",
                     "stderr": "",
                 }
             else:
@@ -696,9 +661,32 @@ class ModelAwareRoutingTests(unittest.TestCase):
             [("codex", "implementer")],
             evaluated_at="2026-07-15T13:00:01Z",
         )
+        owned_rebinding_errors = dynamic_model_dispatch_errors(
+            routing,
+            agents,
+            {},
+            preflight("sha256:session-b"),
+            [("codex", "implementer")],
+            evaluated_at="2026-07-15T12:02:00Z",
+            allow_session_rebinding=True,
+        )
+        expired_owned_rebinding_errors = dynamic_model_dispatch_errors(
+            routing,
+            agents,
+            {},
+            preflight("sha256:session-b"),
+            [("codex", "implementer")],
+            evaluated_at="2026-07-15T13:00:01Z",
+            allow_session_rebinding=True,
+        )
 
         self.assertTrue(any("binding changed" in error for error in session_errors), session_errors)
         self.assertTrue(any("not eligible" in error for error in ttl_errors), ttl_errors)
+        self.assertEqual(owned_rebinding_errors, [])
+        self.assertTrue(
+            any("not eligible" in error for error in expired_owned_rebinding_errors),
+            expired_owned_rebinding_errors,
+        )
 
     def test_active_model_provider_or_reasoning_change_invalidates_history(self) -> None:
         info = {
@@ -1028,10 +1016,10 @@ class ModelAwareRoutingTests(unittest.TestCase):
             "role": ["implementation"],
             "model_identity": {
                 "agent_surface": "codex_cli",
-                "provider": "CodexPlusPlus",
+                "provider": "example-provider-a",
                 "permissions": ["task-local-evidence"],
                 "declared_model": {
-                    "model_id": "gpt-5.6-sol",
+                    "model_id": "example-model-a",
                     "reasoning_mode": "xhigh",
                     "source": "Codex declaration",
                     "timestamp": "2026-07-15T12:24:47Z",
@@ -1039,7 +1027,7 @@ class ModelAwareRoutingTests(unittest.TestCase):
                     "freshness": "current",
                 },
                 "observed_model": {
-                    "model_id": "gpt-5.6-luna",
+                    "model_id": "example-model-b",
                     "reasoning_mode": "high",
                     "source": "HERDR pane",
                     "timestamp": "2026-07-15T12:24:47Z",
@@ -1056,8 +1044,8 @@ class ModelAwareRoutingTests(unittest.TestCase):
         )
         provider = matrix["providers"]["codex"]
         identity = provider["model_identity"]
-        self.assertEqual(identity["declared_model"]["model_id"], "gpt-5.6-sol")
-        self.assertEqual(identity["observed_model"]["model_id"], "gpt-5.6-luna")
+        self.assertEqual(identity["declared_model"]["model_id"], "example-model-a")
+        self.assertEqual(identity["observed_model"]["model_id"], "example-model-b")
         self.assertEqual(identity["mismatch"]["status"], "mismatch")
         self.assertEqual(identity["history_status"], "invalidated")
         self.assertEqual(provider["model_selection"], "runtime_observed")

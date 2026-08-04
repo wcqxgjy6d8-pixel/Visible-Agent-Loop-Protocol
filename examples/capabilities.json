@@ -36,7 +36,12 @@
       "installation": {
         "status": "installed",
         "version": "1.2.3",
-        "source": "build-agent --version"
+        "source": "declared version probe"
+      },
+      "runtime": {
+        "adapter": "example-runtime-adapter",
+        "launch_argv": ["build-agent"],
+        "version_command": ["build-agent", "version"]
       },
       "task_verified_history": [
         {

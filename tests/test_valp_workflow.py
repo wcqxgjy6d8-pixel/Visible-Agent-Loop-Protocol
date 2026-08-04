@@ -29,6 +29,7 @@ from valp_cli.submission import (
     validate_submission_dependencies,
 )
 from valp_cli.workflow import (
+    await_owned_session_model_preflight,
     classify_profile,
     classify_approval_risks,
     decompose_execution_tasks,
@@ -40,6 +41,7 @@ from valp_cli.workflow import (
     publish_task,
     read_json,
     route_task,
+    runtime_dispatch_retry_pending,
     scan_workspace,
     score_candidates,
     resume_suspended_task,
@@ -50,7 +52,326 @@ from valp_cli.workflow import (
 )
 
 
+def herdr_invocation_proof(*, pane_id: str = "pane-1") -> dict[str, object]:
+    return {
+        "runtime": "HERDR",
+        "transport_mode": "agent_prompt",
+        "proof_class": "agent_invocation",
+        "pane_id": pane_id,
+        "submission_proof": {
+            "kind": "identity_bound_state_change",
+            "baseline_state_change_seq": 1,
+            "state_change_seq": 2,
+            "identity": {
+                "terminal_id": "terminal-1",
+                "name": "codex",
+                "agent": "codex",
+                "pane_id": pane_id,
+            },
+        },
+    }
+
+
 class ValpWorkflowTests(unittest.TestCase):
+    def test_sequential_dispatch_preflight_preserves_prior_task_owned_agents(self) -> None:
+        task_id = "TASK-SEQUENTIAL-PREFLIGHT"
+
+        def agent_record(agent: str, pane_id: str, *, owner: str = task_id) -> dict:
+            return {
+                "status": "pass",
+                "pane_id": pane_id,
+                "model_probe": {
+                    "status": "observed",
+                    "model": {
+                        "model_id": f"{agent}-model",
+                        "provider": f"{agent}-provider",
+                        "reasoning_mode": "unknown",
+                        "confidence": "high",
+                    },
+                    "session_identity": {
+                        "status": "known",
+                        "token": f"sha256:{agent}",
+                    },
+                },
+                "session_binding": {
+                    "status": "bound",
+                    "ownership": {"task_id": owner},
+                },
+            }
+
+        previous = {
+            "generated_at": "2026-07-26T07:00:00Z",
+            "status": "pass",
+            "checks": {},
+            "agents": {
+                "hermes": agent_record("hermes", "pane-hermes"),
+                "codex": agent_record("codex", "pane-wrong", owner="OTHER-TASK"),
+            },
+        }
+        current = {
+            "generated_at": "2026-07-26T07:10:00Z",
+            "status": "pass",
+            "checks": {},
+            "agents": {
+                "codex": agent_record("codex", "pane-codex"),
+            },
+        }
+
+        merged = workflow_module.merge_task_owned_runtime_preflight(
+            previous,
+            current,
+            ["hermes", "codex", "claude"],
+            task_id,
+        )
+
+        self.assertEqual(merged["agents"]["hermes"]["pane_id"], "pane-hermes")
+        self.assertEqual(merged["agents"]["codex"]["pane_id"], "pane-codex")
+        self.assertNotIn("claude", merged["agents"])
+        self.assertEqual(merged["status"], "warn")
+        self.assertEqual(
+            merged["checks"]["owned_session_model_readiness"],
+            {"status": "warn", "pending_agents": ["claude"]},
+        )
+
+    def test_owned_session_model_preflight_waits_for_observed_identity(self) -> None:
+        initial = {
+            "checks": {},
+            "agents": {
+                "codex": {
+                    "agent_status": "unknown",
+                    "model_probe": {
+                        "status": "unsupported",
+                        "session_identity": {"status": "known"},
+                    }
+                }
+            },
+        }
+        observed = {
+            "checks": {},
+            "agents": {
+                "codex": {
+                    "agent_status": "idle",
+                    "model_probe": {
+                        "status": "observed",
+                        "session_identity": {"status": "known"},
+                    }
+                }
+            },
+        }
+
+        with patch("valp_cli.workflow.time.sleep") as sleep:
+            with patch(
+                "valp_cli.workflow.collect_runtime_preflight",
+                return_value=observed,
+            ) as collect:
+                result = await_owned_session_model_preflight(
+                    ["codex"],
+                    "herdr",
+                    {"codex": {"runtime_identity": {"pane_id": "pane-owned"}}},
+                    initial,
+                    max_attempts=3,
+                )
+
+        sleep.assert_called_once_with(0.25)
+        collect.assert_called_once()
+        self.assertEqual(
+            result["checks"]["owned_session_model_readiness"],
+            {"status": "pass", "attempts": 2, "pending_agents": []},
+        )
+
+    def test_owned_session_readiness_does_not_stop_before_agent_idle(self) -> None:
+        observed_but_starting = {
+            "checks": {},
+            "agents": {
+                "claude": {
+                    "agent_status": "done",
+                    "model_probe": {
+                        "status": "observed",
+                        "session_identity": {"status": "known"},
+                    },
+                }
+            },
+        }
+        ready = {
+            "checks": {},
+            "agents": {
+                "claude": {
+                    "agent_status": "idle",
+                    "model_probe": {
+                        "status": "observed",
+                        "session_identity": {"status": "known"},
+                    },
+                }
+            },
+        }
+
+        with patch("valp_cli.workflow.time.sleep") as sleep:
+            with patch(
+                "valp_cli.workflow.collect_runtime_preflight",
+                return_value=ready,
+            ) as collect:
+                result = await_owned_session_model_preflight(
+                    ["claude"],
+                    "herdr",
+                    {"claude": {"runtime_identity": {"pane_id": "pane-owned"}}},
+                    observed_but_starting,
+                    max_attempts=3,
+                )
+
+        sleep.assert_called_once_with(0.25)
+        collect.assert_called_once()
+        self.assertEqual(result["agents"]["claude"]["agent_status"], "idle")
+        self.assertEqual(
+            result["checks"]["owned_session_model_readiness"],
+            {"status": "pass", "attempts": 2, "pending_agents": []},
+        )
+
+    def test_runtime_retry_accepts_unknown_owned_session_model_readiness(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "iteration-budget.json").write_text(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "stop_reason": "dynamic model identity changed after routing",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (directory / "runtime-preflight.json").write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "codex": {
+                                "session_binding": {"status": "bound"},
+                                "model_probe": {"status": "unsupported"},
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (directory / "model-identity-dispatch-block.json").write_text(
+                json.dumps({"status": "blocked", "errors": ["model is not eligible"]}),
+                encoding="utf-8",
+            )
+
+            self.assertTrue(
+                runtime_dispatch_retry_pending(
+                    directory,
+                    {"status": "dispatching"},
+                    "herdr",
+                )
+            )
+
+    def test_runtime_retry_accepts_legacy_pre_delivery_failure_states(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            for reason in (
+                "runtime session provisioning failure",
+                "runtime preflight failure",
+            ):
+                with self.subTest(reason=reason):
+                    (directory / "iteration-budget.json").write_text(
+                        json.dumps({"status": "blocked", "stop_reason": reason}),
+                        encoding="utf-8",
+                    )
+                    self.assertTrue(
+                        runtime_dispatch_retry_pending(
+                            directory,
+                            {"status": "dispatching"},
+                            "herdr",
+                        )
+                    )
+
+    def test_herdr_route_defers_model_gate_until_owned_session_preflight(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "review", "risk_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["coordinates and reviews"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
+        preflight = {
+            "runtime": "HERDR",
+            "adapter_class": "pane_controller",
+            "status": "warn",
+            "checks": {
+                "submission_transport": {"status": "pass", "mode": "pane_send_text_enter"},
+                "session_provisioning": {"status": "pass", "mode": "agent_start"},
+            },
+            "agents": {
+                "codex": {
+                    "status": "warn",
+                    "pane_id": None,
+                    "model_probe": {
+                        "schema_version": "valp-model-probe.v1",
+                        "status": "unavailable",
+                        "model": {
+                            "model_id": "unknown",
+                            "provider": "unknown",
+                            "reasoning_mode": "unknown",
+                            "confidence": "unknown",
+                        },
+                        "session_identity": {
+                            "status": "unknown",
+                            "token": "unknown",
+                            "source": "No current pane",
+                            "generation": "unknown",
+                        },
+                    },
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_id = "TASK-HERDR-NO-USER-PANE"
+            publish_task(
+                root,
+                task_id,
+                "Coordinate and review a bounded runtime check.",
+                profile="generic-analysis",
+                runtime="herdr",
+            )
+            declaration = {
+                "schema_version": "valp-assignment-declaration.v1",
+                "declaration_id": "test-no-user-pane",
+                "task_id": task_id,
+                "declared_at": "2026-07-25T10:00:00Z",
+                "leader": {
+                    "agent_id": "codex",
+                    "selected_by": "user",
+                    "selection_ref": "test-user-selection:no-user-pane",
+                },
+                "assignments": {"coordinator": "codex", "reviewer": "codex"},
+                "reasons": {
+                    "coordinator": "User-selected test Leader.",
+                    "reviewer": "Declared bounded reviewer.",
+                },
+            }
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
+                    with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                        routing = route_task(
+                            root,
+                            task_id,
+                            runtime="herdr",
+                            assignment_declaration=declaration,
+                        )
+
+            self.assertEqual(routing["assignment_validation"]["status"], "pass")
+            self.assertEqual(routing["model_role_gate"]["status"], "pass")
+            self.assertIn("task-owned session", routing["model_role_gate"]["reason"])
+            self.assertTrue(
+                routing["provider_matrix"]["model_awareness"]["dynamic_discovery_required"]
+            )
+
     def model_aware_test_preflight(self, preflight: dict) -> dict:
         if preflight.get("adapter_class") == "manual":
             return preflight
@@ -85,6 +406,49 @@ class ValpWorkflowTests(unittest.TestCase):
 
     def routed_test_preflight(self, task_dir: Path) -> dict:
         return read_json(task_dir / "routing.json")["provider_matrix"]["runtime_preflight"]
+
+    def owned_session_projection(
+        self,
+        task_id: str,
+        pane_id: str = "pane-1",
+        *,
+        lifecycle: str = "reused",
+    ) -> dict:
+        return {
+            "schema_version": "valp-agent-sessions.v1",
+            "task_id": task_id,
+            "adapter": "herdr",
+            "status": "ready",
+            "bindings": {
+                "codex": {
+                    "agent": "codex",
+                    "session_name": "valp-test-codex",
+                    "generation": 1,
+                    "ownership": {
+                        "scope": "task",
+                        "task_id": task_id,
+                        "project_identity": "sha256:test-project",
+                    },
+                    "context": {"cwd": "/test/project"},
+                    "launch": {"argv": ["codex"]},
+                    "runtime_scope": {
+                        "kind": "workspace",
+                        "ownership": "task",
+                        "workspace_id": "workspace-owned",
+                        "label": "valp-test-codex-g1",
+                    },
+                    "runtime_identity": {
+                        "pane_id": pane_id,
+                        "terminal_id": "terminal-owned",
+                        "workspace_id": "workspace-owned",
+                        "tab_id": "tab-owned",
+                        "token": "sha256:test-owned-session",
+                    },
+                    "lifecycle": lifecycle,
+                    "dispatch_eligible": True,
+                }
+            },
+        }
 
     def assignment_declaration(
         self,
@@ -151,8 +515,20 @@ class ValpWorkflowTests(unittest.TestCase):
         )
         collect_preflight = workflow_module.collect_runtime_preflight
 
-        def collect_model_aware_preflight(agent_names=None, runtime=None):
-            return self.model_aware_test_preflight(collect_preflight(agent_names, runtime=runtime))
+        def collect_model_aware_preflight(
+            agent_names=None,
+            runtime=None,
+            launch_argv_by_agent=None,
+            version_command_by_agent=None,
+        ):
+            return self.model_aware_test_preflight(
+                collect_preflight(
+                    agent_names,
+                    runtime=runtime,
+                    launch_argv_by_agent=launch_argv_by_agent,
+                    version_command_by_agent=version_command_by_agent,
+                )
+            )
 
         with patch("valp_cli.workflow.collect_runtime_preflight", side_effect=collect_model_aware_preflight):
             route_task(
@@ -167,6 +543,122 @@ class ValpWorkflowTests(unittest.TestCase):
                 ),
             )
         return directory
+
+    def test_qwen_cli_preflight_uses_version_probe(self) -> None:
+        result = {
+            "ok": True,
+            "exit_code": 0,
+            "stdout": "0.20.1\n",
+            "stderr": "",
+        }
+        with patch("valp_cli.workflow.shutil.which", return_value="/opt/example/bin/qwen"):
+            with patch("valp_cli.workflow.run_command", return_value=result) as run:
+                preflight = workflow_module.cli_preflight_for_agent(
+                    "qwen",
+                    launch_argv=["qwen"],
+                    version_command=["qwen", "version"],
+                )
+
+        run.assert_called_once_with(["qwen", "version"], timeout=5.0)
+        self.assertEqual(preflight["status"], "pass")
+        self.assertEqual(preflight["version_output"], "0.20.1")
+
+    def test_herdr_preflight_addresses_generic_agent_and_binds_structured_model(self) -> None:
+        pane = {
+            "pane_id": "example-workspace:example-qwen",
+            "agent": "qwen",
+            "agent_status": "idle",
+            "model_id": "qwen-example-model",
+        }
+        pane_list_stdout_limits: list[object] = []
+
+        def command_result(command: list[str], **_kwargs: object) -> dict[str, object]:
+            if command[1:] == ["agent", "--help"]:
+                return {
+                    "ok": True,
+                    "exit_code": 0,
+                    "stdout": "herdr agent start <name> -- <argv...>\nherdr agent prompt\nherdr agent wait\n",
+                    "stderr": "",
+                }
+            if command[1:] == ["workspace", "--help"]:
+                return {
+                    "ok": True,
+                    "exit_code": 0,
+                    "stdout": "herdr workspace create [--cwd PATH] [--no-focus]\n",
+                    "stderr": "",
+                }
+            if command[1:] == ["pane", "--help"]:
+                return {
+                    "ok": True,
+                    "exit_code": 0,
+                    "stdout": "herdr pane move --new-tab\nherdr pane send-text\nherdr pane send-keys\n",
+                    "stderr": "",
+                }
+            if command[1:] == ["status", "--json"]:
+                payload = {
+                    "client": {"version": "0.7.4"},
+                    "server": {"version": "0.7.4", "restart_needed": False},
+                }
+            elif command[1:] == ["pane", "list"]:
+                pane_list_stdout_limits.append(_kwargs.get("stdout_limit"))
+                payload = {"result": {"panes": [pane]}}
+            elif command[1:4] == ["pane", "process-info", "--pane"]:
+                payload = {
+                    "result": {
+                        "process_info": {"foreground_process_group_id": 4242}
+                    }
+                }
+            elif command[1:4] == ["pane", "layout", "--pane"]:
+                payload = {
+                    "result": {
+                        "layout": {
+                            "panes": [
+                                {
+                                    "pane_id": "example-workspace:example-qwen",
+                                    "rect": {"width": 80, "height": 30},
+                                }
+                            ]
+                        }
+                    }
+                }
+            elif command == ["qwen", "version"]:
+                return {
+                    "ok": True,
+                    "exit_code": 0,
+                    "stdout": "0.20.1\n",
+                    "stderr": "",
+                }
+            else:
+                self.fail(f"unexpected command: {command}")
+            return {
+                "ok": True,
+                "exit_code": 0,
+                "stdout": json.dumps(payload),
+                "stderr": "",
+            }
+
+        with patch(
+            "valp_cli.workflow.shutil.which",
+            side_effect=lambda name: f"/opt/example/bin/{name}",
+        ):
+            with patch("valp_cli.workflow.run_command", side_effect=command_result):
+                preflight = workflow_module.collect_herdr_preflight(
+                    ["qwen"],
+                    launch_argv_by_agent={"qwen": ["qwen"]},
+                    version_command_by_agent={"qwen": ["qwen", "version"]},
+                )
+
+        qwen = preflight["agents"]["qwen"]
+        self.assertEqual(preflight["status"], "pass")
+        self.assertEqual(qwen["pane_id"], "example-workspace:example-qwen")
+        self.assertEqual(qwen["cli"]["version_output"], "0.20.1")
+        self.assertEqual(qwen["model_probe"]["model"]["model_id"], "qwen-example-model")
+        self.assertEqual(qwen["model_probe"]["model"]["provider"], "unknown")
+        self.assertEqual(qwen["model_probe"]["session_identity"]["status"], "known")
+        self.assertEqual(
+            pane_list_stdout_limits,
+            [workflow_module.HERDR_PANE_LIST_STDOUT_LIMIT],
+        )
 
     def test_read_only_agent_is_never_scored_as_implementer(self) -> None:
         self.assertEqual(
@@ -4606,22 +5098,24 @@ class ValpWorkflowTests(unittest.TestCase):
                             "Fix a bug and run tests",
                             runtime="herdr",
                         )
-                        with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
-                            with patch(
-                                "valp_cli.workflow.submit_herdr_dispatch",
-                                return_value={
-                                    "runtime": "HERDR",
-                                    "transport_mode": "pane_send_text_enter",
-                                    "pane_id": "pane-1",
-                                },
-                            ):
-                                commands = dispatch_task(
-                                    root,
-                                    "TASK-HERDR-SUBMISSION-ONLY",
-                                    role="coordinator",
-                                    wait_seconds=0,
-                                    submit=True,
-                                )
+                        with patch(
+                            "valp_cli.workflow.ensure_herdr_agent_sessions",
+                            return_value=self.owned_session_projection(
+                                "TASK-HERDR-SUBMISSION-ONLY"
+                            ),
+                        ):
+                            with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
+                                with patch(
+                                    "valp_cli.workflow.submit_herdr_dispatch",
+                                    return_value=herdr_invocation_proof(),
+                                ):
+                                    commands = dispatch_task(
+                                        root,
+                                        "TASK-HERDR-SUBMISSION-ONLY",
+                                        role="coordinator",
+                                        wait_seconds=0,
+                                        submit=True,
+                                    )
 
             self.assertEqual(len(commands), 1)
             self.assertIn("mode=pane_send_text_enter", commands[0])
@@ -4639,6 +5133,155 @@ class ValpWorkflowTests(unittest.TestCase):
                 policy["required_work_items"][0]["expected_refs"],
                 ["agents/codex/self-review.md"],
             )
+
+    def test_dispatch_uses_digest_bound_task_runtime_launch_capabilities(self) -> None:
+        task_id = "TASK-HERDR-TASK-RUNTIME-CAPABILITIES"
+        global_capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-27T00:00:00Z",
+            "source": "global test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "code_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["coordinates", "edits files", "runs tests", "reviews"],
+                    "must_not_do": ["must not bypass approval gates"],
+                    "runtime": {
+                        "launch_argv": ["/test/global-launcher"],
+                        "version_command": ["/test/global-launcher", "--version"],
+                    },
+                }
+            },
+        }
+        task_capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "source": "task-owned test fixture",
+            "agents": {
+                "codex": {
+                    "runtime": {
+                        "launch_argv": ["/test/task-launcher", "--config", "/test/task.json"],
+                        "version_command": ["/test/task-cli", "--version"],
+                    }
+                }
+            },
+        }
+        preflight = {
+            "runtime": "HERDR",
+            "adapter_class": "pane_controller",
+            "status": "pass",
+            "checks": {
+                "submission_transport": {
+                    "status": "pass",
+                    "mode": "pane_send_text_enter",
+                }
+            },
+            "agents": {"codex": {"status": "pass", "pane_id": "pane-owned"}},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=global_capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
+                        task_dir = self.publish_routed_task(
+                            root,
+                            task_id,
+                            "Fix a runtime bug and run tests",
+                            runtime="herdr",
+                        )
+
+            capability_path = task_dir / "runtime/task-capabilities.json"
+            capability_path.parent.mkdir(parents=True, exist_ok=True)
+            capability_bytes = (json.dumps(task_capabilities, indent=2) + "\n").encode("utf-8")
+            capability_path.write_bytes(capability_bytes)
+            marker = {
+                "status": "recorded",
+                "ref": "runtime/task-capabilities.json",
+                "digest": "sha256:" + hashlib.sha256(capability_bytes).hexdigest(),
+            }
+            for name in ("routing.json", "state.json"):
+                path = task_dir / name
+                record = read_json(path)
+                record["task_runtime_capabilities"] = marker
+                path.write_text(json.dumps(record), encoding="utf-8")
+
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=global_capabilities):
+                with patch("valp_cli.workflow.ensure_herdr_agent_sessions") as ensure_sessions:
+                    ensure_sessions.return_value = self.owned_session_projection(
+                        task_id,
+                        "pane-owned",
+                    )
+                    with patch(
+                        "valp_cli.workflow.collect_runtime_preflight",
+                        return_value=preflight,
+                    ) as collect_preflight:
+                        with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
+                            with patch(
+                                "valp_cli.workflow.submit_herdr_dispatch",
+                                return_value=herdr_invocation_proof(pane_id="pane-owned"),
+                            ):
+                                dispatch_task(
+                                    root,
+                                    task_id,
+                                    role="coordinator",
+                                    wait_seconds=0,
+                                    submit=True,
+                                )
+
+            resolved_capabilities = ensure_sessions.call_args.args[4]
+            self.assertEqual(
+                resolved_capabilities["agents"]["codex"]["runtime"]["launch_argv"],
+                task_capabilities["agents"]["codex"]["runtime"]["launch_argv"],
+            )
+            self.assertEqual(
+                collect_preflight.call_args.kwargs["launch_argv_by_agent"]["codex"],
+                task_capabilities["agents"]["codex"]["runtime"]["launch_argv"],
+            )
+            self.assertEqual(
+                collect_preflight.call_args.kwargs["version_command_by_agent"]["codex"],
+                task_capabilities["agents"]["codex"]["runtime"]["version_command"],
+            )
+
+    def test_task_runtime_capability_marker_and_digest_fail_closed(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "agents": {"codex": {"runtime": {"launch_argv": ["/test/global"]}}},
+        }
+        task_capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "agents": {"codex": {"runtime": {"launch_argv": ["/test/task"]}}},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / ".herdr-loop/tasks/TASK-RUNTIME-MARKER"
+            capability_path = directory / "runtime/task-capabilities.json"
+            capability_path.parent.mkdir(parents=True)
+            raw = (json.dumps(task_capabilities) + "\n").encode("utf-8")
+            capability_path.write_bytes(raw)
+            marker = {
+                "status": "recorded",
+                "ref": "runtime/task-capabilities.json",
+                "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+            }
+
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with self.assertRaisesRegex(SystemExit, "marker is missing or inconsistent"):
+                    workflow_module.load_dispatch_capabilities(
+                        root,
+                        directory,
+                        {"task_runtime_capabilities": marker},
+                        {},
+                    )
+
+                bad_marker = {**marker, "digest": "sha256:" + ("0" * 64)}
+                with self.assertRaisesRegex(SystemExit, "digest mismatch"):
+                    workflow_module.load_dispatch_capabilities(
+                        root,
+                        directory,
+                        {"task_runtime_capabilities": bad_marker},
+                        {"task_runtime_capabilities": bad_marker},
+                    )
 
     def test_dispatch_retries_transient_runtime_failure_after_fresh_preflight(self) -> None:
         capabilities = {
@@ -4687,22 +5330,22 @@ class ValpWorkflowTests(unittest.TestCase):
             budget_path.write_text(json.dumps(budget), encoding="utf-8")
 
             with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight) as collect_preflight:
-                with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
-                    with patch(
-                        "valp_cli.workflow.submit_herdr_dispatch",
-                        return_value={
-                            "runtime": "HERDR",
-                            "transport_mode": "pane_send_text_enter",
-                            "pane_id": "pane-1",
-                        },
-                    ):
-                        commands = dispatch_task(
-                            root,
-                            "TASK-HERDR-TRANSIENT-RETRY",
-                            role="coordinator",
-                            wait_seconds=0,
-                            submit=True,
-                        )
+                with patch(
+                    "valp_cli.workflow.ensure_herdr_agent_sessions",
+                    return_value=self.owned_session_projection("TASK-HERDR-TRANSIENT-RETRY"),
+                ):
+                    with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
+                        with patch(
+                            "valp_cli.workflow.submit_herdr_dispatch",
+                            return_value=herdr_invocation_proof(),
+                        ):
+                            commands = dispatch_task(
+                                root,
+                                "TASK-HERDR-TRANSIENT-RETRY",
+                                role="coordinator",
+                                wait_seconds=0,
+                                submit=True,
+                            )
 
             collect_preflight.assert_called_once()
             self.assertEqual(len(commands), 1)
@@ -4763,19 +5406,23 @@ class ValpWorkflowTests(unittest.TestCase):
             budget_path.write_text(json.dumps(budget), encoding="utf-8")
 
             with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
-                with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
-                    with patch(
-                        "valp_cli.workflow.submit_herdr_dispatch",
-                        side_effect=HerdrSubmissionError("working proof timed out"),
-                    ):
-                        with self.assertRaisesRegex(SystemExit, "working proof timed out"):
-                            dispatch_task(
-                                root,
-                                "TASK-HERDR-RETRY-EXHAUSTED",
-                                role="coordinator",
-                                wait_seconds=0,
-                                submit=True,
-                            )
+                with patch(
+                    "valp_cli.workflow.ensure_herdr_agent_sessions",
+                    return_value=self.owned_session_projection("TASK-HERDR-RETRY-EXHAUSTED"),
+                ):
+                    with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
+                        with patch(
+                            "valp_cli.workflow.submit_herdr_dispatch",
+                            side_effect=HerdrSubmissionError("working proof timed out"),
+                        ):
+                            with self.assertRaisesRegex(SystemExit, "working proof timed out"):
+                                dispatch_task(
+                                    root,
+                                    "TASK-HERDR-RETRY-EXHAUSTED",
+                                    role="coordinator",
+                                    wait_seconds=0,
+                                    submit=True,
+                                )
 
             exhausted = read_json(budget_path)
             self.assertEqual(exhausted["status"], "blocked")
@@ -4793,6 +5440,327 @@ class ValpWorkflowTests(unittest.TestCase):
                         )
             collect_preflight.assert_not_called()
             submit_dispatch.assert_not_called()
+
+    def test_dispatch_reconciles_late_model_identity_on_same_owned_work_item(self) -> None:
+        task_id = "TASK-HERDR-LATE-MODEL-IDENTITY"
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-27T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "code_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["coordinates", "edits files", "runs tests", "reviews"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    task_dir = self.publish_routed_task(
+                        root,
+                        task_id,
+                        "Fix a bug and run tests",
+                        runtime="herdr",
+                    )
+
+            projection = self.owned_session_projection(
+                task_id,
+                pane_id="pane-owned",
+                lifecycle="reused",
+            )
+            binding = projection["bindings"]["codex"]
+            binding["focused_at_provisioning"] = False
+            binding["runtime_identity"]["token"] = "sha256:" + ("a" * 64)
+            (task_dir / "agent-sessions.json").write_text(
+                json.dumps(projection),
+                encoding="utf-8",
+            )
+            (task_dir / "agent-session-receipts.jsonl").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-agent-session-receipt.v1",
+                        "adapter": "herdr",
+                        "task_id": task_id,
+                        "event_sequence": 1,
+                        "ts": "2026-07-27T00:00:00Z",
+                        "agent": "codex",
+                        "event": "agent_session_provisioned",
+                        "binding_ref": "agent-sessions.json",
+                        "generation": 1,
+                        "identity_token": binding["runtime_identity"]["token"],
+                        "ownership": binding["ownership"],
+                        "context": binding["context"],
+                        "launch": binding["launch"],
+                        "focused_at_provisioning": False,
+                        "runtime_scope": binding["runtime_scope"],
+                        "runtime_identity": binding["runtime_identity"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            dependencies = read_json(task_dir / "submission-dependencies.json")
+            coordinator_item = next(
+                item
+                for item in dependencies["work_items"]
+                if item["role"] == "coordinator"
+            )
+            for ref in coordinator_item["expected_refs"]:
+                evidence_path = task_dir / ref
+                evidence_path.parent.mkdir(parents=True, exist_ok=True)
+                evidence_path.write_text("coordinator complete\n", encoding="utf-8")
+            with (task_dir / "dispatch-receipts.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        self.deterministic_receipt(
+                            task_id,
+                            coordinator_item,
+                            "dispatch_submitted",
+                            1,
+                        )
+                    )
+                    + "\n"
+                )
+                handle.write(
+                    json.dumps(
+                        self.deterministic_receipt(
+                            task_id,
+                            coordinator_item,
+                            "dispatch_completed",
+                            2,
+                            suspension_epoch=1,
+                        )
+                    )
+                    + "\n"
+                )
+            budget_path = task_dir / "iteration-budget.json"
+            budget = read_json(budget_path)
+            budget["status"] = "blocked"
+            budget["stop_reason"] = "runtime dispatch retry exhausted"
+            budget["usage"]["reroutes"] = 1
+            budget_path.write_text(json.dumps(budget), encoding="utf-8")
+            (task_dir / "model-identity-dispatch-block.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-model-identity-dispatch-block.v1",
+                        "task_id": task_id,
+                        "status": "blocked",
+                        "reason": "owned_session_model_readiness_timeout",
+                        "errors": ["implementer:codex active model identity is not eligible"],
+                        "runtime_preflight_ref": "runtime-preflight.json",
+                        "recorded_at": "2026-07-27T00:00:00Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            observed_preflight = self.model_aware_test_preflight(
+                {
+                    "runtime": "HERDR",
+                    "adapter_class": "pane_controller",
+                    "status": "pass",
+                    "checks": {
+                        "submission_transport": {
+                            "status": "pass",
+                            "mode": "pane_send_text_enter",
+                        }
+                    },
+                    "agents": {
+                        "codex": {
+                            "status": "pass",
+                            "pane_id": "pane-owned",
+                            "session_binding": {
+                                "status": "bound",
+                                "ref": "agent-sessions.json",
+                                "generation": 1,
+                                "identity_token": binding["runtime_identity"]["token"],
+                                "ownership": binding["ownership"],
+                            },
+                        }
+                    },
+                }
+            )
+
+            with patch("valp_cli.workflow.collect_runtime_preflight", return_value=observed_preflight):
+                with patch(
+                    "valp_cli.workflow.ensure_herdr_agent_sessions",
+                    return_value=projection,
+                ) as ensure_sessions:
+                    with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
+                        with patch(
+                            "valp_cli.workflow.submit_herdr_dispatch",
+                            return_value=herdr_invocation_proof(pane_id="pane-owned"),
+                        ) as submit_dispatch:
+                            commands = dispatch_task(
+                                root,
+                                task_id,
+                                role="implementer",
+                                wait_seconds=0,
+                                submit=True,
+                            )
+
+            self.assertEqual(len(commands), 1)
+            ensure_sessions.assert_called_once()
+            self.assertEqual(
+                submit_dispatch.call_args.kwargs["session_binding"]["runtime_identity"]["pane_id"],
+                "pane-owned",
+            )
+            recovered = read_json(budget_path)
+            self.assertEqual(recovered["status"], "active")
+            self.assertIsNone(recovered["stop_reason"])
+            self.assertEqual(recovered["usage"]["reroutes"], 1)
+            submitted = [
+                json.loads(line)
+                for line in (task_dir / "dispatch-receipts.jsonl").read_text(encoding="utf-8").splitlines()
+                if json.loads(line).get("event") == "dispatch_submitted"
+                and json.loads(line).get("work_item_id") == "implementer:codex"
+            ]
+            self.assertEqual(len(submitted), 1)
+            self.assertEqual(submitted[0]["work_item_id"], "implementer:codex")
+
+    def test_dispatch_does_not_reopen_late_model_recovery_after_submit_failure(self) -> None:
+        task_id = "TASK-HERDR-LATE-MODEL-SUBMIT-FAILED"
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-27T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "code_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["coordinates", "edits files", "runs tests", "reviews"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    task_dir = self.publish_routed_task(
+                        root,
+                        task_id,
+                        "Fix a bug and run tests",
+                        runtime="herdr",
+                    )
+
+            projection = self.owned_session_projection(
+                task_id,
+                pane_id="pane-owned",
+                lifecycle="reused",
+            )
+            binding = projection["bindings"]["codex"]
+            binding["focused_at_provisioning"] = False
+            binding["runtime_identity"]["token"] = "sha256:" + ("a" * 64)
+            (task_dir / "agent-sessions.json").write_text(
+                json.dumps(projection),
+                encoding="utf-8",
+            )
+            (task_dir / "agent-session-receipts.jsonl").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-agent-session-receipt.v1",
+                        "adapter": "herdr",
+                        "task_id": task_id,
+                        "event_sequence": 1,
+                        "ts": "2026-07-27T00:00:00Z",
+                        "agent": "codex",
+                        "event": "agent_session_provisioned",
+                        "binding_ref": "agent-sessions.json",
+                        "generation": 1,
+                        "identity_token": binding["runtime_identity"]["token"],
+                        "ownership": binding["ownership"],
+                        "context": binding["context"],
+                        "launch": binding["launch"],
+                        "focused_at_provisioning": False,
+                        "runtime_scope": binding["runtime_scope"],
+                        "runtime_identity": binding["runtime_identity"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            budget_path = task_dir / "iteration-budget.json"
+            budget = read_json(budget_path)
+            budget["status"] = "blocked"
+            budget["stop_reason"] = "runtime dispatch retry exhausted"
+            budget_path.write_text(json.dumps(budget), encoding="utf-8")
+            (task_dir / "model-identity-dispatch-block.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-model-identity-dispatch-block.v1",
+                        "task_id": task_id,
+                        "status": "blocked",
+                        "reason": "owned_session_model_readiness_timeout",
+                        "errors": ["coordinator:codex active model identity is not eligible"],
+                        "runtime_preflight_ref": "runtime-preflight.json",
+                        "recorded_at": "2026-07-27T00:01:00Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (task_dir / "timeline.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "ts": "2026-07-27T00:02:00Z",
+                            "event": "dispatch_submit_failed",
+                            "summary": "working-state proof timed out",
+                            "agent": "codex",
+                            "role": "coordinator",
+                            "work_item_id": "coordinator:codex",
+                            "attempt": "retry",
+                        }
+                    )
+                    + "\n"
+                )
+
+            with patch("valp_cli.workflow.ensure_herdr_agent_sessions") as ensure_sessions:
+                with patch("valp_cli.workflow.collect_runtime_preflight") as collect_preflight:
+                    with patch("valp_cli.workflow.submit_herdr_dispatch") as submit_dispatch:
+                        with self.assertRaisesRegex(SystemExit, "runtime dispatch retry exhausted"):
+                            dispatch_task(
+                                root,
+                                task_id,
+                                role="coordinator",
+                                wait_seconds=0,
+                                submit=True,
+                            )
+
+            ensure_sessions.assert_not_called()
+            collect_preflight.assert_not_called()
+            submit_dispatch.assert_not_called()
+
+    def test_dispatch_launch_replacement_requires_explicit_single_submit(self) -> None:
+        with self.assertRaisesRegex(
+            SystemExit,
+            "--replace-owned-session-launch requires --submit",
+        ):
+            dispatch_task(
+                Path("/unused"),
+                "TASK-REPLACE-LAUNCH",
+                agent="codex",
+                role="implementer",
+                replace_owned_session_launch=True,
+            )
+
+        with self.assertRaisesRegex(
+            SystemExit,
+            "--replace-owned-session-launch requires --submit",
+        ):
+            dispatch_task(
+                Path("/unused"),
+                "TASK-REPLACE-LAUNCH",
+                submit=True,
+                replace_owned_session_launch=True,
+            )
 
     def test_dispatch_rejects_negative_evidence_wait(self) -> None:
         capabilities = {
@@ -4917,18 +5885,8 @@ class ValpWorkflowTests(unittest.TestCase):
             "agents": {"codex": {"status": "pass", "pane_id": "pane-fresh"}},
         }
         proofs = [
-            {
-                "runtime": "HERDR",
-                "transport_mode": "pane_send_text_enter",
-                "pane_id": "pane-original",
-                "submission_id": "submission-original",
-            },
-            {
-                "runtime": "HERDR",
-                "transport_mode": "pane_send_text_enter",
-                "pane_id": "pane-fresh",
-                "submission_id": "submission-retry-1",
-            },
+            herdr_invocation_proof(pane_id="pane-original"),
+            herdr_invocation_proof(pane_id="pane-fresh"),
         ]
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4945,60 +5903,64 @@ class ValpWorkflowTests(unittest.TestCase):
                         )
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
-                    with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
-                        with patch(
-                            "valp_cli.workflow.submit_herdr_dispatch",
-                            side_effect=proofs,
-                        ) as submit_dispatch:
-                            self.assertEqual(
-                                main([
-                                    "dispatch",
-                                    task_id,
-                                    "--workspace",
-                                    str(root),
-                                    "--runtime",
-                                    "herdr",
-                                    "--wait-seconds",
-                                    "0",
-                                    "--submit",
-                                ]),
-                                0,
-                            )
-                            receipt_path = task_dir / "dispatch-receipts.jsonl"
-                            original_lines = receipt_path.read_text(encoding="utf-8").splitlines()
-                            with self.assertRaisesRegex(SystemExit, "no ready phase"):
-                                main([
-                                    "dispatch",
-                                    task_id,
-                                    "--workspace",
-                                    str(root),
-                                    "--runtime",
-                                    "herdr",
-                                    "--wait-seconds",
-                                    "0",
-                                    "--submit",
-                                ])
-                            self.assertEqual(
-                                main([
-                                    "dispatch",
-                                    task_id,
-                                    "--workspace",
-                                    str(root),
-                                    "--agent",
-                                    "codex",
-                                    "--role",
-                                    "coordinator",
-                                    "--runtime",
-                                    "herdr",
-                                    "--wait-seconds",
-                                    "0",
-                                    "--recover-incomplete",
-                                    "--retry-generation",
-                                    "1",
-                                    "--submit",
-                                ]),
-                                0,
-                            )
+                    with patch(
+                        "valp_cli.workflow.ensure_herdr_agent_sessions",
+                        return_value=self.owned_session_projection(task_id, "pane-fresh"),
+                    ):
+                        with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
+                            with patch(
+                                "valp_cli.workflow.submit_herdr_dispatch",
+                                side_effect=proofs,
+                            ) as submit_dispatch:
+                                self.assertEqual(
+                                    main([
+                                        "dispatch",
+                                        task_id,
+                                        "--workspace",
+                                        str(root),
+                                        "--runtime",
+                                        "herdr",
+                                        "--wait-seconds",
+                                        "0",
+                                        "--submit",
+                                    ]),
+                                    0,
+                                )
+                                receipt_path = task_dir / "dispatch-receipts.jsonl"
+                                original_lines = receipt_path.read_text(encoding="utf-8").splitlines()
+                                with self.assertRaisesRegex(SystemExit, "no ready phase"):
+                                    main([
+                                        "dispatch",
+                                        task_id,
+                                        "--workspace",
+                                        str(root),
+                                        "--runtime",
+                                        "herdr",
+                                        "--wait-seconds",
+                                        "0",
+                                        "--submit",
+                                    ])
+                                self.assertEqual(
+                                    main([
+                                        "dispatch",
+                                        task_id,
+                                        "--workspace",
+                                        str(root),
+                                        "--agent",
+                                        "codex",
+                                        "--role",
+                                        "coordinator",
+                                        "--runtime",
+                                        "herdr",
+                                        "--wait-seconds",
+                                        "0",
+                                        "--recover-incomplete",
+                                        "--retry-generation",
+                                        "1",
+                                        "--submit",
+                                    ]),
+                                    0,
+                                )
 
             receipt_lines = receipt_path.read_text(encoding="utf-8").splitlines()
             self.assertEqual(receipt_lines[: len(original_lines)], original_lines)
@@ -5082,6 +6044,76 @@ class ValpWorkflowTests(unittest.TestCase):
             replay_preflight.assert_not_called()
             replay_submit.assert_not_called()
             self.assertEqual(receipt_path.read_text(encoding="utf-8").splitlines(), completed_lines)
+
+    def test_public_incomplete_recovery_reconciles_late_evidence_after_retry_without_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_id = "TASK-INCOMPLETE-LATE-EVIDENCE-AFTER-RETRY"
+            task_dir, capabilities, _preflight, coordinator = self.incomplete_recovery_fixture(
+                root,
+                task_id,
+            )
+            submitted = self.deterministic_receipt(
+                task_id,
+                coordinator,
+                "dispatch_submitted",
+                1,
+            )
+            submitted["proof"] = {
+                "runtime": "HERDR",
+                "transport_mode": "pane_send_text_enter",
+                "pane_id": "pane-original",
+                "submission_id": "original",
+            }
+            retry = self.deterministic_receipt(
+                task_id,
+                coordinator,
+                "dispatch_submitted",
+                2,
+            )
+            retry["retry_generation"] = 1
+            retry["proof"] = {
+                "runtime": "HERDR",
+                "transport_mode": "pane_send_text_enter",
+                "pane_id": "pane-retry",
+                "submission_id": "retry-1",
+                "recovery": {
+                    "kind": "incomplete_submission",
+                    "retry_generation": 1,
+                    "originating_submission_receipt_id": submitted["receipt_id"],
+                    "control_contract_digest": read_json(task_dir / "routing.json")[
+                        "control_contract"
+                    ]["digest"],
+                },
+            }
+            receipt_path = task_dir / "dispatch-receipts.jsonl"
+            with receipt_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(submitted) + "\n")
+                handle.write(json.dumps(retry) + "\n")
+            original_lines = receipt_path.read_text(encoding="utf-8").splitlines()
+            for ref in coordinator["expected_refs"]:
+                evidence_path = task_dir / str(ref)
+                evidence_path.parent.mkdir(parents=True, exist_ok=True)
+                evidence_path.write_text("verified after retry\n", encoding="utf-8")
+
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.collect_runtime_preflight") as collect:
+                    with patch("valp_cli.workflow.submit_herdr_dispatch") as submit_dispatch:
+                        self.assertEqual(main(self.recover_incomplete_cli_args(root, task_id)), 0)
+
+            collect.assert_not_called()
+            submit_dispatch.assert_not_called()
+            receipt_lines = receipt_path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(receipt_lines[: len(original_lines)], original_lines)
+            receipts = [json.loads(line) for line in receipt_lines if '"schema_version"' in line]
+            self.assertEqual(
+                [receipt["event"] for receipt in receipts],
+                ["dispatch_submitted", "dispatch_submitted", "dispatch_completed"],
+            )
+            completion = receipts[-1]
+            self.assertEqual(completion["proof"]["submission_receipt_id"], retry["receipt_id"])
+            self.assertEqual(completion["retry_generation"], 1)
+            self.assertEqual(completion["expected_refs"], coordinator["expected_refs"])
 
     def test_public_incomplete_recovery_rejects_missing_submission_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5211,22 +6243,21 @@ class ValpWorkflowTests(unittest.TestCase):
             submitted["proof"] = {"runtime": "HERDR", "submission_id": "original"}
             with (task_dir / "dispatch-receipts.jsonl").open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(submitted) + "\n")
-            retry_proof = {
-                "runtime": "HERDR",
-                "transport_mode": "pane_send_text_enter",
-                "pane_id": "pane-fresh",
-                "submission_id": "retry-1",
-            }
+            retry_proof = herdr_invocation_proof(pane_id="pane-fresh")
             with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
                 with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
-                    with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
-                        with patch(
-                            "valp_cli.workflow.submit_herdr_dispatch",
-                            return_value=retry_proof,
-                        ) as submit_dispatch:
-                            self.assertEqual(main(self.recover_incomplete_cli_args(root, task_id)), 0)
-                            with self.assertRaisesRegex(SystemExit, "already attempted"):
-                                main(self.recover_incomplete_cli_args(root, task_id))
+                    with patch(
+                        "valp_cli.workflow.ensure_herdr_agent_sessions",
+                        return_value=self.owned_session_projection(task_id, "pane-fresh"),
+                    ):
+                        with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
+                            with patch(
+                                "valp_cli.workflow.submit_herdr_dispatch",
+                                return_value=retry_proof,
+                            ) as submit_dispatch:
+                                self.assertEqual(main(self.recover_incomplete_cli_args(root, task_id)), 0)
+                                with self.assertRaisesRegex(SystemExit, "already attempted"):
+                                    main(self.recover_incomplete_cli_args(root, task_id))
             self.assertEqual(submit_dispatch.call_count, 1)
             receipts = [
                 json.loads(line)
@@ -5259,30 +6290,34 @@ class ValpWorkflowTests(unittest.TestCase):
                     "valp_cli.workflow.collect_runtime_preflight",
                     return_value=preflight,
                 ) as collect_preflight:
-                    with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
-                        with patch(
-                            "valp_cli.workflow.submit_herdr_dispatch",
-                            side_effect=HerdrSubmissionError("recovery transport failed"),
-                        ) as submit_dispatch:
-                            with self.assertRaisesRegex(SystemExit, "recovery transport failed"):
-                                main(self.recover_incomplete_cli_args(root, task_id))
-                            with self.assertRaisesRegex(
-                                SystemExit,
-                                "incomplete submission recovery failed",
-                            ):
-                                main(self.recover_incomplete_cli_args(root, task_id))
-                            with self.assertRaisesRegex(SystemExit, "no ready phase"):
-                                main([
-                                    "dispatch",
-                                    task_id,
-                                    "--workspace",
-                                    str(root),
-                                    "--runtime",
-                                    "herdr",
-                                    "--wait-seconds",
-                                    "0",
-                                    "--submit",
-                                ])
+                    with patch(
+                        "valp_cli.workflow.ensure_herdr_agent_sessions",
+                        return_value=self.owned_session_projection(task_id, "pane-fresh"),
+                    ):
+                        with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
+                            with patch(
+                                "valp_cli.workflow.submit_herdr_dispatch",
+                                side_effect=HerdrSubmissionError("recovery transport failed"),
+                            ) as submit_dispatch:
+                                with self.assertRaisesRegex(SystemExit, "recovery transport failed"):
+                                    main(self.recover_incomplete_cli_args(root, task_id))
+                                with self.assertRaisesRegex(
+                                    SystemExit,
+                                    "incomplete submission recovery failed",
+                                ):
+                                    main(self.recover_incomplete_cli_args(root, task_id))
+                                with self.assertRaisesRegex(SystemExit, "no ready phase"):
+                                    main([
+                                        "dispatch",
+                                        task_id,
+                                        "--workspace",
+                                        str(root),
+                                        "--runtime",
+                                        "herdr",
+                                        "--wait-seconds",
+                                        "0",
+                                        "--submit",
+                                    ])
 
             collect_preflight.assert_called_once()
             submit_dispatch.assert_called_once()
@@ -5618,6 +6653,8 @@ class ValpWorkflowTests(unittest.TestCase):
         self.assertIn(".herdr-loop/tasks/TASK-BRIEF/task.md", dispatch)
         self.assertIn(".herdr-loop/tasks/TASK-BRIEF/context-pack.json", dispatch)
         self.assertIn(".herdr-loop/tasks/TASK-BRIEF/skill-recommendations.json", dispatch)
+        self.assertIn(".herdr-loop/tasks/TASK-BRIEF/control-contract.json", dispatch)
+        self.assertIn(".herdr-loop/tasks/TASK-BRIEF/control-slices/codex.json", dispatch)
 
     def test_unbound_live_identity_invalidates_feedback_prior(self) -> None:
         capabilities = {
@@ -5850,13 +6887,13 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertEqual(routing["assignment_authority"], "leader_declared")
             self.assertEqual(read_json(task_dir / "assignment-declaration.json"), declaration)
 
-    def test_user_selected_leader_is_not_forced_into_worker_assignments(self) -> None:
+    def test_codex_cli_leader_can_assign_a_separate_codex_cli_worker(self) -> None:
         capabilities = {
             "schema_version": "valp-agent-capabilities.v1",
             "updated_at": "2026-07-23T10:00:00Z",
             "source": "test fixture",
             "agents": {
-                "implementer": {
+                "codex": {
                     "active": True,
                     "role": ["implementation", "verification"],
                     "skills": [],
@@ -5876,16 +6913,16 @@ class ValpWorkflowTests(unittest.TestCase):
             "task_id": "TASK-SEPARATE-LEADER",
             "declared_at": "2026-07-23T10:00:00Z",
             "leader": {
-                "agent_id": "codex-app",
+                "agent_id": "codex",
                 "selected_by": "user",
-                "selection_ref": "user-message:selected-codex-app",
+                "selection_ref": "leader-session-binding:codex-cli-leader",
             },
             "assignments": {
-                "implementer": "implementer",
+                "implementer": "codex",
                 "reviewer": "reviewer",
             },
             "reasons": {
-                "implementer": "Leader-declared implementation worker.",
+                "implementer": "The Codex CLI Leader explicitly assigned a separate Codex CLI Worker session.",
                 "reviewer": "Leader-declared independent reviewer.",
             },
         }
@@ -5907,20 +6944,24 @@ class ValpWorkflowTests(unittest.TestCase):
                     assignment_declaration=declaration,
                 )
 
-            self.assertEqual(routing["coordinator_selection"]["selected_agent"], "codex-app")
-            self.assertEqual(routing["selected_agents"], ["implementer", "reviewer"])
+            self.assertEqual(routing["coordinator_selection"]["selected_agent"], "codex")
+            self.assertEqual(routing["selected_agents"], ["codex", "reviewer"])
             self.assertEqual(routing["role_requirements"], ["implementer", "reviewer"])
-            self.assertNotIn("codex-app", routing["selected_agents"])
             attention_map = read_json(task_dir / "attention-map.json")
-            self.assertEqual(attention_map["leader_agent"], "codex-app")
-            self.assertEqual(attention_map["heads"]["state_gate"]["selected"], "codex-app")
+            self.assertEqual(attention_map["leader_agent"], "codex")
+            self.assertEqual(attention_map["heads"]["state_gate"]["selected"], "codex")
             self.assertEqual(attention_map["heads"]["state_gate"]["status"], "user_selected_leader")
             self.assertNotIn("coordinator", attention_map["role_assignments"])
-            self.assertNotIn("codex-app", routing["selected_agents"])
-            self.assertFalse((task_dir / "agents" / "codex-app" / "dispatch.md").exists())
-            attention = read_json(task_dir / "attention-map.json")
-            self.assertEqual(attention["leader_agent"], "codex-app")
-            self.assertEqual(attention["heads"]["state_gate"]["status"], "user_selected_leader")
+            codex_slice = read_json(task_dir / "control-slices" / "codex.json")
+            self.assertEqual(codex_slice["agent"], "codex")
+            self.assertEqual(codex_slice["work_item_ids"], ["implementer:codex"])
+            self.assertNotIn("leader_epoch", codex_slice)
+            self.assertNotIn("installation_id", codex_slice)
+            dispatch = (task_dir / "agents" / "codex" / "dispatch.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("Role: `implementer`", dispatch)
+            self.assertNotIn("Role: `leader`", dispatch)
             declaration_errors = list(
                 schema_validator(
                     Path(__file__).resolve().parents[1] / "schemas" / "assignment-declaration.schema.json"
@@ -6449,6 +7490,121 @@ class ValpWorkflowTests(unittest.TestCase):
         self.assertEqual(resumed_budget["status"], "active")
         self.assertEqual(resumed_budget["usage"]["reroutes"], 1)
         self.assertEqual(history[-1]["event"], "reroute_resumed")
+        self.assertEqual(history[-1]["reroute_number"], 1)
+
+    def test_revised_assignments_can_reroute_after_runtime_retry_exhaustion(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-07-26T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["coordinates", "edits files", "runs tests"],
+                },
+                "qwen": {
+                    "active": True,
+                    "role": ["implementation", "verification"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["edits files", "runs tests"],
+                },
+                "claude": {
+                    "active": True,
+                    "role": ["reviewer"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["read-only review"],
+                },
+            },
+        }
+        task_id = "TASK-REROUTE-AFTER-RUNTIME-EXHAUSTION"
+        first = {
+            "schema_version": "valp-assignment-declaration.v1",
+            "declaration_id": "decl-runtime-exhaustion-1",
+            "task_id": task_id,
+            "declared_at": "2026-07-26T00:00:00Z",
+            "leader": {
+                "agent_id": "codex",
+                "selected_by": "user",
+                "selection_ref": "test-user-selection:runtime-exhaustion",
+            },
+            "assignments": {
+                "coordinator": "codex",
+                "implementer": "codex",
+                "reviewer": "claude",
+            },
+            "reasons": {
+                "coordinator": "User-selected test Leader.",
+                "implementer": "Initial implementation route.",
+                "reviewer": "Independent review route.",
+            },
+        }
+        revised = {
+            **first,
+            "declaration_id": "decl-runtime-exhaustion-2",
+            "declared_at": "2026-07-26T00:01:00Z",
+            "assignments": {
+                "coordinator": "codex",
+                "implementer": "qwen",
+                "reviewer": "claude",
+            },
+            "reasons": {
+                "coordinator": "User-selected test Leader.",
+                "implementer": "Scope-reduced replacement after the prior runtime exhausted its retry.",
+                "reviewer": "Independent review route.",
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    publish_task(
+                        root,
+                        task_id,
+                        "Repair and independently review an agent runtime.",
+                        profile="agent-runtime",
+                        runtime="manual",
+                    )
+                    route_task(
+                        root,
+                        task_id,
+                        runtime="manual",
+                        assignment_declaration=first,
+                    )
+                    task_dir = root / ".herdr-loop" / "tasks" / task_id
+                    budget = read_json(task_dir / "iteration-budget.json")
+                    budget["status"] = "blocked"
+                    budget["stop_reason"] = "runtime dispatch retry exhausted"
+                    (task_dir / "iteration-budget.json").write_text(
+                        json.dumps(budget), encoding="utf-8"
+                    )
+
+                    route_task(
+                        root,
+                        task_id,
+                        runtime="manual",
+                        assignment_declaration=revised,
+                    )
+
+            rerouted = read_json(task_dir / "routing.json")
+            rerouted_budget = read_json(task_dir / "iteration-budget.json")
+            history = [
+                json.loads(line)
+                for line in (task_dir / "routing-history.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+
+        self.assertEqual(rerouted["role_assignments"]["implementer"], "qwen")
+        self.assertEqual(rerouted_budget["status"], "active")
+        self.assertIsNone(rerouted_budget["stop_reason"])
+        self.assertEqual(rerouted_budget["usage"]["reroutes"], 1)
+        self.assertEqual(history[-1]["event"], "reroute_started")
         self.assertEqual(history[-1]["reroute_number"], 1)
 
     def test_iteration_budget_reopens_for_evidence_producing_review_phase(self) -> None:

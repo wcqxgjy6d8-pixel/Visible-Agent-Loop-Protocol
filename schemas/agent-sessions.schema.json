@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Agent Session Bindings",
+  "type": "object",
+  "required": ["schema_version", "task_id", "adapter", "status", "bindings", "updated_at"],
+  "properties": {
+    "schema_version": {"const": "valp-agent-sessions.v1"},
+    "task_id": {"type": "string", "minLength": 1},
+    "adapter": {"type": "string", "minLength": 1},
+    "status": {"enum": ["provisioning", "ready", "blocked"]},
+    "bindings": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/binding"}
+    },
+    "updated_at": {"type": "string", "minLength": 1}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "ready"}}},
+      "then": {
+        "properties": {
+          "bindings": {"minProperties": 1}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"adapter": {"const": "herdr"}}},
+      "then": {
+        "properties": {
+          "bindings": {
+            "additionalProperties": {
+              "required": ["focused_at_provisioning"],
+              "properties": {
+                "focused_at_provisioning": {"const": false}
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "binding": {
+      "type": "object",
+      "required": [
+        "agent",
+        "session_name",
+        "generation",
+        "ownership",
+        "context",
+        "launch",
+        "runtime_scope",
+        "runtime_identity",
+        "lifecycle",
+        "dispatch_eligible"
+      ],
+      "properties": {
+        "agent": {"type": "string", "minLength": 1},
+        "session_name": {"type": "string", "minLength": 1},
+        "generation": {"type": "integer", "minimum": 1},
+        "ownership": {
+          "type": "object",
+          "required": ["scope", "project_identity"],
+          "properties": {
+            "scope": {"enum": ["project", "task"]},
+            "task_id": {"type": "string", "minLength": 1},
+            "project_identity": {"$ref": "#/$defs/sha256"}
+          },
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {"properties": {"scope": {"const": "task"}}},
+              "then": {"required": ["task_id"]}
+            }
+          ]
+        },
+        "context": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        },
+        "launch": {
+          "type": "object",
+          "properties": {
+            "argv": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "runtime_ref": {"type": "string", "minLength": 1}
+          },
+          "anyOf": [
+            {"required": ["argv"]},
+            {"required": ["runtime_ref"]}
+          ],
+          "additionalProperties": true
+        },
+        "focused_at_provisioning": {"type": "boolean"},
+        "runtime_scope": {
+          "type": "object",
+          "required": ["kind", "ownership"],
+          "properties": {
+            "kind": {"type": "string", "minLength": 1},
+            "ownership": {"enum": ["project", "task"]},
+            "label": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": true
+        },
+        "runtime_identity": {
+          "type": "object",
+          "required": ["token"],
+          "minProperties": 2,
+          "properties": {
+            "token": {"$ref": "#/$defs/sha256"}
+          },
+          "additionalProperties": true
+        },
+        "lifecycle": {"enum": ["provisioned", "reused"]},
+        "dispatch_eligible": {"const": true}
+      },
+      "additionalProperties": false
+    }
+  }
+}

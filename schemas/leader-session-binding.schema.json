@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-leader-session-binding.v1.json",
+  "title": "VALP Installation Leader Runtime Attachment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "installation_id",
+    "principal_id",
+    "principal_kind",
+    "agent_id",
+    "selection_id",
+    "passport_ref",
+    "passport_digest",
+    "leader_epoch",
+    "adapter_id",
+    "adapter_class",
+    "generation",
+    "ownership",
+    "context",
+    "launch",
+    "focused_at_provisioning",
+    "runtime_scope",
+    "runtime_identity",
+    "health",
+    "status",
+    "provisioned_at",
+    "activated_at",
+    "replaces_binding_digest",
+    "binding_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-leader-session-binding.v1"},
+    "installation_id": {"type": "string", "minLength": 1},
+    "principal_id": {"type": "string", "minLength": 1},
+    "principal_kind": {"const": "agent"},
+    "agent_id": {"type": "string", "minLength": 1},
+    "selection_id": {"type": "string", "minLength": 1},
+    "passport_ref": {"type": "string", "minLength": 1},
+    "passport_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "leader_epoch": {"type": "integer", "minimum": 1},
+    "adapter_id": {"type": "string", "minLength": 1},
+    "adapter_class": {"type": "string", "minLength": 1},
+    "generation": {"type": "integer", "minimum": 1},
+    "ownership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "installation_id"],
+      "properties": {
+        "scope": {"const": "installation"},
+        "installation_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "context": {
+      "type": "object",
+      "required": ["cwd"],
+      "properties": {"cwd": {"type": "string", "minLength": 1}},
+      "additionalProperties": true
+    },
+    "launch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["argv", "argv_digest"],
+      "properties": {
+        "argv": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
+        "argv_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "focused_at_provisioning": {"const": false},
+    "runtime_scope": {
+      "description": "Current replaceable runtime attachment; not the installation Leader authority.",
+      "type": "object",
+      "required": ["ownership"],
+      "properties": {"ownership": {"const": "installation"}},
+      "additionalProperties": true
+    },
+    "runtime_identity": {
+      "description": "Current runtime attachment identity, which may change when leader open reprovisions the attachment.",
+      "type": "object",
+      "required": ["session_id", "token"],
+      "properties": {
+        "session_id": {"type": "string", "minLength": 1},
+        "token": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      },
+      "additionalProperties": true
+    },
+    "health": {
+      "type": "object",
+      "required": ["status", "observed_at", "evidence"],
+      "properties": {
+        "status": {"const": "pass"},
+        "observed_at": {"type": "string", "minLength": 1},
+        "evidence": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "status": {"const": "active"},
+    "provisioned_at": {"type": "string", "minLength": 1},
+    "activated_at": {"type": "string", "minLength": 1},
+    "replaces_binding_digest": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      ]
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approval_event_id",
+        "approved_session_id",
+        "failed_receipt_id",
+        "failed_receipt_digest"
+      ],
+      "properties": {
+        "approval_event_id": {"type": "string", "minLength": 1},
+        "approved_session_id": {"type": "string", "minLength": 1},
+        "failed_receipt_id": {"type": "string", "minLength": 1},
+        "failed_receipt_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "binding_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

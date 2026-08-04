@@ -421,6 +421,45 @@ The compatibility state names `scoring_routes`, `routing_capabilities`, and
 the latter states validate the Leader's declaration and either preserve it or
 block it. VALP cannot fill, remove, or replace an assignment.
 
+### Task Source Provenance
+
+Every newly published task MUST record the implementation source identity used
+to create it in `state.json.source_provenance`. The record MUST contain a
+`task_start` observation and a `last_observed` observation. `valp publish`
+creates both observations from the same source identity; every task-scoped
+`valp scan` MUST preserve `task_start` and atomically replace `last_observed`
+with a fresh observation.
+
+Each observation MUST record:
+
+```text
+status: resolved_clean | resolved_dirty | unavailable
+implementation_id
+invoked_entrypoint
+resolved_entrypoint
+source_root
+observed_at
+vcs.kind: git | none
+vcs.commit: exact commit id or null
+vcs.tree: exact committed tree id or null
+vcs.worktree_status: clean | dirty | unavailable
+```
+
+Paths are implementation observations, not protocol defaults. Implementations
+MUST resolve their actual entrypoint and source root and MUST NOT hard-code one
+operator's checkout path. A Git-backed source MUST record both the exact commit
+and committed tree. A dirty worktree MUST remain `resolved_dirty`; the commit
+and tree identify its base revision but MUST NOT be represented as the exact
+identity of uncommitted bytes. A non-Git or otherwise unresolvable installation
+MUST use `unavailable` with null commit/tree values rather than inventing a
+revision.
+
+Historical task states created before this contract MAY omit
+`source_provenance`. A later task-scoped scan MAY add the object with
+`task_start: null` and a fresh `last_observed` observation. Readers MUST
+preserve such tasks as historical evidence; they MUST NOT backfill a claimed
+task-start identity from a later observation.
+
 ### 4.1 Runtime Work Item State Mapping
 
 Runtimes may expose their own queue state machine. A VALP adapter may map states

@@ -133,6 +133,12 @@ a fixed Desktop checkout path. A broken symlink, stale wrapper, missing Python
 dependency, or missing runtime should be shown as a doctor/preflight result, not
 as an agent task failure.
 
+On publish, inspect `state.json.source_provenance`: `task_start` records the
+actual invoked entrypoint, resolved source root, and Git commit/tree when
+available. A later `valp scan --task ...` refreshes `last_observed` without
+rewriting `task_start`. `resolved_dirty` is a warning that the recorded commit
+and tree describe only the base revision, not the uncommitted source bytes.
+
 A dry-run task is only an environment check. `publish` itself writes no routing
 or dispatch files. After the Leader declaration passes validation, the dry run
 may write them, but it should still fail audit until a real dispatch produces

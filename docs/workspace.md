@@ -106,6 +106,14 @@ Canonical per-task evidence.
 Markdown is the human-readable surface. JSON/JSONL is the canonical machine
 state.
 
+New task states record `source_provenance` when they are published. The
+`task_start` observation binds the task to the implementation entrypoint,
+resolved source root, and Git commit/tree used at creation. A task-scoped scan
+preserves that observation and refreshes `last_observed`. Dirty sources remain
+explicitly dirty; non-Git installs use unavailable/null revision fields rather
+than an invented source identity. Historical states may omit the additive
+field, and later scans must not backfill a task-start claim.
+
 If a claim is not backed by files, command output, receipts, reviews, or
 artifacts, it is not protocol evidence.
 

@@ -86,6 +86,7 @@
       "type": "array",
       "items": {"type": "string"}
     },
+    "source_provenance": {"$ref": "urn:valp:schema:source-provenance:v1"},
     "runtime_adapter": {"type": "object"},
     "local_overlay": {"type": "object"},
     "runtime_task_state_mapping": {"type": "object"},

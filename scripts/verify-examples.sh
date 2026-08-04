@@ -55,9 +55,11 @@ except ImportError as exc:
 root = Path(".")
 suspension_schema = json.loads((root / "schemas" / "suspension.schema.json").read_text(encoding="utf-8"))
 continuation_capability_schema = json.loads((root / "schemas" / "continuation-capability.schema.json").read_text(encoding="utf-8"))
+source_provenance_schema = json.loads((root / "schemas" / "source-provenance.schema.json").read_text(encoding="utf-8"))
 schema_registry = Registry().with_resources([
     (suspension_schema["$id"], Resource.from_contents(suspension_schema)),
     (continuation_capability_schema["$id"], Resource.from_contents(continuation_capability_schema)),
+    (source_provenance_schema["$id"], Resource.from_contents(source_provenance_schema)),
 ])
 
 def validator_for(schema_name):
@@ -89,6 +91,7 @@ schema_by_name = {
     "historical-audit-boundary.json": "historical-audit-boundary.schema.json",
     "routing.json": "routing.schema.json",
     "skill-recommendations.json": "skill-recommendations.schema.json",
+    "source-provenance.json": "source-provenance.schema.json",
     "iteration-budget.json": "iteration-budget.schema.json",
     "state.json": "state.schema.json",
     "submission-dependencies.json": "submission-dependencies.schema.json",

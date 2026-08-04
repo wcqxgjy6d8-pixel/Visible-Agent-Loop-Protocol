@@ -1,0 +1,31 @@
+{
+  "schema_version": "valp-source-provenance.v1",
+  "task_start": {
+    "status": "resolved_clean",
+    "implementation_id": "example-reference-cli",
+    "invoked_entrypoint": "/opt/valp/bin/valp",
+    "resolved_entrypoint": "/opt/valp/bin/valp",
+    "source_root": "/opt/valp",
+    "observed_at": "2026-08-04T00:00:00Z",
+    "vcs": {
+      "kind": "git",
+      "commit": "1111111111111111111111111111111111111111",
+      "tree": "2222222222222222222222222222222222222222",
+      "worktree_status": "clean"
+    }
+  },
+  "last_observed": {
+    "status": "resolved_clean",
+    "implementation_id": "example-reference-cli",
+    "invoked_entrypoint": "/opt/valp/bin/valp",
+    "resolved_entrypoint": "/opt/valp/bin/valp",
+    "source_root": "/opt/valp",
+    "observed_at": "2026-08-04T00:05:00Z",
+    "vcs": {
+      "kind": "git",
+      "commit": "1111111111111111111111111111111111111111",
+      "tree": "2222222222222222222222222222222222222222",
+      "worktree_status": "clean"
+    }
+  }
+}

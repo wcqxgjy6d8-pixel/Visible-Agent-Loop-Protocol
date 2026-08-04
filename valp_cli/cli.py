@@ -6,6 +6,7 @@ import os
 import shlex
 import shutil
 import sqlite3
+import sys
 from pathlib import Path
 
 from . import __version__
@@ -481,6 +482,7 @@ def prompt_from_args(args: argparse.Namespace) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    invoked_entrypoint = Path(sys.argv[0]) if argv is None else None
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -491,6 +493,7 @@ def main(argv: list[str] | None = None) -> int:
             prompt_from_args(args),
             profile=args.profile,
             runtime=args.runtime,
+            invoked_entrypoint=invoked_entrypoint,
         )
         result = {"task_id": args.task_id, "task_dir": str(directory), "routed": False}
         if args.json:
@@ -506,7 +509,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "scan":
-        capabilities = scan_workspace(Path(args.workspace), args.task_id, runtime=args.runtime)
+        capabilities = scan_workspace(
+            Path(args.workspace),
+            args.task_id,
+            runtime=args.runtime,
+            invoked_entrypoint=invoked_entrypoint,
+        )
         if args.json:
             print(json.dumps(capabilities, indent=2, ensure_ascii=False))
         else:

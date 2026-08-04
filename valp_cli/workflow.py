@@ -628,6 +628,81 @@ def run_command(
     }
 
 
+def observe_source_provenance(invoked_entrypoint: Path | None = None) -> dict[str, Any]:
+    source_root = Path(__file__).resolve().parents[1]
+    if invoked_entrypoint is None:
+        invoked_path = source_root / "bin" / "valp"
+    else:
+        expanded = Path(os.path.expanduser(str(invoked_entrypoint)))
+        if expanded.is_absolute():
+            invoked_path = expanded
+        else:
+            discovered = shutil.which(str(expanded))
+            invoked_path = Path(discovered) if discovered else Path.cwd() / expanded
+    invoked_path = Path(os.path.abspath(str(invoked_path)))
+    resolved_entrypoint = invoked_path.resolve()
+
+    top_level_result = run_command(
+        ["git", "-C", str(source_root), "rev-parse", "--show-toplevel"]
+    )
+    commit_result = run_command(["git", "-C", str(source_root), "rev-parse", "--verify", "HEAD"])
+    tree_result = run_command(["git", "-C", str(source_root), "rev-parse", "--verify", "HEAD^{tree}"])
+    status_result = run_command(
+        ["git", "-C", str(source_root), "status", "--porcelain=v1", "-uall"],
+        stdout_limit=1,
+    )
+    observed_top_level = str(top_level_result.get("stdout") or "").strip()
+    git_resolved = bool(
+        top_level_result["ok"]
+        and observed_top_level
+        and Path(observed_top_level).resolve() == source_root
+        and commit_result["ok"]
+        and tree_result["ok"]
+        and status_result["ok"]
+    )
+    worktree_status = (
+        "dirty"
+        if git_resolved and bool(str(status_result.get("stdout") or ""))
+        else "clean" if git_resolved else "unavailable"
+    )
+    return {
+        "status": f"resolved_{worktree_status}" if git_resolved else "unavailable",
+        "implementation_id": "valp-reference-cli",
+        "invoked_entrypoint": str(invoked_path),
+        "resolved_entrypoint": str(resolved_entrypoint),
+        "source_root": str(source_root),
+        "observed_at": now_iso(),
+        "vcs": {
+            "kind": "git" if git_resolved else "none",
+            "commit": str(commit_result.get("stdout") or "").strip() if git_resolved else None,
+            "tree": str(tree_result.get("stdout") or "").strip() if git_resolved else None,
+            "worktree_status": worktree_status,
+        },
+    }
+
+
+def new_source_provenance(invoked_entrypoint: Path | None = None) -> dict[str, Any]:
+    observation = observe_source_provenance(invoked_entrypoint)
+    return {
+        "schema_version": "valp-source-provenance.v1",
+        "task_start": observation,
+        "last_observed": observation,
+    }
+
+
+def refresh_source_provenance(
+    state: dict[str, Any],
+    invoked_entrypoint: Path | None = None,
+) -> dict[str, Any]:
+    current = state.get("source_provenance")
+    task_start = current.get("task_start") if isinstance(current, dict) else None
+    return {
+        "schema_version": "valp-source-provenance.v1",
+        "task_start": task_start,
+        "last_observed": observe_source_provenance(invoked_entrypoint),
+    }
+
+
 def parse_json_stdout(result: dict[str, Any]) -> dict[str, Any]:
     try:
         data = json.loads(str(result.get("stdout") or ""))
@@ -858,7 +933,12 @@ def capability_runtime_argv_by_agent(
     return result
 
 
-def scan_workspace(root: Path, task_id: str | None = None, runtime: str | None = None) -> dict[str, Any]:
+def scan_workspace(
+    root: Path,
+    task_id: str | None = None,
+    runtime: str | None = None,
+    invoked_entrypoint: Path | None = None,
+) -> dict[str, Any]:
     root = workspace_root(root)
     capabilities_path = local_capabilities_path(root)
     overlay_path = local_overlay_path(root)
@@ -884,6 +964,10 @@ def scan_workspace(root: Path, task_id: str | None = None, runtime: str | None =
         state = read_json(state_path)
         if state:
             state["status"] = "scanning_capabilities"
+            state["source_provenance"] = refresh_source_provenance(
+                state,
+                invoked_entrypoint,
+            )
             state["capabilities_ref"] = ".herdr-loop/agents/capabilities.json"
             state["local_overlay"] = {
                 "used": bool(overlay),
@@ -2579,6 +2663,7 @@ def publish_task(
     prompt: str,
     profile: str | None = None,
     runtime: str | None = None,
+    invoked_entrypoint: Path | None = None,
 ) -> Path:
     root = workspace_root(root)
     normalize_runtime(runtime)
@@ -2621,6 +2706,7 @@ Declared by the user-selected Leader before VALP validation.
             "matches": approval_risks,
         },
         "selected_agents": [],
+        "source_provenance": new_source_provenance(invoked_entrypoint),
         "capabilities_needed": PROFILE_CAPABILITIES.get(selected_profile, PROFILE_CAPABILITIES["generic-analysis"]),
         "capabilities_missing": [],
         "gates": {

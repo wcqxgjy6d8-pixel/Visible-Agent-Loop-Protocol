@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -6614,6 +6615,158 @@ class ValpWorkflowTests(unittest.TestCase):
             payload = json.loads(output.getvalue())
             self.assertFalse(payload["routed"])
             self.assertFalse(Path(payload["task_dir"]).joinpath("routing.json").exists())
+
+    def test_cli_publish_and_scan_record_exact_source_provenance(self) -> None:
+        repository = Path(__file__).resolve().parents[1]
+        entrypoint = repository / "bin" / "valp"
+        expected_commit = subprocess.check_output(
+            ["git", "-C", str(repository), "rev-parse", "HEAD"],
+            text=True,
+        ).strip()
+        expected_tree = subprocess.check_output(
+            ["git", "-C", str(repository), "rev-parse", "HEAD^{tree}"],
+            text=True,
+        ).strip()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            publish = subprocess.run(
+                [
+                    sys.executable,
+                    str(entrypoint),
+                    "publish",
+                    "TASK-SOURCE-PROVENANCE",
+                    "--workspace",
+                    tmp,
+                    "--prompt",
+                    "Verify source provenance",
+                    "--runtime",
+                    "manual",
+                    "--json",
+                ],
+                cwd=repository,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            task_dir = Path(json.loads(publish.stdout)["task_dir"])
+            published_state = read_json(task_dir / "state.json")
+            provenance = published_state["source_provenance"]
+            task_start = provenance["task_start"]
+
+            self.assertEqual(provenance["schema_version"], "valp-source-provenance.v1")
+            self.assertEqual(provenance["last_observed"], task_start)
+            self.assertEqual(task_start["implementation_id"], "valp-reference-cli")
+            self.assertEqual(task_start["invoked_entrypoint"], str(entrypoint))
+            self.assertEqual(task_start["resolved_entrypoint"], str(entrypoint.resolve()))
+            self.assertEqual(task_start["source_root"], str(repository.resolve()))
+            self.assertEqual(task_start["vcs"]["kind"], "git")
+            self.assertEqual(task_start["vcs"]["commit"], expected_commit)
+            self.assertEqual(task_start["vcs"]["tree"], expected_tree)
+            self.assertIn(task_start["vcs"]["worktree_status"], {"clean", "dirty"})
+            self.assertEqual(
+                task_start["status"],
+                f"resolved_{task_start['vcs']['worktree_status']}",
+            )
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(entrypoint),
+                    "scan",
+                    "--workspace",
+                    tmp,
+                    "--task",
+                    "TASK-SOURCE-PROVENANCE",
+                    "--runtime",
+                    "manual",
+                    "--json",
+                ],
+                cwd=repository,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            scanned_state = read_json(task_dir / "state.json")
+
+            self.assertEqual(scanned_state["source_provenance"]["task_start"], task_start)
+            self.assertEqual(
+                scanned_state["source_provenance"]["last_observed"]["vcs"]["commit"],
+                expected_commit,
+            )
+            self.assertEqual(
+                list(
+                    schema_validator(repository / "schemas" / "state.schema.json").iter_errors(
+                        scanned_state
+                    )
+                ),
+                [],
+            )
+
+            legacy_state = dict(scanned_state)
+            legacy_state.pop("source_provenance")
+            workflow_module.write_json(task_dir / "state.json", legacy_state)
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(entrypoint),
+                    "scan",
+                    "--workspace",
+                    tmp,
+                    "--task",
+                    "TASK-SOURCE-PROVENANCE",
+                    "--runtime",
+                    "manual",
+                    "--json",
+                ],
+                cwd=repository,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            legacy_scanned_state = read_json(task_dir / "state.json")
+            self.assertIsNone(legacy_scanned_state["source_provenance"]["task_start"])
+
+    def test_cli_publish_marks_non_git_source_provenance_unavailable(self) -> None:
+        repository = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            isolated_source = Path(tmp) / "isolated-source"
+            shutil.copytree(repository / "valp_cli", isolated_source / "valp_cli")
+            (isolated_source / "bin").mkdir(parents=True)
+            shutil.copy2(repository / "bin" / "valp", isolated_source / "bin" / "valp")
+            workspace = Path(tmp) / "workspace"
+            publish = subprocess.run(
+                [
+                    sys.executable,
+                    str(isolated_source / "bin" / "valp"),
+                    "publish",
+                    "TASK-NON-GIT-SOURCE",
+                    "--workspace",
+                    str(workspace),
+                    "--prompt",
+                    "Verify unavailable source provenance",
+                    "--runtime",
+                    "manual",
+                    "--json",
+                ],
+                cwd=isolated_source,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            task_dir = Path(json.loads(publish.stdout)["task_dir"])
+            observation = read_json(task_dir / "state.json")["source_provenance"]["task_start"]
+
+            self.assertEqual(observation["status"], "unavailable")
+            self.assertEqual(observation["source_root"], str(isolated_source.resolve()))
+            self.assertEqual(
+                observation["vcs"],
+                {
+                    "kind": "none",
+                    "commit": None,
+                    "tree": None,
+                    "worktree_status": "unavailable",
+                },
+            )
 
     def test_dispatch_payload_uses_concise_brief_and_task_refs(self) -> None:
         capabilities = {

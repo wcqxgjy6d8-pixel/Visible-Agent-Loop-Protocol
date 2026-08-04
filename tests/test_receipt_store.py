@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 import errno
-import fcntl
 import json
 import multiprocessing
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -106,10 +106,33 @@ def _hold_lock(lock_path: str, ready, release) -> None:
     path = Path(lock_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+b") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         ready.set()
         release.wait(10)
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _platform_lock_target() -> str:
+    return "msvcrt.locking" if os.name == "nt" else "fcntl.flock"
 
 
 class ReceiptStoreTests(unittest.TestCase):
@@ -319,7 +342,7 @@ class ReceiptStoreTests(unittest.TestCase):
             store.load()
             accepted = make_accepted(self.empty_ledger(), "receipt-1")
             with patch(
-                "fcntl.flock",
+                _platform_lock_target(),
                 side_effect=[None, OSError(errno.EIO, "injected unlock failure")],
             ):
                 with self.assertRaises(ReceiptStoreError) as raised:
@@ -370,7 +393,7 @@ class ReceiptStoreTests(unittest.TestCase):
             before = path.read_bytes()
             accepted = make_accepted(self.empty_ledger(), "receipt-1")
             with patch(
-                "fcntl.flock",
+                _platform_lock_target(),
                 side_effect=OSError(errno.ENOTSUP, "injected unsupported lock"),
             ):
                 with self.assertRaises(ReceiptStoreError) as raised:

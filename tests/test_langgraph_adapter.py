@@ -19,6 +19,40 @@ from valp_cli.submission import build_submission_dependencies
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _concurrent_submit_worker(workspace, task_id, start, results, run_posts) -> None:
+    def api_request(api_url, method, path, payload=None, timeout_seconds=10.0):
+        if method == "POST" and path == "/threads":
+            time.sleep(0.25)
+            return {"thread_id": "thread-concurrent"}
+        if method == "POST" and path.endswith("/runs"):
+            with run_posts.get_lock():
+                run_posts.value += 1
+                run_number = run_posts.value
+            return {
+                "run_id": f"run-concurrent-{run_number}",
+                "thread_id": "thread-concurrent",
+                "assistant_id": "assistant-worker",
+                "status": "pending",
+            }
+        if method == "GET" and "/runs/" in path:
+            return {"status": "pending"}
+        raise AssertionError((method, path, payload))
+
+    start.wait()
+    try:
+        with patch("valp_cli.langgraph_adapter._request", side_effect=api_request):
+            result = submit_langgraph_run(
+                Path(workspace),
+                task_id,
+                "langgraph_worker",
+                "implementer",
+                wait_seconds=0,
+            )
+        results.put(("ok", result["status"]))
+    except Exception as error:  # noqa: BLE001 - process boundary records the public error.
+        results.put(("error", str(error)))
+
+
 class LangGraphAdapterTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -338,50 +372,23 @@ class LangGraphAdapterTests(unittest.TestCase):
         self.assertEqual([item["event"] for item in self.receipts()], ["dispatch_submitted", "dispatch_completed"])
 
     def test_concurrent_first_submissions_create_one_provider_run(self) -> None:
-        context = multiprocessing.get_context("fork")
+        context = multiprocessing.get_context("spawn")
         start = context.Event()
         results = context.Queue()
         run_posts = context.Value("i", 0)
 
-        def api_request(api_url, method, path, payload=None, timeout_seconds=10.0):
-            if method == "POST" and path == "/threads":
-                time.sleep(0.25)
-                return {"thread_id": "thread-concurrent"}
-            if method == "POST" and path.endswith("/runs"):
-                with run_posts.get_lock():
-                    run_posts.value += 1
-                    run_number = run_posts.value
-                return {
-                    "run_id": f"run-concurrent-{run_number}",
-                    "thread_id": "thread-concurrent",
-                    "assistant_id": "assistant-worker",
-                    "status": "pending",
-                }
-            if method == "GET" and "/runs/" in path:
-                return {"status": "pending"}
-            raise AssertionError((method, path, payload))
-
-        def submit():
-            start.wait()
-            try:
-                result = submit_langgraph_run(
-                    self.workspace,
-                    self.task_id,
-                    "langgraph_worker",
-                    "implementer",
-                    wait_seconds=0,
-                )
-                results.put(("ok", result["status"]))
-            except Exception as error:  # noqa: BLE001 - process boundary records the public error.
-                results.put(("error", str(error)))
-
-        with patch("valp_cli.langgraph_adapter._request", side_effect=api_request):
-            processes = [context.Process(target=submit) for _ in range(2)]
-            for process in processes:
-                process.start()
-            start.set()
-            for process in processes:
-                process.join(5)
+        processes = [
+            context.Process(
+                target=_concurrent_submit_worker,
+                args=(str(self.workspace), self.task_id, start, results, run_posts),
+            )
+            for _ in range(2)
+        ]
+        for process in processes:
+            process.start()
+        start.set()
+        for process in processes:
+            process.join(10)
 
         self.assertTrue(all(not process.is_alive() for process in processes))
         self.assertTrue(all(process.exitcode == 0 for process in processes))

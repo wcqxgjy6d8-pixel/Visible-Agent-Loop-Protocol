@@ -86,6 +86,7 @@
       },
       "additionalProperties": false
     },
+    "agent_sessions": {"$ref": "#/$defs/agentSessionsMarker"},
     "team_selection": {
       "type": "object",
       "properties": {
@@ -165,6 +166,18 @@
     "capabilities_missing": {
       "type": "array",
       "items": {"type": "string"}
+    }
+  },
+  "$defs": {
+    "agentSessionsMarker": {
+      "type": "object",
+      "required": ["status", "ref", "receipts_ref"],
+      "properties": {
+        "status": {"const": "ready"},
+        "ref": {"const": "agent-sessions.json"},
+        "receipts_ref": {"const": "agent-session-receipts.jsonl"}
+      },
+      "additionalProperties": false
     }
   }
 }

@@ -3,7 +3,7 @@
   "$id": "https://valp.dev/schema/valp-leader-selection.v1.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "selection_id", "installation_id", "principal_id", "principal_kind", "selected_by", "selection_reason", "approved_at", "previous_leader_epoch", "new_leader_epoch"],
+  "required": ["schema_version", "selection_id", "installation_id", "principal_id", "principal_kind", "selected_by", "selection_reason", "approved_at", "previous_leader_epoch", "proposed_leader_epoch", "passport_ref", "passport_digest"],
   "properties": {
     "schema_version": {"const": "valp-leader-selection.v1"},
     "selection_id": {"type": "string", "minLength": 1},
@@ -14,6 +14,8 @@
     "selection_reason": {"type": "string", "minLength": 1},
     "approved_at": {"type": "string", "minLength": 1},
     "previous_leader_epoch": {"type": "integer", "minimum": 0},
-    "new_leader_epoch": {"type": "integer", "minimum": 1}
+    "proposed_leader_epoch": {"type": "integer", "minimum": 1},
+    "passport_ref": {"type": "string", "pattern": "^capability-passports/[0-9a-f]{64}\\.json$"},
+    "passport_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
   }
 }

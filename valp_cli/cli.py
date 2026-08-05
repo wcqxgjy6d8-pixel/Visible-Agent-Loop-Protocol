@@ -4,21 +4,36 @@ import argparse
 import json
 import os
 import shlex
+import shutil
 import sqlite3
+import sys
 from pathlib import Path
 
 from . import __version__
 from .audit import FAIL, TaskAudit, print_text_report, report_to_dict, resolve_task_dir
 from .catalog import CatalogError, EvidenceCatalog
 from .doctor import collect_doctor_report, render_text_summary, report_to_dict as doctor_report_to_dict, write_markdown_report
-from .control_plane import ControlPlaneError, InstallationCore, PROTOCOL_VERSION, installation_root, load_observations
+from .control_plane import (
+    ControlPlaneError,
+    InstallationCore,
+    PROTOCOL_VERSION,
+    installation_root,
+    leader_installation_root,
+    load_observations,
+)
 from .conformance import run_conformance
 from .adapter_starter import AdapterStarterError, initialize_adapter
 from .plugins import load_plugin_manifest
 from .task_control import TASK_STATUSES, init_task, task_state, transition_task
 from .process_adapter import run_process
 from .langgraph_adapter import LangGraphAdapterError, resume_langgraph_run, submit_langgraph_run
-from .workflow import RUNTIME_CHOICES, collect_runtime_preflight, dispatch_task, publish_task, read_json, resume_suspended_task, route_task, scan_workspace, wait_for_task
+from .herdr_adapter import (
+    HerdrSubmissionError,
+    open_herdr_leader_session,
+    provision_herdr_leader_session,
+    recover_herdr_leader_session,
+)
+from .workflow import RUNTIME_CHOICES, collect_runtime_preflight, dispatch_task, publish_task, read_json, resume_suspended_task, route_task, run_command, scan_workspace, wait_for_task
 
 
 def split_worker_command(command: str) -> list[str]:
@@ -97,6 +112,14 @@ notes:
         type=int,
         help="Explicit incomplete-submission retry generation; the bounded reference path accepts only 1",
     )
+    dispatch.add_argument(
+        "--replace-owned-session-launch",
+        action="store_true",
+        help=(
+            "Allow one explicitly targeted absent task-owned HERDR session to use "
+            "the current capability launch argv in its next generation"
+        ),
+    )
     dispatch.add_argument("--submit", action="store_true", help="Actually submit through the selected reference adapter when supported")
 
     preflight = sub.add_parser("preflight", help="Check selected runtime adapter readiness")
@@ -148,17 +171,56 @@ notes:
     install_init.add_argument("--root", help="Explicit control root; defaults to <workspace>/.valp")
     install_init.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
-    leader = sub.add_parser("leader", help="Discover, select, inspect, or rotate the Installation Leader")
+    leader = sub.add_parser(
+        "leader",
+        help="Discover, select, start, open, recover, restart, inspect, or rotate the Installation Leader",
+    )
     leader_sub = leader.add_subparsers(dest="leader_command", required=True)
     candidates = leader_sub.add_parser("candidates", help="Run bounded read-only bootstrap discovery")
     candidates.add_argument("--workspace", default=".", help="Workspace root")
     candidates.add_argument("--root", help="Explicit control root")
     candidates.add_argument("--json", action="store_true", help="Print machine-readable JSON")
-    select = leader_sub.add_parser("select", help="Explicitly select and activate a discovered leader")
+    select = leader_sub.add_parser("select", help="Explicitly select a discovered Leader without starting it")
     select.add_argument("principal", help="Observed principal id")
     select.add_argument("--workspace", default=".", help="Workspace root")
     select.add_argument("--root", help="Explicit control root")
     select.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    start = leader_sub.add_parser("start", help="Provision and activate the selected Installation Leader")
+    start.add_argument("--workspace", default=".", help="Workspace root")
+    start.add_argument("--root", help="Explicit control root")
+    start.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    open_leader = leader_sub.add_parser(
+        "open",
+        help="Open the installation Leader from any caller workspace",
+    )
+    open_leader.add_argument(
+        "--workspace",
+        default=".",
+        help="Caller workspace or cwd for a replacement attachment",
+    )
+    open_leader.add_argument("--root", help="Explicit control root")
+    open_leader.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    recover_start = leader_sub.add_parser(
+        "recover-start",
+        help="Recover one explicitly approved failed first-start session without mutating runtime state",
+    )
+    recover_start.add_argument(
+        "--session",
+        required=True,
+        help="Exact runtime session id from the failed first start",
+    )
+    recover_start.add_argument(
+        "--approve",
+        action="store_true",
+        help="Record explicit user approval for this exact recovery session",
+    )
+    recover_start.add_argument("--workspace", default=".", help="Workspace root")
+    recover_start.add_argument("--root", help="Explicit control root")
+    recover_start.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    restart = leader_sub.add_parser("restart", help="Fence and replace the active Leader with a fresh session")
+    restart.add_argument("--workspace", default=".", help="Workspace root")
+    restart.add_argument("--root", help="Explicit control root")
+    restart.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     show = leader_sub.add_parser("show", help="Show the current leader and epoch")
     show.add_argument("--workspace", default=".", help="Workspace root")
     show.add_argument("--root", help="Explicit control root")
@@ -420,6 +482,7 @@ def prompt_from_args(args: argparse.Namespace) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    invoked_entrypoint = Path(sys.argv[0]) if argv is None else None
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -430,6 +493,7 @@ def main(argv: list[str] | None = None) -> int:
             prompt_from_args(args),
             profile=args.profile,
             runtime=args.runtime,
+            invoked_entrypoint=invoked_entrypoint,
         )
         result = {"task_id": args.task_id, "task_dir": str(directory), "routed": False}
         if args.json:
@@ -445,7 +509,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "scan":
-        capabilities = scan_workspace(Path(args.workspace), args.task_id, runtime=args.runtime)
+        capabilities = scan_workspace(
+            Path(args.workspace),
+            args.task_id,
+            runtime=args.runtime,
+            invoked_entrypoint=invoked_entrypoint,
+        )
         if args.json:
             print(json.dumps(capabilities, indent=2, ensure_ascii=False))
         else:
@@ -486,6 +555,7 @@ def main(argv: list[str] | None = None) -> int:
             proof_seconds=args.proof_seconds,
             recover_incomplete=args.recover_incomplete,
             retry_generation=args.retry_generation,
+            replace_owned_session_launch=args.replace_owned_session_launch,
         )
         if args.submit:
             print(f"Submitted dispatch for task {args.task_id}")
@@ -558,17 +628,191 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "leader":
-        root = installation_root(Path(args.workspace), Path(args.root) if args.root else None)
+        root = leader_installation_root(Path(args.workspace), Path(args.root) if args.root else None)
         core = InstallationCore(root)
         try:
             if args.leader_command == "candidates":
-                result = core.discover_candidates()
+                doctor_report = collect_doctor_report(Path(args.workspace))
+                result = core.discover_candidates(doctor_report.capability_passports)
             elif args.leader_command == "select":
                 result = core.select_leader(args.principal)
+            elif args.leader_command in {"start", "open"}:
+                state = core.state()
+                selected = state.get("selected_leader") if isinstance(state.get("selected_leader"), dict) else {}
+                runtime = selected.get("runtime") if isinstance(selected.get("runtime"), dict) else {}
+                if runtime.get("adapter_id") != "herdr":
+                    raise ControlPlaneError(
+                        "VALP-E-ADAPTER-UNSUPPORTED",
+                        "The reference CLI currently starts installation Leaders only through a selected HERDR adapter",
+                    )
+                herdr = shutil.which("herdr")
+                if not herdr:
+                    raise ControlPlaneError(
+                        "VALP-E-ADAPTER-UNSUPPORTED",
+                        "The selected HERDR adapter is not installed or not reachable on PATH",
+                    )
+                if state.get("status") == "active":
+                    binding_path = root / "leader-session-binding.json"
+                    binding = read_json(binding_path) if binding_path.exists() else None
+                    if not isinstance(binding, dict):
+                        raise ControlPlaneError(
+                            "VALP-E-REGISTRY-CONSISTENCY",
+                            "Active Leader has no runtime attachment record; run `valp leader restart` to repair it",
+                            state_effect="blocked",
+                        )
+                    opened = open_herdr_leader_session(herdr, binding, run_command)
+                    if opened.get("status") == "opened":
+                        result = {
+                            "status": "active",
+                            "action": "opened_existing_leader_attachment",
+                            "leader": core.status(),
+                            "attachment": opened,
+                        }
+                    else:
+                        prepared = core.prepare_leader_restart()
+                        provisioned = provision_herdr_leader_session(
+                            herdr,
+                            installation_id=state["installation_id"],
+                            principal_id=selected["principal_id"],
+                            agent=selected["agent_id"],
+                            workspace_root=Path(args.workspace),
+                            launch_argv=list(runtime["launch_argv"]),
+                            leader_epoch=prepared["proposed_leader_epoch"],
+                            generation=prepared["generation"],
+                            run_command=run_command,
+                        )
+                        result = core.activate_leader(provisioned)
+                        result["action"] = "reopened_missing_leader_attachment"
+                else:
+                    prepared = core.prepare_leader_start()
+                    provisioned = provision_herdr_leader_session(
+                        herdr,
+                        installation_id=state["installation_id"],
+                        principal_id=selected["principal_id"],
+                        agent=selected["agent_id"],
+                        workspace_root=Path(args.workspace),
+                        launch_argv=list(runtime["launch_argv"]),
+                        leader_epoch=prepared["proposed_leader_epoch"],
+                        generation=1,
+                        run_command=run_command,
+                    )
+                    result = core.activate_leader(provisioned)
+            elif args.leader_command == "recover-start":
+                state = core.state()
+                selected = state.get("selected_leader") if isinstance(state.get("selected_leader"), dict) else {}
+                runtime = selected.get("runtime") if isinstance(selected.get("runtime"), dict) else {}
+                if runtime.get("adapter_id") != "herdr":
+                    raise ControlPlaneError(
+                        "VALP-E-ADAPTER-UNSUPPORTED",
+                        "The reference CLI currently recovers installation Leaders only through a selected HERDR adapter",
+                    )
+                prepared = core.prepare_leader_start_recovery(
+                    args.session,
+                    approve=args.approve,
+                )
+                herdr = shutil.which("herdr")
+                if not herdr:
+                    raise ControlPlaneError(
+                        "VALP-E-ADAPTER-UNSUPPORTED",
+                        "The selected HERDR adapter is not installed or not reachable on PATH",
+                    )
+                provisioned = recover_herdr_leader_session(
+                    herdr,
+                    installation_id=state["installation_id"],
+                    principal_id=selected["principal_id"],
+                    agent=selected["agent_id"],
+                    workspace_root=Path(args.workspace),
+                    launch_argv=list(runtime["launch_argv"]),
+                    leader_epoch=prepared["proposed_leader_epoch"],
+                    generation=prepared["generation"],
+                    session_id=args.session,
+                    recovery_approval=prepared["recovery_approval"],
+                    run_command=run_command,
+                )
+                result = core.activate_leader(provisioned)
+            elif args.leader_command == "restart":
+                state = core.state()
+                selected = state.get("selected_leader") if isinstance(state.get("selected_leader"), dict) else {}
+                runtime = selected.get("runtime") if isinstance(selected.get("runtime"), dict) else {}
+                if runtime.get("adapter_id") != "herdr":
+                    raise ControlPlaneError(
+                        "VALP-E-ADAPTER-UNSUPPORTED",
+                        "The reference CLI currently restarts installation Leaders only through a selected HERDR adapter",
+                    )
+                herdr = shutil.which("herdr")
+                if not herdr:
+                    raise ControlPlaneError(
+                        "VALP-E-ADAPTER-UNSUPPORTED",
+                        "The selected HERDR adapter is not installed or not reachable on PATH",
+                    )
+                prepared = core.prepare_leader_restart()
+                provisioned = provision_herdr_leader_session(
+                    herdr,
+                    installation_id=state["installation_id"],
+                    principal_id=selected["principal_id"],
+                    agent=selected["agent_id"],
+                    workspace_root=Path(args.workspace),
+                    launch_argv=list(runtime["launch_argv"]),
+                    leader_epoch=prepared["proposed_leader_epoch"],
+                    generation=prepared["generation"],
+                    run_command=run_command,
+                )
+                result = core.activate_leader(provisioned)
             elif args.leader_command == "rotate":
-                result = core.rotate_leader(args.principal)
+                candidates_record = read_json(root / "leader-candidates.json")
+                candidate = next(
+                    (
+                        item
+                        for item in candidates_record.get("candidates") or []
+                        if item.get("principal_id") == args.principal
+                    ),
+                    None,
+                )
+                if candidate is None:
+                    raise ControlPlaneError(
+                        "VALP-E-PERMISSION-DENIED",
+                        "Replacement Leader must have current discovery evidence",
+                    )
+                runtime = candidate.get("runtime") if isinstance(candidate.get("runtime"), dict) else {}
+                if runtime.get("adapter_id") != "herdr":
+                    raise ControlPlaneError(
+                        "VALP-E-ADAPTER-UNSUPPORTED",
+                        "The reference CLI currently rotates installation Leaders only through a selected HERDR adapter",
+                    )
+                herdr = shutil.which("herdr")
+                if not herdr:
+                    raise ControlPlaneError(
+                        "VALP-E-ADAPTER-UNSUPPORTED",
+                        "The selected HERDR adapter is not installed or not reachable on PATH",
+                    )
+                prepared = core.rotate_leader(args.principal)
+                selected = prepared["selected_leader"]
+                provisioned = provision_herdr_leader_session(
+                    herdr,
+                    installation_id=core.state()["installation_id"],
+                    principal_id=selected["principal_id"],
+                    agent=selected["agent_id"],
+                    workspace_root=Path(args.workspace),
+                    launch_argv=list(runtime["launch_argv"]),
+                    leader_epoch=prepared["proposed_leader_epoch"],
+                    generation=prepared["generation"],
+                    run_command=run_command,
+                )
+                result = core.activate_leader(provisioned)
             else:
                 result = core.status()
+        except HerdrSubmissionError as error:
+            if args.leader_command in {"start", "open"} and core.state().get("status") == "active":
+                raise SystemExit(f"VALP-E-LEADER-UNREACHABLE: {error}") from error
+            try:
+                core.fail_leader_activation(
+                    args.leader_command,
+                    adapter_id="herdr",
+                    failure_class=type(error).__name__,
+                )
+            except ControlPlaneError as blocked:
+                raise SystemExit(f"{blocked.code}: {blocked}") from error
+            raise AssertionError("Leader activation failure must fail closed") from error
         except ControlPlaneError as error:
             raise SystemExit(f"{error.code}: {error}") from error
         if args.json:
@@ -580,9 +824,24 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"- {candidate['principal_id']} ({candidate['principal_kind']})")
             elif args.leader_command == "show":
                 state = result["state"]
+                binding = result.get("leader_session") or {}
                 print(f"Installation leader: {(state.get('active_leader') or {}).get('principal_id', 'none')}")
                 print(f"Epoch: {state.get('active_leader_epoch', 0)}")
                 print(f"Status: {state.get('status')}")
+                print(f"Session: {(binding.get('runtime_identity') or {}).get('session_id', 'none')}")
+                print(f"Generation: {binding.get('generation', 'none')}")
+                print(f"Health: {(binding.get('health') or {}).get('status', 'unknown')}")
+            elif args.leader_command in {"start", "open", "recover-start", "restart", "rotate"}:
+                if result.get("attachment"):
+                    attachment = result["attachment"]
+                    print("Installation Leader opened from the current caller.")
+                    print(f"Session: {attachment.get('session_id', 'none')}")
+                    print(f"Action: {result.get('action', 'opened')}")
+                else:
+                    binding = result["binding"]
+                    print(f"Installation Leader started: {binding['principal_id']}")
+                    print(f"Session: {binding['runtime_identity']['session_id']}")
+                    print(f"Epoch: {binding['leader_epoch']}")
             else:
                 print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0

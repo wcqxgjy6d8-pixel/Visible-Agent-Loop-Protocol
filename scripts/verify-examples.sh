@@ -55,9 +55,11 @@ except ImportError as exc:
 root = Path(".")
 suspension_schema = json.loads((root / "schemas" / "suspension.schema.json").read_text(encoding="utf-8"))
 continuation_capability_schema = json.loads((root / "schemas" / "continuation-capability.schema.json").read_text(encoding="utf-8"))
+source_provenance_schema = json.loads((root / "schemas" / "source-provenance.schema.json").read_text(encoding="utf-8"))
 schema_registry = Registry().with_resources([
     (suspension_schema["$id"], Resource.from_contents(suspension_schema)),
     (continuation_capability_schema["$id"], Resource.from_contents(continuation_capability_schema)),
+    (source_provenance_schema["$id"], Resource.from_contents(source_provenance_schema)),
 ])
 
 def validator_for(schema_name):
@@ -70,6 +72,7 @@ schema_by_name = {
     "assignment-validation.json": "assignment-validation.schema.json",
     "automation-policy.json": "automation-policy.schema.json",
     "agent-recommendations.json": "agent-recommendations.schema.json",
+    "agent-sessions.json": "agent-sessions.schema.json",
     "capabilities.json": "capabilities.schema.json",
     "capability-passport.json": "capability-passport.schema.json",
     "context-pack.json": "context-pack.schema.json",
@@ -88,6 +91,7 @@ schema_by_name = {
     "historical-audit-boundary.json": "historical-audit-boundary.schema.json",
     "routing.json": "routing.schema.json",
     "skill-recommendations.json": "skill-recommendations.schema.json",
+    "source-provenance.json": "source-provenance.schema.json",
     "iteration-budget.json": "iteration-budget.schema.json",
     "state.json": "state.schema.json",
     "submission-dependencies.json": "submission-dependencies.schema.json",
@@ -129,6 +133,15 @@ for path in sorted((root / "examples").rglob("dispatch-receipts.jsonl")):
         for error in receipt_validator.iter_errors(data):
             errors.append(f"{path}:{lineno} {error.json_path}: {error.message}")
 
+session_receipt_validator = validator_for("agent-session-receipt.schema.json")
+for path in sorted((root / "examples").rglob("agent-session-receipts.jsonl")):
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        data = json.loads(line)
+        for error in session_receipt_validator.iter_errors(data):
+            errors.append(f"{path}:{lineno} {error.json_path}: {error.message}")
+
 wait_event_validator = validator_for("wait-event.schema.json")
 for path in sorted((root / "examples").rglob("wait-events.jsonl")):
     for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -143,7 +156,7 @@ if errors:
 PY
 
 echo "==> Running unit tests"
-"$PYTHON_BIN" -m unittest tests/test_adapter_starter.py tests/test_catalog.py tests/test_continuation.py tests/test_control_plane.py tests/test_github_workflow.py tests/test_herdr_adapter.py tests/test_langgraph_adapter.py tests/test_protocol_kernel.py tests/test_protocol_receipts.py tests/test_receipt_store.py tests/test_readme_claims.py tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py tests/test_schema_examples.py
+"$PYTHON_BIN" -m unittest tests/test_adapter_starter.py tests/test_catalog.py tests/test_continuation.py tests/test_control_plane.py tests/test_github_workflow.py tests/test_herdr_adapter.py tests/test_langgraph_adapter.py tests/test_model_aware_routing.py tests/test_protocol_kernel.py tests/test_protocol_receipts.py tests/test_receipt_store.py tests/test_readme_claims.py tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py tests/test_schema_examples.py
 
 echo "==> Running v0.3 draft core conformance"
 "$PYTHON_BIN" -m valp_cli conformance --profile core-writer

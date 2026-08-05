@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -12,7 +13,12 @@ from typing import Any
 from . import __version__
 from .audit import WARN as AUDIT_WARN, TaskAudit, resolve_task_dir
 from .model_identity import model_identity_for
-from .workflow import collect_runtime_preflight, load_local_capabilities, load_local_overlay
+from .workflow import (
+    capability_runtime_argv_by_agent,
+    collect_runtime_preflight,
+    load_local_capabilities,
+    load_local_overlay,
+)
 
 
 PASS = "pass"
@@ -114,7 +120,15 @@ def commission_capability_passports(root: Path, *, evaluated_at: str) -> list[di
     overlay = load_local_overlay(root)
     overlay_profiles = overlay.get("agent_capability_profiles") or {}
     agent_ids = sorted(str(agent_id) for agent_id in agents)
-    preflight = collect_runtime_preflight(agent_ids, runtime="auto")
+    preflight = collect_runtime_preflight(
+        agent_ids,
+        runtime="auto",
+        launch_argv_by_agent=capability_runtime_argv_by_agent(agents, "launch_argv"),
+        version_command_by_agent=capability_runtime_argv_by_agent(
+            agents,
+            "version_command",
+        ),
+    )
     runtime_agents = preflight.get("agents") or {}
     passports: list[dict[str, Any]] = []
 
@@ -223,9 +237,23 @@ def build_capability_passport(
         if record["binding_status"] == "current"
         and str(record.get("outcome") or "").lower() in {"pass", "passed", "verified", "accepted"}
     ]
+    runtime_config = info.get("runtime") if isinstance(info.get("runtime"), dict) else {}
+    runtime_session = model_identity["model_probe"]["session_identity"]
+    principal_material = {
+        "agent_id": agent_id,
+        "agent_surface": model_identity["agent_surface"],
+        "runtime": runtime_preflight.get("runtime") or "unknown",
+        "session_id": str(agent_preflight.get("session_id") or "unknown"),
+        "session_token": runtime_session.get("token") or "unknown",
+        "session_generation": runtime_session.get("generation") or "unknown",
+    }
+    principal_digest = hashlib.sha256(
+        json.dumps(principal_material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
     return {
         "schema_version": "valp-capability-passport.v1",
         "generated_at": evaluated_at,
+        "principal_id": f"agent-{agent_id}-{principal_digest[:16]}",
         "agent_id": agent_id,
         "agent_surface": model_identity["agent_surface"],
         "runtime_identity": {
@@ -233,6 +261,24 @@ def build_capability_passport(
             "adapter_class": runtime_preflight.get("adapter_class") or "unknown",
             "session_id": str(agent_preflight.get("session_id") or "unknown"),
             "session": model_identity["model_probe"]["session_identity"],
+        },
+        "runtime": {
+            "adapter_id": str(
+                runtime_config.get("adapter_id")
+                or runtime_preflight.get("runtime")
+                or "unknown"
+            ).strip().lower(),
+            "adapter_class": str(runtime_preflight.get("adapter_class") or "unknown"),
+            "launch_argv": [
+                str(item)
+                for item in runtime_config.get("launch_argv") or []
+                if isinstance(item, str) and item.strip()
+            ],
+            "version_command": [
+                str(item)
+                for item in runtime_config.get("version_command") or []
+                if isinstance(item, str) and item.strip()
+            ],
         },
         "capability_layers": {
             "official_claim": {"status": "present" if official_claims else "unknown"},

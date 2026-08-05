@@ -328,13 +328,25 @@ Recommended first path:
 
 ```text
 1. Install VALP and resolve the actual install root.
-2. Run `valp doctor --json` to commission current capability passports.
-3. Let the user explicitly choose the Leader.
-4. Install HERDR, the reference VALP runtime, when Full Mode is desired.
-5. Create or choose a workspace and publish a dry-run task.
-6. Let the Leader decompose the task and write an assignment declaration.
-7. Validate it with `valp route --assignments`, then preflight and dispatch.
-8. Let the runtime wait for status and write receipts/evidence.
+2. Run `valp doctor --workspace <install-root> --json` and inspect the current
+   capability passports.
+3. Explicitly choose the Leader, then run `valp leader select <principal>`,
+   `valp leader start`, `valp leader show`, and `valp leader open`.
+   If and only if the first start is blocked after creating one exact partial
+   session, use the audited `valp leader recover-start --session <id> --approve`
+   path; ordinary recovery never adopts an arbitrary existing pane.
+4. Run `valp publish TASK-001 --workspace <workspace> --prompt "..."`.
+5. Let the Leader declare assignments, then run `valp route TASK-001
+   --workspace <workspace> --assignments <declaration>`.
+6. Inspect `valp dispatch TASK-001 --workspace <workspace>` as a dry run.
+7. After explicit user approval, run `valp dispatch TASK-001 --workspace
+   <workspace> --submit`.
+8. Confirm the terminal shows the installation-owned Leader pane and a fresh
+   task-owned Worker pane; a pane containing text is not submission proof.
+9. Require identity-bound `dispatch_submitted`, then expected evidence and
+   `dispatch_completed`.
+10. Run independent review and resolve recommendations.
+11. Run `valp audit <workspace> --task TASK-001`; `fail_count` must be 0.
 ```
 
 Linux/macOS recommended HERDR install:
@@ -347,10 +359,10 @@ herdr status
 See [INSTALL.md](INSTALL.md) for Homebrew, Windows, SSH remote, and fallback
 paths.
 
-App-managed installs should follow the same order: install check, doctor,
-runtime preflight, dry-run publish/dispatch, user opt-in, then optional live
-smoke test. New installs should not enable `--submit`, `policy_auto`, or watcher
-mode before the user has seen doctor/preflight results.
+CLI-only installs are fully supported. An App-managed install, when used,
+follows the same order and does not create an implicit coordinator or Leader.
+New installs should not enable `--submit`, `policy_auto`, or watcher mode before
+the user has seen Doctor, exact Leader binding, and preflight results.
 
 New users should start with [docs/quickstart.md](docs/quickstart.md).
 
@@ -391,10 +403,13 @@ instructions for headless queue tasks. Use `--submit` only when the selected
 runtime is ready.
 
 The HERDR submission adapter is packaged with the VALP CLI; a separate
-`herdr-loop` executable is not required. Preflight detects either atomic
-`herdr agent prompt` submission or the compatible `pane send-text` +
-`pane send-keys` + `agent wait` fallback and fails closed when neither complete
-path is available.
+`herdr-loop` executable is not required. Full Mode submission proof requires a
+structured `herdr agent get` baseline followed by `herdr agent prompt <target>
+<payload> --wait --until working --timeout <ms>`. The `agent_prompted` response
+must preserve the routed Agent identity and advance integer `state_change_seq`.
+Older `pane send-text` + `pane send-keys` + `agent wait` fallback is transport
+only: it records `dispatch_inserted`, stops as `Manual-degraded`, and never
+records `dispatch_submitted`.
 
 `valp audit` scans a task evidence folder and checks the Done Criteria from
 `SPEC.md`, including runtime preflight, skill recommendation evidence,
@@ -651,7 +666,10 @@ Visible-Agent-Loop-Protocol/
 - Local overlays are hints, not protocol overrides.
 - Agent profiles and scores are assignment hints for the Leader, not VALP
   selection authority.
-- The user selects the Leader; only that Leader declares task Agents.
+- The user selects the Leader, then starts one exact installation-owned Leader
+  session; only that bound Leader declares task Agents.
+- Every Agent session launched or assigned by the Leader is a task/project-owned
+  Worker, including another session of the same Agent product.
 - VALP validates declarations and may block them, but cannot choose or replace
   an Agent.
 - Provider capability is scanned, not assumed.

@@ -5,6 +5,15 @@
 - Redesigns Doctor and routing authority: Doctor commissions per-surface/session
   capability passports, the user selects the Leader, the Leader declares task
   assignments, and VALP validates without choosing or replacing Agents.
+- Separates Leader selection from startup, provisions one fresh
+  installation-owned Leader session, fences restart/rotation generations, and
+  records blocked failure receipts without inventing session evidence.
+- Adds explicit first-start recovery for one user-approved exact runtime
+  session, with append-only failed-receipt preservation and bounded read-only
+  identity, launch, process, non-focus, and health proof before epoch `1`.
+- Defines every Agent session launched or assigned by the Leader as a
+  task/project-owned Worker, including another session of the same Agent
+  product; CLI-only installation is fully supported and Apps are optional.
 - Changes `valp publish` to task creation only and requires
   `valp route --assignments <declaration>` before routing/dispatch artifacts are
   generated.

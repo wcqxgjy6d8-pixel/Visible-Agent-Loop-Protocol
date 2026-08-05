@@ -53,6 +53,26 @@ receipts and evidence.
 : A visible or addressable interaction channel for one agent, such as a
 terminal pane, hosted-agent thread, queue worker, or manually copied dispatch.
 
+`bootstrap surface`
+: The user-controlled CLI, App, installer, or manual surface that initializes
+an installation, runs Doctor, records the user's Leader selection, and requests
+Leader startup at epoch `0`. A bootstrap surface is not the Installation Leader
+and its private reasoning, current session, focus, label, or working directory
+cannot establish Leader identity.
+
+`Installation Leader session`
+: The single installation-owned Agent session activated for the current Leader
+epoch after explicit user selection and successful runtime provisioning. Its
+authority comes from the selection, epoch, exact runtime binding, health proof,
+and activation receipt together, not from an Agent product name or UI surface.
+
+`worker`
+: Any Agent session created or assigned by the Installation Leader for task
+execution, research, prototyping, verification, review, or delegated
+coordination. A worker remains task- or project-owned and cannot inherit
+installation authority or the Leader epoch, including when it uses the same
+Agent product or provider as the Leader.
+
 `pane`
 : A terminal split or equivalent visible UI surface used by a pane-controller
 runtime adapter. A pane is one possible agent session type, not a protocol
@@ -92,7 +112,10 @@ eligibility. A passport is evidence for a Leader's decision, not an assignment.
 : The Agent or human explicitly selected by the user to own task decomposition,
 assignment declarations, visible decisions, gates, and final synthesis. VALP
 MUST record and validate the user's selection, but MUST NOT select, replace, or
-rotate the Leader on its own.
+rotate the Leader on its own. Selecting an Agent records user intent but does
+not activate it; Agent leadership starts only after the exact installation-owned
+Leader session is provisioned, bound, health-checked, and activated for a
+non-zero epoch.
 
 `coordinator`
 : The control surface that maintains visible state, receipts, gates, handoffs,
@@ -303,6 +326,8 @@ COMMISSION INSTALLATION
   -> RUN DOCTOR ACROSS KNOWN AGENT SURFACES AND SESSIONS
   -> WRITE CAPABILITY PASSPORTS
   -> USER SELECTS LEADER
+  -> START AND BIND INSTALLATION-OWNED LEADER SESSION
+  -> ACTIVATE LEADER EPOCH
 INTAKE
   -> PUBLISH
   -> SELECT AUTOMATION POLICY
@@ -348,13 +373,13 @@ RECORD
 
 ## 4. State Machine
 
-Doctor commissioning and user Leader selection are installation authority
-preconditions, not task-state transitions. The task state begins when the task
-is published. Implementations may collapse adjacent sub-states into phase-level
-records if they preserve the required evidence and state mapping. For example,
-a small CLI may keep `published` while waiting for the Leader's declaration or
-record `dispatching` while separately writing validation, provider, preflight,
-and visible-attention evidence.
+Doctor commissioning, user Leader selection, and exact Leader session activation
+are installation authority preconditions, not task-state transitions. The task
+state begins when the task is published. Implementations may collapse adjacent
+sub-states into phase-level records if they preserve the required evidence and
+state mapping. For example, a small CLI may keep `published` while waiting for
+the Leader's declaration or record `dispatching` while separately writing
+validation, provider, preflight, and visible-attention evidence.
 
 ```text
 new
@@ -395,6 +420,45 @@ The compatibility state names `scoring_routes`, `routing_capabilities`, and
 `routing_squad` do not grant Agent-selection authority. Scores are advisory;
 the latter states validate the Leader's declaration and either preserve it or
 block it. VALP cannot fill, remove, or replace an assignment.
+
+### Task Source Provenance
+
+Every newly published task MUST record the implementation source identity used
+to create it in `state.json.source_provenance`. The record MUST contain a
+`task_start` observation and a `last_observed` observation. `valp publish`
+creates both observations from the same source identity; every task-scoped
+`valp scan` MUST preserve `task_start` and atomically replace `last_observed`
+with a fresh observation.
+
+Each observation MUST record:
+
+```text
+status: resolved_clean | resolved_dirty | unavailable
+implementation_id
+invoked_entrypoint
+resolved_entrypoint
+source_root
+observed_at
+vcs.kind: git | none
+vcs.commit: exact commit id or null
+vcs.tree: exact committed tree id or null
+vcs.worktree_status: clean | dirty | unavailable
+```
+
+Paths are implementation observations, not protocol defaults. Implementations
+MUST resolve their actual entrypoint and source root and MUST NOT hard-code one
+operator's checkout path. A Git-backed source MUST record both the exact commit
+and committed tree. A dirty worktree MUST remain `resolved_dirty`; the commit
+and tree identify its base revision but MUST NOT be represented as the exact
+identity of uncommitted bytes. A non-Git or otherwise unresolvable installation
+MUST use `unavailable` with null commit/tree values rather than inventing a
+revision.
+
+Historical task states created before this contract MAY omit
+`source_provenance`. A later task-scoped scan MAY add the object with
+`task_start: null` and a fresh `last_observed` observation. Readers MUST
+preserve such tasks as historical evidence; they MUST NOT backfill a claimed
+task-start identity from a later observation.
 
 ### 4.1 Runtime Work Item State Mapping
 
@@ -812,9 +876,9 @@ mutation.
 
 ### 4.5 First-Install Health Gate
 
-A first install, including an App-managed install, must commission the available
-Agent surfaces before real dispatch. The installer or App should run an explicit
-health and capability gate in this order:
+A first install must commission the available Agent surfaces before real
+dispatch. The bootstrap controller, whether exposed through a CLI or an
+optional App, should run an explicit health and capability gate in this order:
 
 ```text
 install check
@@ -822,6 +886,8 @@ install check
   -> enumerate known Agent surfaces and addressable sessions
   -> write installation capability passports
   -> user selects the Leader
+  -> provision and bind one fresh installation-owned Leader session
+  -> activate the Leader epoch
   -> runtime preflight, when Full Mode is requested
   -> Leader-declared assignment validation and dispatch dry run
   -> visible user decision before any submit or Auto Visible policy
@@ -945,6 +1011,345 @@ Reference tools may expose adapter selection flags such as `auto`, `manual`,
 `herdr`, or `queue`, but protocol semantics come from the recorded adapter class
 and evidence. A queue adapter must not fake pane fields, and a pane adapter must
 still fail preflight when terminal or display checks fail.
+
+### Installation Leader Session Lifecycle
+
+The normal first-install control path is:
+
+```text
+bootstrap surface
+  -> Doctor commissions one passport per addressable Agent session
+  -> user selects one observed Leader principal
+  -> selection remains inactive
+  -> leader start provisions a fresh installation-owned runtime attachment
+  -> authority and attachment health proof are recorded
+  -> Leader epoch becomes active
+  -> Leader may create task/project-owned Workers
+```
+
+The bootstrap surface MAY use the same Agent product as the selected Leader,
+but it MUST remain a separate epoch-`0` control surface. An implementation MUST
+NOT adopt the bootstrap session, the user's currently focused session, a pane
+matched only by Agent name, an existing session matched by label or cwd, or a
+previous worker session as the Installation Leader.
+
+Leader selection and activation are separate state changes. Selection MUST
+persist the selected principal, its observed passport reference and digest,
+and user-approval evidence while leaving `active_leader` unset and
+`active_leader_epoch` at `0`. `leader start` MUST resolve the selected
+principal's validated runtime adapter and `runtime.launch_argv` or equivalent
+launch contract from current Doctor evidence. The protocol and reference CLI
+MUST NOT synthesize a product-specific command or flags.
+
+An initial Agent Leader start MUST create a fresh, non-focused,
+installation-owned runtime attachment. The installation Leader authority is
+the selected principal plus the installation id and fenced epoch; it MUST NOT
+be identified by a terminal, window, pane, tab, cwd, or other presentation
+surface. The durable `leader-session-binding.json` projection and append-only
+`leader-session-receipts.jsonl` ledger record the current attachment and MUST
+bind at least:
+
+```text
+installation id
+selected principal id and passport digest
+Leader epoch
+adapter id and adapter class
+runtime scope and exact session identity
+session generation and non-secret identity token
+installation-owned cwd or equivalent isolated context
+launch argv digest or equivalent launch-contract digest
+health status and health evidence
+focused_at_provisioning: false, when focus exists
+provisioned, activated, replaced, and stopped timestamps as applicable
+```
+
+The first non-zero Leader epoch is allocated only after provisioning and health
+checks succeed. Missing, ambiguous, stale, focused, user-owned, task-owned, or
+conflicting identity evidence MUST leave the selection inactive and fail
+closed. A pane name, Agent label, visible text, Enter submission, process age,
+or cwd alone is not an authority or activation receipt.
+
+`leader open` MUST be callable from any caller workspace. When the current
+runtime attachment is present, it MAY focus or attach that runtime without
+changing the installation Leader epoch. When the attachment is gone, the
+adapter MUST provision a fresh attachment and the core MUST fence the old
+attachment before recording the replacement. A replacement attachment changes
+runtime generation and may change pane, tab, workspace, terminal, cwd, or
+process identity; it MUST NOT change the selected principal merely because the
+caller used another window.
+
+If runtime provisioning fails after `leader start`, `leader restart`, or
+`leader rotate` has entered its prepared state, the core MUST append a
+provider-neutral `leader_session_start_failed` receipt and transition the
+installation to `blocked` through `leader_activation_failed`. The failure
+receipt MUST identify the requested operation, selected principal, proposed
+epoch and generation, adapter, protocol error code, and blocking event. It MUST
+NOT invent a binding digest or runtime session identity that the adapter did
+not prove. The active epoch MUST remain unchanged, and no partially created
+session may acquire Leader authority.
+
+A blocked first start MAY recover the exact partially provisioned session only
+through an explicit user-approved `leader recover-start` operation. Recovery is
+not an ordinary start, restart, rotation, or broad runtime scan. Before entering
+`activating_leader` again, the core MUST prove all of the following:
+
+```text
+active Leader is unset and active Leader epoch is 0
+no Leader session binding exists
+the selected principal and passport digest remain unchanged
+the latest valid Leader-session receipt is the blocking failed start
+the failed receipt names operation start, epoch 1, and the pending generation
+the receipt blocking event matches the current blocked state
+the user explicitly approves one exact runtime session id
+```
+
+The recovery adapter MUST NOT create, move, focus, close, or replace a runtime
+session. It MUST address only the user-named session and re-prove its exact
+runtime identity, deterministic installation-owned workspace identity, selected
+Agent identity, cwd or equivalent context, non-focused state, complete launch
+argv or launch-contract identity, live process generation, and bounded health
+observations. Product name, pane label, cwd, process age, or visible text alone
+is insufficient. A launch mismatch, ambiguous workspace, changed selection,
+stale failure receipt, missing process, or any unrelated session MUST leave the
+installation blocked.
+
+Successful recovery MUST append `leader_start_recovery_approved`, preserve the
+original failure receipt, bind the recovered session to the original pending
+generation, append normal provisioned and activated receipts with recovery
+evidence, and only then activate epoch `1`. Failed recovery MUST append a new
+failure event and receipt without overwriting the original attempt. Recovery
+MUST NOT be used after a Leader epoch has ever been activated; those cases use
+fenced restart or rotation semantics.
+
+Only one Leader authority may be active for an installation, and the reference
+runtime SHOULD expose at most one live attachment for that authority. Calling
+`leader start` while the authority is active MUST behave like `leader open`: it
+must open the current attachment or provision a fenced replacement, rather than
+failing solely because the caller is a different window. Restarting the same
+selected principal remains available as an explicit fenced `leader restart`
+operation; changing the selected principal requires explicit user-approved
+Leader rotation. Both explicit operations preserve prior bindings and receipts,
+provision a fresh generation, and activate the next epoch only after new health
+proof succeeds. A failed replacement MUST NOT silently restore authority to an
+ambiguous or partially started session.
+
+Every Agent session subsequently launched, assigned, or coordinated by the
+Leader is a Worker unless the user performs the explicit fenced Leader
+replacement operation above. This remains true for another session of the same
+Agent product: a Codex Leader launching Codex creates a Codex Worker, not a
+second Leader. Workers MUST use task- or project-owned bindings, MUST NOT carry
+the Leader epoch or installation-owned credentials, and MUST NOT promote
+themselves or another worker through an assignment declaration, delegation,
+squad role, coordinator role, runtime label, or private reasoning.
+
+No UI product is privileged by the protocol. A CLI-only installation MUST be
+fully supported when its Doctor and runtime adapter provide the required
+evidence. An App MAY act only as an explicit bootstrap surface or as the exact
+user-selected and bound Leader session; its presence MUST NOT create a hidden
+coordinator, implicit Leader, or extra evidence seat.
+
+### Project/Task-Owned Agent Sessions
+
+After the user-selected Leader's role assignment passes validation, a Full Mode
+adapter that controls reusable Agent sessions MUST provision or reuse an
+adapter-owned session for every declared worker before delivery. It MUST NOT
+bind a work item to an unrelated session that the user opened for another task.
+
+Session ownership is provider-neutral. The task-local `agent-sessions.json`
+projection MUST bind each declared worker to:
+
+```text
+owner scope: project or task
+stable project identity
+task id, when task-owned
+declared Agent id
+launch argv or equivalent worker entrypoint
+optional version probe argv from the same capability record
+isolated project working context
+adapter-provisioned runtime scope and ownership
+adapter-issued session, worker, or run identity
+binding generation and non-secret identity token
+dispatch eligibility
+```
+
+The base session schemas MUST describe these facts without requiring a pane,
+terminal, workspace, tab, local filesystem path, provider name, model name, or
+known Agent command. Adapter-specific identifiers MAY appear as additional
+runtime-scope or runtime-identity fields, and an adapter MAY apply stricter
+validation only when that adapter is explicitly selected. A reference adapter
+implementation or example MUST NOT become a default requirement for other
+Agents or runtimes. Launch behavior comes from observed capability evidence or
+explicit adapter configuration; the protocol MUST NOT infer it from a built-in
+Agent-name table.
+
+The projection MUST name a stable adapter id, the routed runtime record MUST
+name the same id, and every session receipt in the same ledger MUST repeat that
+exact id. A state-v2 Full Mode task MUST carry the routing and state session
+markers; deleting both markers MUST fail audit rather than downgrade the task to
+legacy behavior. Base audit validates the common
+ownership, context, launch-or-runtime reference, scope, identity, generation,
+and binding chain. Adapter-specific audit rules apply only when that adapter is
+explicitly named; HERDR pane requirements, for example, MUST NOT be applied to
+a thread, queue, hosted run, or another non-pane adapter.
+
+For a local process or pane-controller adapter, a bare executable in the launch
+argv MUST be resolved by the coordinator to a concrete absolute executable path
+before it crosses the runtime boundary. The adapter MUST NOT assume that its
+daemon or terminal server inherits the coordinator's `PATH`; failure to resolve
+the entrypoint blocks provisioning. If a capability declares a version probe,
+preflight MUST execute that exact argv. It MUST NOT synthesize `--version` or
+another flag from an Agent name or launch entrypoint.
+
+When a pane controller can create workspaces, tabs, threads, or equivalent
+containers, it MUST provision a non-focused task-owned runtime scope before it
+starts the worker. It MUST place the worker in an isolated tab or equivalent
+surface inside that scope before recording the binding. Creating a worker by
+splitting the user's active project-unrelated surface is not task isolation.
+The final provisioning response MUST explicitly report that the isolated worker
+pane is not focused. The binding and provisioning receipt MUST persist this as
+`focused_at_provisioning: false`; a missing or focused result blocks delivery.
+This is creation-time evidence and does not forbid a user or coordinator from
+opening the task-owned pane later.
+
+The adapter MUST append provisioning decisions to
+`agent-session-receipts.jsonl`. A first binding is valid only when it is created
+from a successful adapter provisioning response. Agent labels, pane names,
+working directories, model footers, terminal focus, and user declarations are
+not ownership proof and MUST NOT be used to claim a pre-existing unbound
+session.
+
+When a task declares a task-scoped runtime capability record, routing and state
+MUST repeat the same content-addressed reference and digest before dispatch may
+use it. The referenced record MAY override only runtime launch and version-probe
+commands for the declared task; it MUST NOT silently replace role, permission,
+approval, or routing evidence. An unreferenced file, a one-sided marker, or a
+digest mismatch has no launch authority and MUST fail closed when a marker is
+present. This task-scoped launch evidence takes precedence over a mutable global
+capability suggestion only while creating a new binding. It MUST NOT rewrite or
+replace an accepted live binding.
+
+A recorded binding may be reused only when fresh runtime preflight observes the
+same adapter-issued identity and isolated project context. If the bound session
+is absent, the adapter MAY provision the next binding generation and record a
+new receipt. Changing the launch argv for that next generation requires an
+explicit operator action scoped to one declared worker; the previous binding
+and receipt remain immutable. The adapter MUST confirm that the old runtime
+identity is absent before it accepts the new launch contract. A structured
+runtime `not found` result for the exact recorded scope MAY prove this absence;
+timeouts, permission errors, transport failures, and unstructured lookup
+failures MUST NOT. If the recorded pane, worker, thread, or run identifier is present
+with a different identity, owner, Agent, launch entrypoint, or context, the
+adapter MUST fail closed. It MUST NOT silently replace or overwrite the
+conflicting binding.
+
+When the recorded runtime identity is still present and matches, the accepted
+binding's launch contract remains authoritative for reuse. A later capability
+scan or registry change MUST NOT rewrite that contract, force a replacement,
+or block same-binding delivery merely because its current launch suggestion is
+different. An explicit launch-replacement request while the old identity is
+present MUST fail closed; replacement is available only after absence is
+proved. Binding validation errors MUST identify the conflicting field without
+printing the launch arguments or other sensitive values.
+
+When the runtime exposes a binding-scoped lookup, fresh preflight SHOULD query
+the recorded workspace, worker pool, thread, or run scope directly. It SHOULD
+NOT depend on an unbounded global session listing that may be truncated or mix
+unrelated user sessions into the observation surface.
+
+Before the first owned binding exists, route-time observations from unbound
+sessions are discovery hints only. They MUST NOT qualify or disqualify a
+declared worker's runtime model/session identity. Static assignment validation
+MAY pass with that gate explicitly deferred. Immediately after provisioning
+and before delivery, the adapter MUST perform fresh model/session eligibility
+checks against the owned binding; a stale, unknown, mismatched, or ineligible
+result blocks dispatch.
+
+A newly started owned session MAY need a bounded readiness observation window
+before it reports model and session metadata. The adapter MAY repeat read-only
+preflight during that fixed window. An unobserved identity after the deadline
+is a readiness blocker; an observed but ineligible identity is a model mismatch
+and MUST NOT be treated as readiness.
+
+An Agent launch interposer that probes identity, reports metadata, captures
+startup output, or supervises a child process MUST preserve the child runtime's
+interactive terminal contract. For a TUI worker this includes a real child PTY,
+terminal size propagation, signal forwarding, and raw input semantics so keys
+such as Enter are not rewritten by an outer canonical line discipline. Any
+persisted transcript MUST apply the task's redaction policy before bytes reach
+durable storage; keeping a raw transcript and redacting it afterward is not
+equivalent.
+
+The provisioning adapter MUST provide the accepted binding generation to a
+task-owned launch interposer through an adapter-controlled input. The interposer
+MUST prefer that value over a static initial-generation default and MUST fail
+closed when the adapter value is malformed. A replacement session MUST NOT
+continue reporting the generation of the launcher's original config file.
+
+Structured model/session metadata is not Agent lifecycle proof. A pane
+controller that uses an interposed launcher MUST also expose the declared Agent
+id and an adapter-visible `idle`, `working`, or terminal state bound to the
+same task-owned session. `working` MUST follow actual dispatch input reaching
+the child runtime; text insertion, an Enter transport call, model metadata, or
+a launcher process remaining alive MUST NOT synthesize it. Immediately before
+delivery, a task-owned pane whose Agent state is absent or `unknown` MUST fail
+preflight instead of waiting for a predictable working-state timeout.
+
+The bounded post-provision readiness window MUST wait for both an observed,
+session-bound model identity and an adapter-visible `idle` or `working` Agent
+state. Model metadata arriving before the launcher's lifecycle report MUST NOT
+short-circuit that window or turn a transient startup state into a terminal
+preflight failure. The final delivery preflight remains fail-closed.
+
+When a task-owned launcher publishes a structured lifecycle observation, the
+observation MUST include a nonempty source, session id, monotonic sequence, and
+binding generation. A valid observation bound to the accepted pane and
+generation takes precedence over generic pane-title or screen inference for
+that preflight snapshot. A nonempty session id alone is insufficient: its task
+and Agent identity MUST match the accepted binding. A missing reporter permits
+the adapter's normal runtime observation; a partial, malformed,
+stale-generation, cross-task, cross-Agent, or otherwise mismatched reporter
+record MUST fail closed and MUST NOT fall back to the generic state. Model
+identity and lifecycle state remain separate signals even when a runtime
+transports both as structured pane metadata.
+
+Late structured identity metadata MAY reconcile an exhausted readiness timeout
+for the same dependency-ready work item. This reconciliation is allowed only
+when the exact task-owned binding and its provisioning receipt still match, the
+recorded model blocker is `owned_session_model_readiness_timeout`, and no
+`dispatch_submitted` receipt exists for that work item. The adapter MUST
+re-observe the accepted binding and MUST reopen delivery only after the model
+probe is `observed`, the session identity is `known`, and role eligibility
+passes. It MUST reuse the binding without consuming another reroute or creating
+a replacement session. Any different exhausted failure, prior submission,
+missing receipt, binding conflict, or observed ineligible model remains blocked.
+
+Dispatch-time preflight MUST resolve the worker through the accepted binding,
+not through an Agent-label lookup. Concrete submission proof MUST cite the
+binding ref, generation, and identity token. A transport receipt for an
+unbound session cannot satisfy Full Mode delivery, deterministic waiting, or
+completion provenance. The cited generation and token MUST match that
+generation's historical provisioning receipt; they MUST NOT be compared only
+with the newest projection after a valid session replacement.
+
+A dry run that only renders dispatch commands MUST NOT provision a runtime
+session, require a live session/model identity, create a runtime dispatch
+blocker, or consume a retry. These gates remain mandatory immediately before
+actual delivery.
+
+Unstructured pane, transcript, conversation, or dispatch text MUST NOT establish
+submission state. A runtime that keeps an outer Agent status idle while child
+work runs must expose an adapter-issued structured child-job event or identifier
+bound to the accepted session and current dispatch. Visible labels or counters
+may help an operator diagnose the runtime, but they cannot produce a
+`dispatch_submitted` receipt.
+
+Session context MUST start at the declared project root or the adapter's
+equivalent isolated project context. Task dispatches may cite task-local context
+artifacts, but provisioning MUST NOT copy unrelated user transcripts, hidden
+coordinator reasoning, secrets, or another task's state into the worker
+session. Manual Mode records manual attestations instead of inventing session
+ownership. Remote and non-pane adapters implement the same ownership contract
+with their native thread, job, worker, or session identity.
 
 ### Provider-Neutral Coordinator Continuation
 
@@ -1132,9 +1537,9 @@ identity is unknown, stale, low-confidence, or mismatched.
 
 When the runtime model changes, the adapter MUST either invalidate the affected
 history or mark it downgraded until a fresh observation and task evidence
-requalify the route. Codex App/coordinator and Codex CLI/worker remain separate
-agent surfaces even when they share a provider family; one surface's model
-observation MUST NOT qualify the other surface's evidence.
+requalify the route. A Leader session and a Worker session remain separate
+Agent surfaces even when they use the same product and provider family; one
+session's model observation MUST NOT qualify the other session's evidence.
 
 #### 7.1.1 Dynamic Model Observation
 
@@ -1144,13 +1549,10 @@ MUST use adapter-visible runtime metadata. It MUST NOT read credentials, secret
 values, raw user-level provider configuration, or another surface's private
 session state to infer a model.
 
-An adapter MAY treat a bounded, currently visible model-status footer as runtime
-metadata when the agent surface does not expose a structured model field. Such
-fallback parsing MUST use a surface-specific allowlist, inspect only a bounded
-terminal tail, discard the raw screen text immediately, and persist only the
-normalized probe fields. Conversation or transcript content MUST NOT qualify as
-model evidence. An absent or unrecognized footer produces `unsupported` rather
-than a guessed identity.
+Unstructured pane, transcript, conversation, status-footer, or dispatch text
+MUST NOT qualify as model evidence. If the agent surface does not expose a
+structured active-model field through its adapter contract, the probe produces
+`unsupported` rather than a guessed identity.
 
 Every structured metadata key accepted by a model probe MUST be defined by its
 adapter as the active LLM identity. A generic deployment name, product name, or
@@ -1172,6 +1574,11 @@ ttl_seconds
 model: model_id, provider, reasoning_mode, confidence
 session_identity: status, token, source, generation
 ```
+
+Session tokens and generation values exposed by a probe or durable binding MUST
+be adapter-scoped opaque identifiers. Raw process IDs, process-group IDs, thread
+IDs, or similar host-local runtime identifiers may contribute to an opaque
+digest, but MUST NOT be emitted verbatim in protocol artifacts.
 
 `unsupported` means the adapter was reached but does not expose the active model
 through safe metadata. `unavailable` means the target runtime session was not
@@ -1242,6 +1649,7 @@ Minimum assignment and validation steps:
 
 ```text
 user selects the Leader
+VALP starts and binds the exact installation-owned Leader session
 Leader reads installation capability passports
 Leader decomposes the task into runtime work items
 Leader identifies required capabilities and evidence gates
@@ -1475,6 +1883,32 @@ A concrete proof identity or ref MUST be a non-empty adapter-issued string,
 either directly or inside a typed structured adapter record. Boolean flags,
 numeric counters, and non-empty containers without such an identity or ref do
 not prove delivery.
+
+The HERDR reference adapter uses the atomic Agent interface introduced in HERDR
+v0.7.5 for Full Mode submission proof. Before delivery it MUST read the exact
+routed Agent and record a settled, identity-bound baseline containing the live
+Agent name, Agent kind, pane id, terminal id, and integer `state_change_seq`.
+It MUST then invoke the same target with `herdr agent prompt <target> <payload>
+--wait --until working` and a bounded timeout. The successful response MUST have
+result type `agent_prompted`, report `agent_status: working`, repeat the same
+identity fields, and report a
+`state_change_seq` strictly greater than the baseline. A missing field, changed
+identity, non-settled baseline, non-advancing sequence, timeout, or
+`agent_prompt_stalled` response MUST fail closed without a
+`dispatch_submitted` receipt.
+
+HERDR's top-level response `id` is request correlation, not an execution
+identity. A `submission_id`, generic response id, status string, revision,
+counter, pane id, or visible text MUST NOT be invented, extracted, or accepted
+as a substitute for the identity-bound `state_change_seq` advancement above.
+
+Older HERDR compatibility paths that insert text, send Enter, and observe
+`agent wait` may prove only transport and observation. Without an independent
+Agent invocation receipt, the adapter MAY append `dispatch_inserted` with its
+transport evidence and continue only as explicitly recorded Manual-degraded
+operation. It MUST NOT append `dispatch_submitted`, claim Full Mode, or use a
+later `working`, `idle`, `done`, or `blocked` observation to upgrade that
+transport receipt.
 
 For a controlling agent that is executing its own assigned work, the runtime
 must not paste the controlling agent's dispatch back into its own live context.
@@ -2279,6 +2713,7 @@ everyone and finishes alone."
 
 The protocol, blueprint/RFC, Reference System, schema, and Adapter ABI versions
 are related but evolve independently.
+The protocol version and JSON schema versions are related but independent.
 
 Protocol version describes the human-readable VALP contract: lifecycle,
 receipts, adapter duties, evidence gates, approval gates, and Done Criteria.
@@ -2310,6 +2745,17 @@ meaning, or Done condition is safety-relevant and MUST fail with
 Attempt, proof-kind, cancellation, or partial-result gate merely because it can
 be parsed; it requires content-digest-bound reconciliation that preserves the
 original receipt.
+Rules:
+
+- A schema version may remain `v1` while the protocol draft moves from
+  `0.1.0-draft` to `0.2.0-draft`, as long as that artifact shape stays
+  backward-compatible.
+- Additive fields should be accepted by older readers when possible.
+- Readers should preserve or ignore unknown fields instead of failing, unless
+  the unknown field changes a safety gate.
+- Breaking artifact changes require a new schema version.
+- A task folder should record the schema version for each machine-readable
+  artifact it writes.
 
 ## 18. Evidence Store
 

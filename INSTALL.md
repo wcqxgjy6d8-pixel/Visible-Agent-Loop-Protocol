@@ -1,13 +1,20 @@
 # Installation Guide
 
-Checked against HERDR public documentation and repository metadata on
-2026-07-06.
+Checked against HERDR public documentation, immutable release metadata, and
+repository history on 2026-07-28.
 
 Sources:
 
 - https://herdr.dev/docs/install/
 - https://herdr.dev/docs/windows-beta/
 - https://github.com/ogulcancelik/herdr
+- https://github.com/ogulcancelik/herdr/releases/tag/v0.7.5
+
+License boundary: the immutable HERDR `v0.7.5` tag and Homebrew stable artifact
+are `AGPL-3.0-or-later` with a commercial license option. Upstream `master` was
+relicensed to `Apache-2.0` by commit `cd5ea1be0e69` on 2026-07-22, after that
+release. Check the exact artifact you install; the current branch license does
+not retroactively change a tagged release.
 
 ## Default Path: Full Mode
 
@@ -42,13 +49,21 @@ Recommended first-run order:
 1. Resolve the actual VALP install root and `valp` executable path.
 2. Run `valp doctor --workspace <install-root> --json` to commission
    capability passports for every discovered Agent surface/session.
-3. Show the passports, including observed model/provider/session, Skills, MCP,
-   permissions, context, and limitations, and let the user choose the Leader.
-4. If the user wants Full Mode, run `valp preflight --runtime <runtime>`.
-5. Publish a dry-run task; let the Leader author the assignment declaration.
-6. Run `valp route --assignments`, then print dispatch output without submit.
-7. Show the validation and dry-run result before enabling real `--submit`.
-8. Enable Auto Visible Mode, watcher mode, or policy_auto only after opt-in.
+3. Show the passports and let the user choose the Leader. Run `valp leader
+   select <principal>`, `valp leader start`, `valp leader show`, and `valp
+   leader open`.
+4. Run `valp publish TASK-001 --workspace <workspace> --prompt "..."`.
+5. Let the Leader author assignments, then run `valp route TASK-001 --workspace
+   <workspace> --assignments <declaration>`.
+6. Inspect `valp dispatch TASK-001 --workspace <workspace>` as a dry run.
+7. After explicit user approval, run `valp dispatch TASK-001 --workspace
+   <workspace> --submit`.
+8. Confirm the terminal shows the installation-owned Leader pane and a fresh
+   task-owned Worker pane.
+9. Require identity-bound `dispatch_submitted`, then expected evidence and
+   `dispatch_completed`.
+10. Run independent review and resolve recommendations.
+11. Run `valp audit <workspace> --task TASK-001`; `fail_count` must be 0.
 ```
 
 An installer or App must not hard-code a Desktop checkout path. It should store
@@ -67,11 +82,14 @@ Leader declares task roles, and VALP may validate or block that declaration but
 cannot replace an Agent.
 
 For HERDR, preflight probes command help rather than assuming capabilities from
-a version number. It accepts atomic `herdr agent prompt` when advertised, or the
-complete compatibility path consisting of `herdr pane send-text`, `herdr pane
-send-keys`, and `herdr agent wait`. An installed HERDR that exposes neither path
-is a failed Full Mode preflight with an actionable error; use Manual Mode until
-the runtime is updated or a compatible adapter is selected.
+a version number. Full Mode requires a structured `herdr agent get` baseline
+and `herdr agent prompt <target> <payload> --wait --until working --timeout
+<ms>`. The `agent_prompted` response must preserve the routed Agent identity
+and advance integer `state_change_seq`. Older `herdr pane send-text`, `herdr
+pane send-keys`, and `herdr agent wait` fallback is transport only: VALP records
+`dispatch_inserted`, stops as `Manual-degraded`, and does not record
+`dispatch_submitted`. Use Manual Mode until the runtime is updated or another
+compatible adapter is selected.
 
 For the fastest stable setup:
 

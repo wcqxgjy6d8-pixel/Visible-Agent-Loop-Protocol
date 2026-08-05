@@ -30,9 +30,62 @@ def run_conformance(profile: str = "core-writer") -> dict[str, Any]:
         def setup() -> None:
             core = InstallationCore(root)
             core.init()
-            core.discover_candidates()
-            core.select_leader("manual-user")
+            passport = {
+                "schema_version": "valp-capability-passport.v1",
+                "generated_at": "2026-07-26T12:00:00Z",
+                "principal_id": "agent-reference-session",
+                "agent_id": "reference-agent",
+                "agent_surface": "reference_cli",
+                "runtime_identity": {
+                    "runtime": "reference-runtime",
+                    "adapter_class": "local_process_worker",
+                    "session_id": "observed-reference-session",
+                    "session": {
+                        "status": "known",
+                        "token": "sha256:" + ("a" * 64),
+                        "source": "conformance fixture",
+                        "generation": "observed-1",
+                    },
+                },
+                "runtime": {
+                    "adapter_id": "reference-runtime",
+                    "adapter_class": "local_process_worker",
+                    "launch_argv": [sys.executable, "-c", "print('leader')"],
+                    "version_command": [sys.executable, "--version"],
+                },
+                "live_callability": {"status": "pass"},
+                "role_eligibility": {"leader": "eligible"},
+            }
+            core.discover_candidates([passport])
+            core.select_leader("agent-reference-session")
+            core.prepare_leader_start()
+            core.activate_leader({
+                "adapter_id": "reference-runtime",
+                "adapter_class": "local_process_worker",
+                "principal_id": "agent-reference-session",
+                "agent_id": "reference-agent",
+                "generation": 1,
+                "ownership": {
+                    "scope": "installation",
+                    "installation_id": core.state()["installation_id"],
+                },
+                "context": {"cwd": str(workspace.resolve())},
+                "launch": {"argv": [sys.executable, "-c", "print('leader')"]},
+                "focused_at_provisioning": False,
+                "runtime_scope": {"kind": "process", "ownership": "installation"},
+                "runtime_identity": {
+                    "session_id": "reference-leader-session",
+                    "token": "sha256:" + ("b" * 64),
+                },
+                "health": {
+                    "status": "pass",
+                    "observed_at": "2026-07-26T12:01:00Z",
+                    "evidence": {"process": "ready"},
+                },
+                "provisioned_at": "2026-07-26T12:01:00Z",
+            })
             assert core.state()["status"] == "active"
+            assert core.state()["active_leader_epoch"] == 1
 
         check("bootstrap-selection-epoch", setup)
 

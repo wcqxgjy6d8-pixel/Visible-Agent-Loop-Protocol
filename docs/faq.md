@@ -20,10 +20,12 @@ runtimes, or other adapters when they export the required evidence.
 
 ## Is HERDR closed source?
 
-No. As checked on 2026-07-06, HERDR has a public source repository at
-<https://github.com/ogulcancelik/herdr>. The repository contains source and
-project files, and its license text says AGPL-3.0-or-later for open-source use
-plus a commercial license option.
+No. As checked on 2026-07-28, HERDR has a public source repository at
+<https://github.com/ogulcancelik/herdr>. The immutable `v0.7.5` tag and
+Homebrew stable artifact are `AGPL-3.0-or-later` with a commercial license
+option. Upstream `master` was relicensed to `Apache-2.0` by commit
+`cd5ea1be0e69` on 2026-07-22, after `v0.7.5`; that did not retroactively change
+the tagged or Homebrew artifact.
 
 This does not make HERDR a VALP requirement. It only means the current reference
 runtime is public rather than closed.
@@ -104,6 +106,13 @@ dispatch_blocked
 
 Because text can appear in an input box without being submitted. VALP treats
 that as `dispatch_inserted`, not `dispatch_submitted`.
+
+For the HERDR reference path, Full Mode requires a structured `herdr agent get`
+baseline followed by `herdr agent prompt <target> <payload> --wait --until
+working --timeout <ms>`. The `agent_prompted` response must preserve the routed
+Agent identity and advance integer `state_change_seq`. Older pane insertion,
+Enter, and status observation remains `Manual-degraded` transport evidence; it
+cannot promote `dispatch_inserted` into `dispatch_submitted`.
 
 ## What is a provider matrix?
 

@@ -16,8 +16,10 @@ EXAMPLE_SCHEMA_BY_NAME = {
     "assignment-validation.json": "assignment-validation.schema.json",
     "automation-policy.json": "automation-policy.schema.json",
     "agent-recommendations.json": "agent-recommendations.schema.json",
+    "agent-sessions.json": "agent-sessions.schema.json",
     "capabilities.json": "capabilities.schema.json",
     "capability-passport.json": "capability-passport.schema.json",
+    "qwen-capability-passport.json": "capabilities.schema.json",
     "context-pack.json": "context-pack.schema.json",
     "context-selection.json": "context-selection.schema.json",
     "correction-cycle.json": "correction-cycle.schema.json",
@@ -34,6 +36,7 @@ EXAMPLE_SCHEMA_BY_NAME = {
     "historical-audit-boundary.json": "historical-audit-boundary.schema.json",
     "routing.json": "routing.schema.json",
     "skill-recommendations.json": "skill-recommendations.schema.json",
+    "source-provenance.json": "source-provenance.schema.json",
     "iteration-budget.json": "iteration-budget.schema.json",
     "state.json": "state.schema.json",
     "submission-dependencies.json": "submission-dependencies.schema.json",
@@ -90,6 +93,28 @@ class SchemaExampleTests(unittest.TestCase):
         )
         self.assertEqual(errors, [])
 
+    def test_public_examples_do_not_embed_operator_provider_snapshots(self) -> None:
+        forbidden = (
+            "/Users/" + "chenwei" + "sheng",
+            "Chende" + "MacBook",
+            "Codex" + "PlusPlus",
+            "configured" + "-relay",
+            "deepseek" + "-v4-pro",
+            "gpt-" + "5.6-sol",
+            "gpt-" + "5.6-luna",
+            "qwen" + "3.7-plus",
+        )
+        violations: list[str] = []
+        for path in sorted((ROOT / "examples").rglob("*")):
+            if not path.is_file() or path.suffix not in {".json", ".jsonl", ".md", ".txt"}:
+                continue
+            text = path.read_text(encoding="utf-8")
+            for value in forbidden:
+                if value in text:
+                    violations.append(f"{path.relative_to(ROOT)} contains {value}")
+
+        self.assertEqual(violations, [])
+
     def test_bundled_json_examples_match_schemas(self) -> None:
         validators = {
             schema_name: schema_validator(ROOT / "schemas" / schema_name)
@@ -129,6 +154,137 @@ class SchemaExampleTests(unittest.TestCase):
                 for error in validator.iter_errors(data):
                     errors.append(f"{path.relative_to(ROOT)}:{lineno} {error.json_path}: {error.message}")
         self.assertEqual(errors, [])
+
+    def test_bundled_agent_session_receipts_match_schema(self) -> None:
+        validator = schema_validator(ROOT / "schemas" / "agent-session-receipt.schema.json")
+        errors: list[str] = []
+        for path in sorted((ROOT / "examples").rglob("agent-session-receipts.jsonl")):
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if not line.strip():
+                    continue
+                data = json.loads(line)
+                for error in validator.iter_errors(data):
+                    errors.append(f"{path.relative_to(ROOT)}:{lineno} {error.json_path}: {error.message}")
+        self.assertEqual(errors, [])
+
+    def test_agent_session_schemas_accept_windows_absolute_paths(self) -> None:
+        sessions = json.loads(
+            (ROOT / "examples" / "agent-sessions.json").read_text(encoding="utf-8")
+        )
+        receipt = json.loads(
+            (ROOT / "examples" / "agent-session-receipts.jsonl").read_text(
+                encoding="utf-8"
+            )
+        )
+        binding = sessions["bindings"]["example-agent"]
+        binding["context"]["cwd"] = "C:\\workspace\\project"
+        binding["launch"]["argv"][0] = "C:\\Tools\\codex.exe"
+        receipt["context"]["cwd"] = "C:\\workspace\\project"
+        receipt["launch"]["argv"][0] = "C:\\Tools\\codex.exe"
+
+        session_errors = list(
+            schema_validator(ROOT / "schemas" / "agent-sessions.schema.json").iter_errors(
+                sessions
+            )
+        )
+        receipt_errors = list(
+            schema_validator(
+                ROOT / "schemas" / "agent-session-receipt.schema.json"
+            ).iter_errors(receipt)
+        )
+
+        self.assertEqual(session_errors, [])
+        self.assertEqual(receipt_errors, [])
+
+    def test_agent_session_schemas_accept_non_pane_runtime_identity(self) -> None:
+        sessions = json.loads(
+            (ROOT / "examples" / "agent-sessions.json").read_text(encoding="utf-8")
+        )
+        receipt = json.loads(
+            (ROOT / "examples" / "agent-session-receipts.jsonl").read_text(
+                encoding="utf-8"
+            )
+        )
+        binding = sessions["bindings"].pop("example-agent")
+        sessions["adapter"] = "example-thread-runtime"
+        receipt["adapter"] = "example-thread-runtime"
+        binding["agent"] = "build-agent"
+        binding["session_name"] = "thread-session-1"
+        binding["context"] = {"project_ref": "project://example"}
+        binding["launch"] = {"runtime_ref": "agent://build-agent"}
+        binding.pop("focused_at_provisioning")
+        binding["runtime_scope"] = {
+            "kind": "thread",
+            "ownership": "task",
+            "thread_id": "thread-1",
+        }
+        binding["runtime_identity"] = {
+            "thread_id": "thread-1",
+            "token": "sha256:" + ("1" * 64),
+        }
+        sessions["bindings"] = {"build-agent": binding}
+
+        receipt["agent"] = "build-agent"
+        receipt["context"] = binding["context"]
+        receipt["launch"] = binding["launch"]
+        receipt.pop("focused_at_provisioning")
+        receipt["runtime_scope"] = binding["runtime_scope"]
+        receipt["runtime_identity"] = binding["runtime_identity"]
+        receipt["identity_token"] = binding["runtime_identity"]["token"]
+
+        session_errors = list(
+            schema_validator(ROOT / "schemas" / "agent-sessions.schema.json").iter_errors(
+                sessions
+            )
+        )
+        receipt_errors = list(
+            schema_validator(
+                ROOT / "schemas" / "agent-session-receipt.schema.json"
+            ).iter_errors(receipt)
+        )
+
+        self.assertEqual(session_errors, [])
+        self.assertEqual(receipt_errors, [])
+
+    def test_agent_session_schemas_reject_focused_provisioning(self) -> None:
+        sessions = json.loads(
+            (ROOT / "examples" / "agent-sessions.json").read_text(encoding="utf-8")
+        )
+        receipt = json.loads(
+            (ROOT / "examples" / "agent-session-receipts.jsonl").read_text(
+                encoding="utf-8"
+            )
+        )
+        sessions["bindings"]["example-agent"]["focused_at_provisioning"] = True
+        receipt["focused_at_provisioning"] = True
+
+        session_errors = list(
+            schema_validator(ROOT / "schemas" / "agent-sessions.schema.json").iter_errors(
+                sessions
+            )
+        )
+        receipt_errors = list(
+            schema_validator(
+                ROOT / "schemas" / "agent-session-receipt.schema.json"
+            ).iter_errors(receipt)
+        )
+
+        self.assertTrue(session_errors)
+        self.assertTrue(receipt_errors)
+
+    def test_ready_agent_session_projection_requires_a_binding(self) -> None:
+        sessions = json.loads(
+            (ROOT / "examples" / "agent-sessions.json").read_text(encoding="utf-8")
+        )
+        sessions["bindings"] = {}
+
+        errors = list(
+            schema_validator(ROOT / "schemas" / "agent-sessions.schema.json").iter_errors(
+                sessions
+            )
+        )
+
+        self.assertTrue(errors)
 
     def test_bundled_wait_event_jsonl_examples_match_schema(self) -> None:
         validator = schema_validator(ROOT / "schemas" / "wait-event.schema.json")

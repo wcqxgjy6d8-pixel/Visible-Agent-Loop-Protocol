@@ -23,10 +23,11 @@ is partially implemented as an executable `0.3.0-draft` core. The current stable
 release remains `0.2.0`; RFC 0001 remains incomplete and is not stable as a whole.
 The implementation guide is [docs/v0.3-implementation.md](v0.3-implementation.md).
 
-The shipped draft core covers control-root bootstrap, explicit leader selection,
-leader epochs, message/event ledgers, replayable state, capability layers,
-plugin manifest boundary checks, migration dry-run/apply guards, and isolated
-conformance fixtures.
+The shipped draft core covers control-root bootstrap, Doctor-backed Leader
+candidate discovery, selection/start separation, exact installation-owned
+Leader session binding, restart/rotation epoch fencing, message/event ledgers,
+replayable state, capability layers, plugin manifest boundary checks, migration
+dry-run/apply guards, and isolated conformance fixtures.
 
 ## RFC 0002 Local Integration And Kernel Slice 1 Status
 
@@ -94,7 +95,7 @@ platform.
 | Doctor/User/Leader authority chain | Covered for capability passports, explicit user-selected Leader evidence, Leader declarations, validation blockers, and publish-without-routing behavior | `tests/test_valp_doctor.py`, `tests/test_valp_workflow.py` |
 | Assignment declaration and validation schemas | Covered for bundled examples and negative cases | `schemas/assignment-declaration.schema.json`, `schemas/assignment-validation.schema.json`, `tests/test_schema_examples.py` |
 | Deterministic wake core | Covered locally for dependency barrier, identity rejection, revision CAS, duplicate wake, concurrent wake, and event-to-projection recovery | `valp_cli/workflow.py`, `tests/test_valp_workflow.py` |
-| v0.3 installation core | Covered for bootstrap, explicit leader selection, epoch fencing, CAS, idempotency, replay, capability registry, content-addressed claims/reviews, task Done reducer, plugin boundary, and migration dry-run | `valp_cli/control_plane.py`, `valp_cli/task_control.py`, `valp_cli/plugins.py`, `valp_cli/conformance.py`, `tests/test_control_plane.py` |
+| v0.3 installation core | Covered for bootstrap, Doctor-backed candidates, selection/start separation, exact Leader session binding, restart/rotation epoch fencing, CAS, idempotency, replay, capability registry, content-addressed claims/reviews, task Done reducer, plugin boundary, and migration dry-run | `valp_cli/control_plane.py`, `valp_cli/herdr_adapter.py`, `valp_cli/task_control.py`, `valp_cli/plugins.py`, `valp_cli/conformance.py`, `tests/test_control_plane.py`, `tests/test_herdr_adapter.py` |
 | Protocol 0.3 layered architecture | Public RFC 0002 package integrated; broader architecture remains a normative target | `SPEC.md` Section 21, `docs/index.md`, this page, and `docs/rfcs/0002-layered-architecture.md` |
 | Pure Protocol Kernel Slice 1 | Closed Layer 02 Task transition graph implemented; this is not the complete Protocol Kernel or complete third layer | `valp_cli/protocol_kernel.py`, `schemas/protocol-kernel.schema.json`, `tests/test_protocol_kernel.py` |
 | Pure v3 receipt-write, migration projection, and durable Reference System store | Covered for canonical append proposals, fail-closed legacy/v2 projection, proof-kind negative cases, fixtures, cooperative locking/CAS, and process-crash recovery on the tested macOS/APFS host; LangGraph is the only adopted runtime path | `valp_cli/protocol_receipts.py`, `valp_cli/receipt_store.py`, `schemas/receipts.schema.json`, `tests/test_protocol_receipts.py`, `tests/test_receipt_store.py`, `tests/fixtures/receipt-v3/` |
@@ -116,19 +117,28 @@ platform.
 | Full state-machine transition suite | Partially covered | Installation, closed Layer 02 Task transitions, Work Item/Attempt graphs, and authenticated Checkpoint Root suffix replay are implemented and tested; wait/wake, checkpoint persistence/effect recovery, and Adapter adoption remain open |
 | Context compression runtime integration | Partially covered | Semantics are documented; live adapter enforcement is not yet covered |
 | Auto Visible watcher E2E | Not covered | Trigger policy semantics exist; watcher implementation is runtime-specific |
-| App-managed first install E2E | Not covered in repository CI | Protocol now defines doctor-first health gate; App installer implementation must prove it |
+| CLI-managed first install E2E | Source behavior covered; real installation activation remains a local proof gate | Protocol defines Doctor-first selection plus exact Leader start; each runtime must prove its own live session binding; an App is optional |
 
 ## Reference Runtime Boundary
 
 HERDR is the current reference runtime, not the VALP protocol.
 
-Current externally checked facts on 2026-07-06:
+Current externally checked facts on 2026-07-28:
 
 - `https://github.com/ogulcancelik/herdr` is public.
 - The repository contains source and project files, including Rust sources,
   `Cargo.toml`, tests, and docs, and GitHub shows published releases.
-- The repository license text says AGPL-3.0-or-later for open-source use plus
-  a commercial license option.
+- The immutable `v0.7.5` tag and Homebrew stable artifact are
+  `AGPL-3.0-or-later` with a commercial license option.
+- Upstream `master` was relicensed to `Apache-2.0` by commit `cd5ea1be0e69` on
+  2026-07-22, after `v0.7.5`; the tagged artifact did not change retroactively.
+
+The versioned HERDR Full Mode boundary uses a structured `herdr agent get`
+baseline followed by `herdr agent prompt <target> <payload> --wait --until
+working --timeout <ms>`. The `agent_prompted` response must preserve Agent
+identity and advance integer `state_change_seq`. Older pane insertion, Enter,
+and status observation is transport only: it records `dispatch_inserted`, stays
+`Manual-degraded`, and cannot record `dispatch_submitted`.
 
 VALP should not claim that HERDR is required by the protocol. It should also
 not imply that another runtime is already first-class until that adapter exists
@@ -146,10 +156,10 @@ and exports the required receipts and evidence.
 | Windows lock contention lacks native subprocess proof | The retry/deadline policy is platform-neutral, but this local run exercises real cross-process locking only on POSIX | Keep native Windows contention conformance open until run on a Windows host |
 | Task-ref grammar | Shared POSIX-style relative-ref grammar is enforced across runtime and artifact schemas | Covered for the reference CLI and current artifact family; adapter-specific path handling remains outside the protocol core |
 | Declared Python range lacks endpoint CI | Package metadata declares Python 3.9-3.12 | Public verification now exercises Python 3.9, 3.11, and 3.12 on Linux, macOS, and Windows |
-| App installer behavior is not a protocol runtime | First-launch UX can accidentally hide path, preflight, and submit boundaries | First-install health gate is specified; App must expose doctor/preflight/dry-run results |
+| Protocol Kernel beyond Slice 1 is incomplete | The closed Task graph can be mistaken for the complete third layer | Keep migration, additional Adapter, platform, and runtime-wide support claims blocked until matching implementation and conformance evidence exists |
+| Optional App installer behavior is not a protocol runtime | First-launch UX can accidentally hide path, Leader binding, preflight, and submit boundaries | First-install health gate is specified; any App must expose the same CLI-verifiable evidence |
 | Windows local Full Mode is conditional | Native Windows runtime support is beta-dependent | Recommend SSH remote for stable Windows workflow |
 | Stable release is early | Users need clear limits around runtime proof and adapter coverage | Use the v0.3 draft core for installation-control-plane evaluation; keep stable/live-runtime claims tied to adapter proof |
-| Protocol Kernel beyond Slice 1 is incomplete | The closed Task graph can be mistaken for the complete third layer | Keep migration, additional Adapter, platform, and runtime-wide support claims blocked until matching implementation and conformance evidence exists |
 | Small public community | Social proof is low | Avoid community-size overclaims |
 
 ## Promotion Language

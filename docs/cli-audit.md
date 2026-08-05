@@ -131,8 +131,10 @@ Queue or hosted adapters should record job/session facts such as queue id,
 worker id, session status, output refs, and expected refs. They should not fake
 pane or terminal-size fields.
 
-`valp dispatch --submit` writes `runtime-preflight.json` and stops when a
-Leader-declared Agent has a failing preflight check.
+`valp dispatch --submit` writes `runtime-preflight.json`. For HERDR it also
+creates or reuses the task-owned worker recorded by `agent-sessions.json` and
+`agent-session-receipts.jsonl`. It stops when provisioning, identity binding,
+or a Leader-declared Agent preflight fails.
 
 ## Dispatch
 
@@ -163,12 +165,18 @@ bin/valp dispatch TASK-001 --workspace /path/to/workspace --runtime queue --subm
 each routed agent; no separate `herdr-loop` executable is required. Preflight
 selects atomic `herdr agent prompt` when available, otherwise the complete pane
 insertion + Enter + working-state fallback. It fails closed before delivery
-when neither path is present.
+when neither path is present. The fallback accepts only an identity-bound
+structured `working` response. Pane text, labels, counters, and the dispatched
+prompt cannot establish submission.
 
 `dispatch --runtime queue --submit` writes task-local queue submission records
 and `dispatch_submitted` receipts. It does not mark the task complete; a queue
 worker or operator must still produce expected evidence and `dispatch_completed`
 receipts.
+
+Without `--submit`, dispatch only renders the selected adapter command. A HERDR
+dry run does not provision an owned session, require live model/session
+identity, create a runtime blocker, or consume a runtime retry.
 
 Manual Mode tasks cannot use `--submit`; copy dispatches manually and record
 manual attestation receipts when evidence exists.

@@ -87,13 +87,15 @@ Capability passports are inputs to human and Leader judgment. Doctor does not
 rank Agents, choose the Leader, write an assignment declaration, or substitute
 another Agent when validation blocks one.
 
-First-install App flows should combine Doctor with runtime preflight:
+First-install flows should combine Doctor with exact Leader startup and runtime
+preflight. A CLI is sufficient; an App is optional:
 
 ```text
 resolve install root and CLI path
   -> run doctor on the protocol checkout
   -> inspect capability passports
   -> user selects the Leader
+  -> start and verify the installation-owned Leader session
   -> run runtime preflight for Full Mode
   -> publish the task
   -> Leader writes assignment-declaration.json

@@ -42,6 +42,7 @@ RECEIPT_EVENTS = frozenset(
         "dispatch_submitted",
         "dispatch_completed",
         "dispatch_blocked",
+        "dispatch_superseded",
         "manual_dispatch_written",
         "manual_delivery_attested",
         "manual_result_attested",

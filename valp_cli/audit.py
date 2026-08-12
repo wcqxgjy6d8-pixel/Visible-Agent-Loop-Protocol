@@ -1610,7 +1610,69 @@ class TaskAudit:
             for receipt in self.receipts
             if receipt.get("event") == "dispatch_submitted"
         ]
+        receipt_by_id = {
+            str(receipt.get("receipt_id") or ""): receipt
+            for receipt in submitted
+            if str(receipt.get("receipt_id") or "")
+        }
+
+        def bound_to_provisioning(receipt: dict[str, Any]) -> bool:
+            agent = str(receipt.get("agent") or "")
+            proof_binding = ((receipt.get("proof") or {}).get("session_binding") or {})
+            return bool(
+                proof_binding.get("ref") == "agent-sessions.json"
+                and any(
+                    session_receipt.get("adapter") == projection_adapter
+                    and session_receipt.get("task_id") == task_id
+                    and session_receipt.get("agent") == agent
+                    and session_receipt.get("event") == "agent_session_provisioned"
+                    and session_receipt.get("binding_ref") == proof_binding.get("ref")
+                    and session_receipt.get("generation") == proof_binding.get("generation")
+                    and session_receipt.get("identity_token") == proof_binding.get("identity_token")
+                    and session_receipt.get("ownership") == proof_binding.get("ownership")
+                    for session_receipt in self.agent_session_receipts
+                )
+            )
+
+        superseded_submission_ids: set[str] = set()
+        for supersession in self.receipts:
+            if supersession.get("event") != "dispatch_superseded":
+                continue
+            proof = supersession.get("proof") or {}
+            original_id = str(proof.get("superseded_submission_receipt_id") or "")
+            replacement_id = str(proof.get("replacement_submission_receipt_id") or "")
+            original = receipt_by_id.get(original_id)
+            replacement = receipt_by_id.get(replacement_id)
+            identity_fields = (
+                "task_id", "agent", "role", "work_item_id", "dispatch_id",
+                "dispatch_generation", "dispatch_ref", "expected_refs",
+            )
+            if (
+                proof.get("kind") != "invalid_session_binding"
+                or original is None
+                or replacement is None
+                or original.get("event_sequence", 0) >= replacement.get("event_sequence", 0)
+                or replacement.get("event_sequence", 0) >= supersession.get("event_sequence", 0)
+                or any(original.get(field) != replacement.get(field) for field in identity_fields)
+                or any(original.get(field) != supersession.get(field) for field in identity_fields)
+                or not has_concrete_runtime_submission_proof(original)
+                or not has_concrete_runtime_submission_proof(replacement)
+                or str((original.get("proof") or {}).get("runtime") or "").casefold()
+                != projection_adapter.casefold()
+                or str((replacement.get("proof") or {}).get("runtime") or "").casefold()
+                != projection_adapter.casefold()
+                or (original.get("proof") or {}).get("proof_class")
+                not in {"agent_invocation", "reconciled_identity_bound_submission"}
+                or (replacement.get("proof") or {}).get("proof_class") != "agent_invocation"
+                or bound_to_provisioning(original)
+                or not bound_to_provisioning(replacement)
+            ):
+                errors.append("dispatch_superseded has invalid session-binding replacement proof")
+                continue
+            superseded_submission_ids.add(original_id)
         for receipt in submitted:
+            if str(receipt.get("receipt_id") or "") in superseded_submission_ids:
+                continue
             agent = str(receipt.get("agent") or "")
             binding = bindings.get(agent) if isinstance(bindings, dict) else None
             if not isinstance(binding, dict):
@@ -1618,18 +1680,7 @@ class TaskAudit:
                 continue
             proof = receipt.get("proof") or {}
             proof_binding = proof.get("session_binding") or {}
-            matching_historical_provisioning = any(
-                session_receipt.get("adapter") == projection_adapter
-                and session_receipt.get("task_id") == task_id
-                and session_receipt.get("agent") == agent
-                and session_receipt.get("event") == "agent_session_provisioned"
-                and session_receipt.get("binding_ref") == proof_binding.get("ref")
-                and session_receipt.get("generation") == proof_binding.get("generation")
-                and session_receipt.get("identity_token")
-                == proof_binding.get("identity_token")
-                and session_receipt.get("ownership") == proof_binding.get("ownership")
-                for session_receipt in self.agent_session_receipts
-            )
+            matching_historical_provisioning = bound_to_provisioning(receipt)
             if (
                 proof_binding.get("ref") != "agent-sessions.json"
                 or not matching_historical_provisioning
@@ -2259,6 +2310,7 @@ class TaskAudit:
                 matching = [
                     (index, receipt)
                     for index, receipt in enumerate(self.receipts)
+                    if receipt.get("event") != "dispatch_superseded"
                     if (
                         self._receipt_matches_manual_work_item(receipt, item)
                         if manual_mode
@@ -3453,6 +3505,8 @@ class TaskAudit:
     def _latest_receipts_by_agent(self) -> dict[str, dict[str, Any]]:
         latest: dict[str, dict[str, Any]] = {}
         for receipt in self.receipts:
+            if receipt.get("event") == "dispatch_superseded":
+                continue
             agent = receipt.get("agent")
             if agent:
                 latest[str(agent)] = receipt

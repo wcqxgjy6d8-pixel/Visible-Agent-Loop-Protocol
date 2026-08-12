@@ -1920,6 +1920,7 @@ dispatch_inserted
 dispatch_submitted
 dispatch_completed
 dispatch_blocked
+dispatch_superseded
 ```
 
 Manual Mode may also record manual-only receipt labels:
@@ -2053,6 +2054,16 @@ generation. A later matching `dispatch_blocked` supersedes an earlier
 recovered evidence. A receipt from another role, work item, generation,
 suspension epoch, or task is unrelated evidence and cannot supersede or satisfy
 the gate.
+
+`dispatch_superseded` is a ledger-management event, not a Worker outcome. It
+MAY supersede one earlier `dispatch_submitted` receipt only when its proof names
+`kind: invalid_session_binding`, the exact earlier submission receipt ID, and a
+later replacement `dispatch_submitted` receipt for the identical task, Agent,
+role, work item, dispatch ID, generation, dispatch ref, and expected refs. The
+replacement MUST have valid task-owned session-binding provenance; the
+superseded submission MUST fail that same provenance check. A supersession
+cannot target a completion, cannot change the original bytes, and is ignored
+when deciding the latest Worker outcome.
 
 Receipt timestamps are descriptive. Deterministic wake ordering uses the
 accepted event sequence and revision CAS. Duplicate receipt or event ids MUST

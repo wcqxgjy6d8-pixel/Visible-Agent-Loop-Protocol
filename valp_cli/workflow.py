@@ -6465,6 +6465,108 @@ def write_herdr_submission_receipt(
     return receipt
 
 
+def write_herdr_invalid_session_binding_supersession(
+    directory: Path,
+    task_id: str,
+    superseded_submission_receipt_id: str,
+    replacement_submission_receipt_id: str,
+) -> dict[str, Any]:
+    """Append a narrow provenance repair without changing either submission."""
+    with task_state_lock(directory):
+        receipts = load_dispatch_receipts(directory, task_id)
+        submitted = {
+            str(receipt.get("receipt_id") or ""): receipt
+            for receipt in receipts
+            if receipt.get("event") == "dispatch_submitted"
+        }
+        original = submitted.get(superseded_submission_receipt_id)
+        replacement = submitted.get(replacement_submission_receipt_id)
+        if not original or not replacement:
+            raise SystemExit("HERDR supersession requires exact existing submission receipts")
+        identity_fields = (
+            "task_id", "agent", "role", "work_item_id", "dispatch_id",
+            "dispatch_generation", "dispatch_ref", "expected_refs",
+        )
+        if (
+            original.get("event_sequence", 0) >= replacement.get("event_sequence", 0)
+            or any(original.get(field) != replacement.get(field) for field in identity_fields)
+            or not has_concrete_runtime_submission_proof(original)
+            or not has_concrete_runtime_submission_proof(replacement)
+            or (original.get("proof") or {}).get("runtime") != "HERDR"
+            or (replacement.get("proof") or {}).get("runtime") != "HERDR"
+            or (original.get("proof") or {}).get("proof_class")
+            not in {"agent_invocation", "reconciled_identity_bound_submission"}
+            or (replacement.get("proof") or {}).get("proof_class") != "agent_invocation"
+        ):
+            raise SystemExit(
+                "HERDR supersession requires concrete submission proof and exact work-item identity"
+            )
+        projection = read_json_strict(directory / "agent-sessions.json")
+        session_receipts = read_json_lines_strict(
+            directory / "agent-session-receipts.jsonl"
+        )
+        adapter = projection.get("adapter")
+
+        def provisioned(receipt: dict[str, Any]) -> bool:
+            proof_binding = ((receipt.get("proof") or {}).get("session_binding") or {})
+            return bool(
+                proof_binding.get("ref") == "agent-sessions.json"
+                and any(
+                    item.get("adapter") == adapter
+                    and item.get("task_id") == task_id
+                    and item.get("agent") == receipt.get("agent")
+                    and item.get("event") == "agent_session_provisioned"
+                    and item.get("binding_ref") == proof_binding.get("ref")
+                    and item.get("generation") == proof_binding.get("generation")
+                    and item.get("identity_token") == proof_binding.get("identity_token")
+                    and item.get("ownership") == proof_binding.get("ownership")
+                    for item in session_receipts
+                )
+            )
+
+        if provisioned(original) or not provisioned(replacement):
+            raise SystemExit(
+                "HERDR supersession requires an invalid original and valid replacement binding"
+            )
+        proof = {
+            "kind": "invalid_session_binding",
+            "superseded_submission_receipt_id": superseded_submission_receipt_id,
+            "replacement_submission_receipt_id": replacement_submission_receipt_id,
+        }
+        receipt_id = "sha256:" + hashlib.sha256(
+            json.dumps({"task_id": task_id, **proof}, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        existing = [receipt for receipt in receipts if receipt.get("receipt_id") == receipt_id]
+        if existing:
+            return existing[0]
+        event_sequence = max(
+            (int(receipt.get("event_sequence") or 0) for receipt in receipts),
+            default=0,
+        ) + 1
+        supersession = {
+            "schema_version": "valp-dispatch-receipt.v2",
+            "receipt_id": receipt_id,
+            "task_id": task_id,
+            "event_sequence": event_sequence,
+            "ts": now_iso(),
+            "agent": original["agent"],
+            "role": original["role"],
+            "work_item_id": original["work_item_id"],
+            "dispatch_id": original["dispatch_id"],
+            "dispatch_generation": original["dispatch_generation"],
+            "event": "dispatch_superseded",
+            "dispatch_ref": original["dispatch_ref"],
+            "expected_refs": original["expected_refs"],
+            "proof": proof,
+            "summary": (
+                "Append-only repair: invalid task-owned session binding "
+                "superseded by a later valid submission."
+            ),
+        }
+        append_json_line_durable(directory / "dispatch-receipts.jsonl", supersession)
+        return supersession
+
+
 def expected_evidence_snapshot(directory: Path, expected: list[str]) -> dict[str, str | None]:
     """Capture the exact pre-submission evidence state for a dispatch."""
     snapshot: dict[str, str | None] = {}

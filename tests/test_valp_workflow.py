@@ -1695,6 +1695,174 @@ class ValpWorkflowTests(unittest.TestCase):
                         )
                     )
 
+    def test_runtime_retry_accepts_route_time_preflight_block_before_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "iteration-budget.json").write_text(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "stop_reason": "task status is blocked",
+                        "usage": {"dispatches": 0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (directory / "runtime-preflight.json").write_text(
+                json.dumps({"status": "fail"}),
+                encoding="utf-8",
+            )
+
+            self.assertTrue(
+                runtime_dispatch_retry_pending(
+                    directory,
+                    {"task_id": "TASK", "status": "blocked"},
+                    "herdr",
+                )
+            )
+
+    def test_runtime_retry_preserves_original_state_preflight_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "iteration-budget.json").write_text(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "stop_reason": "task status is blocked",
+                        "usage": {"dispatches": 0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (directory / "runtime-preflight.json").write_text(
+                json.dumps({"status": "warn"}), encoding="utf-8"
+            )
+            (directory / "routing.json").write_text(
+                json.dumps({"runtime_adapter": {"preflight": {"status": "warn"}}}),
+                encoding="utf-8",
+            )
+            state = {
+                "task_id": "TASK",
+                "status": "blocked",
+                "runtime_adapter": {"preflight": {"status": "fail"}},
+            }
+
+            self.assertTrue(
+                runtime_dispatch_retry_pending(directory, state, "herdr")
+            )
+
+    def test_runtime_retry_accepts_orphaned_pre_delivery_warn_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "iteration-budget.json").write_text(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "stop_reason": "task status is blocked",
+                        "usage": {"dispatches": 0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (directory / "runtime-preflight.json").write_text(
+                json.dumps({"status": "warn"}), encoding="utf-8"
+            )
+            (directory / "routing.json").write_text(
+                json.dumps({"runtime_adapter": {"preflight": {"status": "warn"}}}),
+                encoding="utf-8",
+            )
+            (directory / "assignment-validation.json").write_text(
+                json.dumps({"status": "pass"}), encoding="utf-8"
+            )
+            state = {
+                "task_id": "TASK",
+                "status": "blocked",
+                "gates": {"approval": "not_required"},
+                "capabilities_missing": [],
+                "runtime_adapter": {"preflight": {"status": "warn"}},
+            }
+
+            self.assertTrue(runtime_dispatch_retry_pending(directory, state, "herdr"))
+            state["gates"]["approval"] = "blocked"
+            self.assertFalse(runtime_dispatch_retry_pending(directory, state, "herdr"))
+
+    def test_runtime_retry_rejects_route_time_block_after_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "iteration-budget.json").write_text(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "stop_reason": "task status is blocked",
+                        "usage": {"dispatches": 0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (directory / "runtime-preflight.json").write_text(
+                json.dumps({"status": "fail"}),
+                encoding="utf-8",
+            )
+            (directory / "dispatch-receipts.jsonl").write_text(
+                json.dumps(
+                    {
+                        "task_id": "TASK",
+                        "event": "dispatch_submitted",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertFalse(
+                runtime_dispatch_retry_pending(
+                    directory,
+                    {"task_id": "TASK", "status": "blocked"},
+                    "herdr",
+                )
+            )
+
+    def test_route_time_preflight_recovery_resumes_dispatching_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            state = {
+                "task_id": "TASK",
+                "status": "blocked",
+                "gates": {},
+            }
+            budget = {
+                "status": "blocked",
+                "stop_reason": "task status is blocked",
+                "usage": {
+                    "dispatches": 0,
+                    "dispatch_reference_tokens": 0,
+                    "reroutes": 0,
+                    "fix_review_rounds": 0,
+                },
+                "max_dispatches": 3,
+                "max_dispatch_reference_tokens": 1000,
+                "max_reroutes": 1,
+                "max_fix_review_rounds": 1,
+            }
+            (directory / "state.json").write_text(json.dumps(state), encoding="utf-8")
+            (directory / "iteration-budget.json").write_text(
+                json.dumps(budget), encoding="utf-8"
+            )
+            (directory / "runtime-preflight.json").write_text(
+                json.dumps({"status": "fail"}), encoding="utf-8"
+            )
+
+            resumed = workflow_module.resume_runtime_dispatch_retry(
+                directory,
+                {"dispatch_payload_budgets": {}},
+                [("codex", "implementer")],
+                expected_stop_reason="task status is blocked",
+            )
+
+            self.assertEqual(read_json(directory / "state.json")["status"], "dispatching")
+            self.assertEqual(resumed["status"], "active")
+            self.assertIsNone(resumed["stop_reason"])
+
     def test_runtime_retry_accepts_resumed_executing_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)

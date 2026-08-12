@@ -151,6 +151,124 @@ class ValpAuditTests(unittest.TestCase):
                     replacement["receipt_id"],
                 )
 
+    def test_owned_session_supersession_rejects_completion_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            original, replacement, _binding = self._owned_session_supersession_fixture(task)
+            completion = {
+                **replacement,
+                "receipt_id": "completion-valid",
+                "event_sequence": 3,
+                "event": "dispatch_completed",
+                "suspension_epoch": 1,
+            }
+            (task / "dispatch-receipts.jsonl").write_text(
+                "\n".join(json.dumps(item) for item in (original, replacement, completion)) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(SystemExit, "exact existing submission receipts"):
+                write_herdr_invalid_session_binding_supersession(
+                    task,
+                    original["task_id"],
+                    completion["receipt_id"],
+                    replacement["receipt_id"],
+                )
+
+    def test_owned_session_supersession_rejects_identity_mismatch(self) -> None:
+        identity_changes = {
+            "task_id": "ANOTHER-TASK",
+            "agent": "another-agent",
+            "role": "implementer",
+            "work_item_id": "reviewer:another-agent",
+            "dispatch_id": "another-dispatch",
+            "dispatch_generation": 2,
+            "dispatch_ref": "agents/example-agent/other.md",
+            "expected_refs": ["agents/example-agent/other-review.md"],
+        }
+        for field, changed_value in identity_changes.items():
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                task = Path(tmp) / "task"
+                task.mkdir()
+                original, replacement, _binding = self._owned_session_supersession_fixture(task)
+                replacement[field] = changed_value
+                (task / "dispatch-receipts.jsonl").write_text(
+                    json.dumps(original) + "\n" + json.dumps(replacement) + "\n",
+                    encoding="utf-8",
+                )
+
+                expected_error = (
+                    "belongs to a different task"
+                    if field == "task_id"
+                    else "exact work-item identity"
+                )
+                with self.assertRaisesRegex(SystemExit, expected_error):
+                    write_herdr_invalid_session_binding_supersession(
+                        task,
+                        original["task_id"],
+                        original["receipt_id"],
+                        replacement["receipt_id"],
+                    )
+
+    def test_owned_session_supersession_rejects_reversed_submission_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            original, replacement, _binding = self._owned_session_supersession_fixture(task)
+            original["event_sequence"] = 2
+            replacement["event_sequence"] = 1
+            (task / "dispatch-receipts.jsonl").write_text(
+                json.dumps(replacement) + "\n" + json.dumps(original) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(SystemExit, "exact work-item identity"):
+                write_herdr_invalid_session_binding_supersession(
+                    task,
+                    original["task_id"],
+                    original["receipt_id"],
+                    replacement["receipt_id"],
+                )
+
+    def test_owned_session_audit_rejects_supersession_before_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            original, replacement, _binding = self._owned_session_supersession_fixture(task)
+            supersession = write_herdr_invalid_session_binding_supersession(
+                task,
+                original["task_id"],
+                original["receipt_id"],
+                replacement["receipt_id"],
+            )
+            replacement["event_sequence"] = supersession["event_sequence"] + 1
+            (task / "dispatch-receipts.jsonl").write_text(
+                "\n".join(json.dumps(item) for item in (original, supersession, replacement)) + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(TaskAudit(task).check_agent_sessions().status, FAIL)
+
+    def test_owned_session_audit_rejects_malformed_supersession_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            original, replacement, _binding = self._owned_session_supersession_fixture(task)
+            supersession = {
+                **original,
+                "receipt_id": "malformed-supersession",
+                "event_sequence": 3,
+                "event": "dispatch_superseded",
+                "proof": {"kind": "invalid_session_binding"},
+            }
+            (task / "dispatch-receipts.jsonl").write_text(
+                "\n".join(json.dumps(item) for item in (original, replacement, supersession)) + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(TaskAudit(task).check_agent_sessions().status, FAIL)
+
     def test_owned_session_audit_rejects_supersession_of_non_runtime_submission(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             task = Path(tmp) / "task"

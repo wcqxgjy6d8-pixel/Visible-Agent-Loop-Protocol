@@ -1549,6 +1549,53 @@ def runtime_dispatch_retry_pending(
     phases: list[tuple[str, str]] | None = None,
 ) -> bool:
     budget = read_json(directory / "iteration-budget.json")
+    if (
+        runtime_kind == "herdr"
+        and state.get("status") == "blocked"
+        and budget.get("status") == "blocked"
+        and int((budget.get("usage") or {}).get("dispatches") or 0) == 0
+        and not any(
+            receipt.get("event") in DELIVERY_RECEIPT_EVENTS
+            for receipt in load_dispatch_receipts(
+                directory,
+                str(state.get("task_id") or directory.name),
+            )
+        )
+    ):
+        recorded_preflight = read_json(directory / "runtime-preflight.json")
+        routed_preflight = (
+            (read_json(directory / "routing.json").get("runtime_adapter") or {}).get(
+                "preflight"
+            )
+            or {}
+        )
+        state_preflight = (
+            (state.get("runtime_adapter") or {}).get("preflight") or {}
+        )
+        preflight_statuses = {
+            recorded_preflight.get("status"),
+            routed_preflight.get("status"),
+            state_preflight.get("status"),
+        }
+        blocking_gate_values = {"blocked", "failed", "needs_approval"}
+        orphaned_pre_delivery_block = (
+            budget.get("stop_reason") == "task status is blocked"
+            and "pass" not in preflight_statuses
+            and "warn" in preflight_statuses
+            and not set((state.get("gates") or {}).values()).intersection(
+                blocking_gate_values
+            )
+            and not state.get("capabilities_missing")
+            and read_json(directory / "assignment-validation.json").get("status")
+            == "pass"
+        )
+        if (
+            recorded_preflight.get("status") == "fail"
+            or routed_preflight.get("status") == "fail"
+            or state_preflight.get("status") == "fail"
+            or orphaned_pre_delivery_block
+        ):
+            return True
     if not (
         runtime_kind == "herdr"
         and state.get("status") in {"dispatching", "executing"}
@@ -1640,12 +1687,20 @@ def resume_runtime_dispatch_retry(
     with task_state_lock(directory):
         state = read_json(directory / "state.json")
         budget = read_json(directory / "iteration-budget.json")
+        pre_delivery_route_recovery = (
+            state.get("status") == "blocked"
+            and runtime_dispatch_retry_pending(directory, state, "herdr", phases)
+        )
         retry_state_matches = (
             budget.get("status") == "blocked"
             and budget.get("stop_reason") == expected_stop_reason
         ) if expected_stop_reason else runtime_dispatch_retry_pending(directory, state, "herdr")
         if not retry_state_matches:
             raise SystemExit("Runtime dispatch retry state changed before recovery")
+        if pre_delivery_route_recovery:
+            state["status"] = "dispatching"
+            state["updated_at"] = now_iso()
+            write_json(directory / "state.json", state)
         budget["status"] = "active"
         budget["stop_reason"] = None
         write_json(directory / "iteration-budget.json", budget)

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:valp:schema:runtime-adoption:v1",
+  "title": "VALP Runtime Receipt Adoption",
+  "type": "object",
+  "required": ["schema_version", "task_id", "adapter_id", "abi_version", "ledger_ref", "compatibility_ledger_ref", "write_schema"],
+  "properties": {
+    "schema_version": {"const": "valp-runtime-receipt-adoption.v1"},
+    "task_id": {"type": "string", "minLength": 1},
+    "adapter_id": {"enum": ["herdr", "queue", "manual"]},
+    "abi_version": {"const": "1.0"},
+    "ledger_ref": {"type": "string", "pattern": "^runtime/(herdr|queue|manual)/receipts\\.v3\\.jsonl$"},
+    "compatibility_ledger_ref": {"const": "dispatch-receipts.jsonl"},
+    "write_schema": {"const": "valp-dispatch-receipt.v3"}
+  },
+  "additionalProperties": false
+}

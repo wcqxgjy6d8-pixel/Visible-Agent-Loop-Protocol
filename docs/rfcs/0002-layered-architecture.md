@@ -234,6 +234,13 @@ claim requires every proof kind and segment declared by its policy. A missing
 kind or a transport-only segment limits the claim even when another segment is
 strong.
 
+The bounded ABI 1.0 implementation freezes the six-operation capability table,
+typed request and observation envelopes, closed proof kinds, contiguous
+Composite provenance chain, and mode-specific proof assessment. LangGraph,
+atomic HERDR, Queue acceptance, and Manual Mode have explicit task-local
+adoption paths. Each additional runtime still requires its own adoption and
+conformance evidence; a runtime name never inherits conformance automatically.
+
 ### 5.5 Layer 04: External Runtime And Ecosystem
 
 Layer 04 contains replaceable execution capabilities: Agent surfaces, models,
@@ -363,6 +370,16 @@ control to the Leader. It does not satisfy missing evidence or completion gates.
 **Redirect.** Changing goal, scope, approach, or acceptance criteria creates a
 versioned intent change. Work that no longer applies is cancelled, superseded,
 or moved to a scoped follow-up; it is not erased.
+
+The bounded Stage 3 control implementation makes these rules executable in the
+pure Kernel. Cancellation binds the principal, authority Evidence, closed
+reason, exact scope, target generation, and active suspension epoch when Task
+cancellation crosses a wait. Submitted or running work emits a deterministic
+Adapter cancellation obligation. Interrupt freezes ordinary progression until
+an identity-bound resume Event is accepted. Redirect requires exactly the next
+intent version, cancels the named Work Items, preserves immutable history, and
+returns the Task to `fixing`. Replay verifies the accepted Results but never
+re-emits an Adapter effect.
 
 ## 10. Dependency And Partial-Result Semantics
 
@@ -550,9 +567,10 @@ revocation, conflict handling, audit evidence, and operations that are never
 leaseable. This follow-up is not required for the first Kernel slice and cannot
 weaken current approval gates.
 
-Interrupt and Redirect Event contracts are required before Stage 3
-human-intervention work. Budget Record contracts are also deferred to Stage 3.
-Neither area is implementation-authorized by RFC prose alone.
+The bounded authority-bound Cancel, Interrupt, and Redirect Event contracts are
+implemented by the pure Kernel and durable journal. Budget Record contracts
+remain deferred to later Stage 3 work. RFC prose alone does not authorize
+broader budget or provider-specific control behavior.
 
 The Phase 1 structural Checkpoint Root contract binds State, State digest,
 identity tuple, revision, accepted-entry count, prefix digest, tail bindings,
@@ -561,9 +579,13 @@ Stage 2 pure-Kernel path: an independently supplied canonical trust policy,
 identity-bound Evidence over the canonical checkpoint statement, exact accepted
 tail Result/State verification, and reducer-recomputed suffix replay with zero
 emitted obligations. A bare or self-asserted non-zero State remains invalid.
-This is local Layer 02 correctness evidence; it does not implement checkpoint
-storage, effect reconciliation, wait/wake, Adapter continuation, or runtime
-recovery.
+This is local Layer 02 correctness evidence. The subsequent bounded Reference
+System slice adds a locked canonical Kernel journal, authenticated checkpoint
+envelope persistence, exact-prefix validation, and restart suffix recovery.
+The adopted runtime slice binds that journal to ABI 1.0 LangGraph, atomic
+HERDR, Queue, and Manual paths. A local subprocess runtime now proves approved
+provider continuation plus status-only crash reconciliation; HERDR and
+production-provider continuation remain external runtime proof gates.
 
 MVP-B implements the closed Layer 02 Task transition graph for the 13 Kernel
 truth statuses. Its typed Event contract covers the forward, fix/redispatch,
@@ -572,8 +594,17 @@ edges; `done`, `failed`, and `cancelled` are terminal. The first bounded Stage
 2 pure-Kernel slice adds Work Item and Attempt graphs, dependency-gated
 eligibility, identity/generation binding, and Attempt fencing. MVP-H adds
 authenticated Checkpoint Root suffix replay at the same pure-Kernel boundary.
-These slices do not implement wait/wake semantics, checkpoint persistence,
-effect recovery, or Adapter adoption.
+The subsequent bounded Stage 2 slice adds an independent `Suspension` machine,
+closed `waiting`/`resumed` states, exact suspension epoch and Wait Policy
+binding, and Kernel-computed `dependency_ready` wake from the bound Work Item
+frontier. Its accepted start/wake Events preserve Task `executing`, emit no
+obligations, and replay with exact canonical Result equality. Later bounded
+slices add authority-bound cancellation, Interrupt, versioned Redirect,
+checkpoint persistence, a digest-chained Adapter-effect ledger with strict
+reconciliation, and explicit Adapter adoption. Local subprocess continuation
+consumption is now covered with provider-owned status reconciliation;
+provider-specific exception wake breadth, HERDR continuation, and production
+provider hosting remain outside this local machine-contract proof.
 
 ## 19. Acceptance Criteria
 

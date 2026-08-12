@@ -173,6 +173,34 @@ class ControlPlaneTests(unittest.TestCase):
         self.assertNotIn("manual-user", {item["principal_id"] for item in result["candidates"]})
         self.assertNotIn("valp-reference-cli", {item["principal_id"] for item in result["candidates"]})
 
+    def test_candidate_discovery_can_refresh_before_leader_selection(self) -> None:
+        self.core.init()
+        first = self.core.discover_candidates([])
+
+        refreshed = self.core.discover_candidates([self._leader_passport()])
+
+        self.assertEqual(first["candidates"], [])
+        self.assertEqual(
+            [candidate["principal_id"] for candidate in refreshed["candidates"]],
+            ["agent-codex-session-a"],
+        )
+        self.assertEqual(self.core.state()["status"], "awaiting_leader_selection")
+        events = [
+            json.loads(line)
+            for line in (self.root / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            [event["event_kind"] for event in events],
+            [
+                "installation_initialized",
+                "bootstrap_discovery_started",
+                "leader_candidate_discovery_completed",
+                "bootstrap_discovery_started",
+                "leader_candidate_discovery_completed",
+            ],
+        )
+        self.assertEqual(len({event["event_id"] for event in events}), 5)
+
     def test_leader_candidates_cli_uses_fresh_doctor_passports(self) -> None:
         self.core.init()
         output = io.StringIO()
@@ -633,12 +661,20 @@ class ControlPlaneTests(unittest.TestCase):
 
         with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
             "valp_cli.cli.open_herdr_leader_session",
-            return_value={
-                "status": "missing",
-                "action": "reprovision_required",
-                "reason": "leader_attachment_not_found",
-            },
-        ), patch(
+            side_effect=[
+                {
+                    "status": "missing",
+                    "action": "reprovision_required",
+                    "reason": "leader_attachment_not_found",
+                },
+                {
+                    "status": "opened",
+                    "action": "focused_existing_attachment",
+                    "session_id": "pane-leader-reopened",
+                    "workspace_id": "workspace-leader",
+                },
+            ],
+        ) as opened, patch(
             "valp_cli.cli.provision_herdr_leader_session",
             return_value=replacement,
         ) as provision:
@@ -654,13 +690,49 @@ class ControlPlaneTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         provision.assert_called_once()
+        self.assertEqual(opened.call_count, 2)
         self.assertEqual(self.core.state()["active_leader_epoch"], 2)
+        self.assertEqual(json.loads(output.getvalue())["attachment"]["status"], "opened")
         self.assertEqual(
             json.loads((self.root / "leader-session-binding.json").read_text(encoding="utf-8"))[
                 "runtime_identity"
             ]["session_id"],
             "pane-leader-reopened",
         )
+
+    def test_leader_open_records_restart_failure_when_reprovisioning_fails(self) -> None:
+        self._bootstrap()
+
+        with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
+            "valp_cli.cli.open_herdr_leader_session",
+            return_value={
+                "status": "missing",
+                "action": "reprovision_required",
+                "reason": "leader_attachment_not_found",
+            },
+        ), patch(
+            "valp_cli.cli.provision_herdr_leader_session",
+            side_effect=HerdrSubmissionError("simulated open replacement failure"),
+        ):
+            with self.assertRaises(SystemExit) as context:
+                main([
+                    "leader",
+                    "open",
+                    "--workspace",
+                    str(self.workspace),
+                    "--json",
+                ])
+
+        self.assertIn("VALP-E-LEADER-UNREACHABLE", str(context.exception))
+        self.assertEqual(self.core.state()["status"], "active")
+        receipts = [
+            json.loads(line)
+            for line in (self.root / "leader-session-receipts.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(receipts[-1]["operation"], "restart")
 
     def test_explicit_leader_restart_fences_epoch_and_preserves_binding_history(self) -> None:
         self.core.init()
@@ -776,6 +848,36 @@ class ControlPlaneTests(unittest.TestCase):
         self.assertEqual(receipts[-1]["leader_epoch"], 2)
         self.assertEqual(receipts[-1]["generation"], 2)
         self.assertNotIn("replaced_binding_digest", receipts[-1])
+
+    def test_leader_restart_can_retry_after_failed_attempt_is_rolled_back(self) -> None:
+        self._bootstrap()
+
+        first_attempt = self.core.prepare_leader_restart()
+        with self.assertRaises(ControlPlaneError):
+            self.core.fail_leader_activation(
+                "restart",
+                adapter_id="herdr",
+                failure_class="HerdrSubmissionError",
+            )
+        self.core.restore_active_leader_after_failed_restart()
+        second_attempt = self.core.prepare_leader_restart()
+
+        self.assertEqual(first_attempt["proposed_leader_epoch"], 2)
+        self.assertEqual(second_attempt["proposed_leader_epoch"], 2)
+        self.assertNotEqual(
+            first_attempt["restart"]["message_id"],
+            second_attempt["restart"]["message_id"],
+        )
+        self.assertEqual(self.core.state()["status"], "restarting_leader")
+        with self.assertRaises(ControlPlaneError) as second_failure:
+            self.core.fail_leader_activation(
+                "restart",
+                adapter_id="herdr",
+                failure_class="HerdrSubmissionError",
+            )
+        self.assertEqual(second_failure.exception.code, "VALP-E-LEADER-UNREACHABLE")
+        self.core.restore_active_leader_after_failed_restart()
+        self.assertEqual(self.core.state()["status"], "active")
 
     def test_leader_rotation_provisions_replacement_before_changing_authority(self) -> None:
         replacement_passport = self._leader_passport(

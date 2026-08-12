@@ -83,6 +83,16 @@ Minimum fields:
 }
 ```
 
+Watcher mode additionally requires `task_id`, `source_event_id`,
+`matched_signal`, `rule_ref`, and a digest-shaped `deduplication_identity`.
+The reference HERDR source watcher derives that identity from the source,
+source-event ID, and matched rule before publication. An exact repeat returns
+the original task result; concurrent repeats are serialized by that identity,
+and changed or indeterminate content under the same identity fails closed.
+High-risk watcher intake may write the visible trigger record, but it records
+`block_for_approval` and cannot dispatch the gated action without separate
+approval.
+
 ## Approval Boundary
 
 Auto Visible Mode must never treat automatic trigger as automatic permission.

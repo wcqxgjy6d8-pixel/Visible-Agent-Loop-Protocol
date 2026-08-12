@@ -1,21 +1,32 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
+import io
 import json
 import os
 import shlex
 import sys
 import tempfile
+import time
+from contextlib import redirect_stdout
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from unittest.mock import patch
 
 from valp_cli.doctor import FAIL, runtime_checks
+from valp_cli.cli import main
 from valp_cli.herdr_adapter import (
     HERDR_PANE_LIST_STDOUT_LIMIT,
+    HerdrAutoVisibleWatcher,
     HerdrSubmissionError,
+    binding_has_verified_bootstrap_lifecycle,
+    detect_herdr_session_provisioning_capability,
     detect_herdr_submission_capability,
     opaque_process_generation,
+    observe_herdr_terminal,
     open_herdr_leader_session,
     provision_herdr_agent_session,
     provision_herdr_leader_session,
@@ -29,6 +40,7 @@ from valp_cli.workflow import (
     dispatch_task,
     ensure_herdr_agent_sessions,
     herdr_launch_argv_for,
+    herdr_named_agent_readiness,
     publish_task,
     route_task,
     write_herdr_submission_receipt,
@@ -100,6 +112,7 @@ RESPONSES = {
     ("pane", "send-text"): '{"result":{"pane_id":"pane-1"}}',
     ("pane", "send-keys"): '{"result":{"pane_id":"pane-1"}}',
     ("agent", "wait"): '{"result":{"agent":{"status":"working","agent_session_id":"session-1"}}}',
+    ("agent", "readiness"): '{"result":{"type":"agent_readiness","readiness":{"schema_version":"valp-named-agent-readiness.v1","ready":true,"reason_code":"ready","addressable":true,"detected_agent":"codex","agent_status":"idle","interactive_ready":true,"prompt_eligible":true,"session_identity":{"status":"known","identity":{"source":"herdr:codex","agent":"codex","kind":"id","value":"session-owned"}},"state_change_seq":1}}}',
 }
 
 
@@ -206,13 +219,446 @@ print(RESPONSES[key])
 
 
 class PackagedHerdrAdapterTests(unittest.TestCase):
+    def test_auto_visible_watcher_accepts_runtime_payload_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+
+            def publish(event: dict[str, object]) -> dict[str, object]:
+                self.assertEqual(
+                    event["payload"],
+                    {"event": "workspace.metadata_updated", "workspace_id": "w99"},
+                )
+                task_id = "TASK-WATCH-RUNTIME-PAYLOAD"
+                task_directory = workspace / ".herdr-loop" / "tasks" / task_id
+                task_directory.mkdir(parents=True)
+                return {"task_id": task_id, "task_directory": task_directory}
+
+            result = HerdrAutoVisibleWatcher(workspace, publish).process({
+                "source": "runtime_api",
+                "source_event_id": "herdr:sha256:event-1",
+                "matched_signal": "workspace.metadata_updated",
+                "rule_ref": "runtime-policy.json#metadata",
+                "risk_classification": "low",
+                "selected_action": "publish_only",
+                "payload": {
+                    "event": "workspace.metadata_updated",
+                    "workspace_id": "w99",
+                },
+            })
+
+            self.assertEqual(result["task_id"], "TASK-WATCH-RUNTIME-PAYLOAD")
+
+    def test_auto_visible_watcher_rejects_unknown_or_non_object_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            base = {
+                "source": "runtime_api",
+                "source_event_id": "herdr:sha256:event-2",
+                "matched_signal": "workspace.metadata_updated",
+                "rule_ref": "runtime-policy.json#metadata",
+                "risk_classification": "low",
+                "selected_action": "publish_only",
+            }
+            watcher = HerdrAutoVisibleWatcher(workspace, lambda _: {})
+
+            with self.assertRaisesRegex(HerdrSubmissionError, "fields are invalid"):
+                watcher.process({**base, "unexpected": {}})
+            with self.assertRaisesRegex(HerdrSubmissionError, "payload must be an object"):
+                watcher.process({**base, "payload": "not-an-object"})
+
+    def test_watcher_intake_cli_publishes_once_and_replays_same_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            event_path = workspace / "watcher-event.json"
+            event_path.write_text(json.dumps({
+                "source": "runtime_api",
+                "source_event_id": "herdr-event-cli-1",
+                "matched_signal": "queue item is ready",
+                "rule_ref": "runtime-policy.json#queue-ready",
+                "risk_classification": "low",
+                "selected_action": "publish_only",
+            }), encoding="utf-8")
+            command = [
+                "watcher-intake",
+                "--workspace", str(workspace),
+                "--event-file", str(event_path),
+                "--task-id", "TASK-WATCH-CLI-1",
+                "--prompt", "Verify one watcher intake.",
+                "--json",
+            ]
+
+            first_stdout = io.StringIO()
+            with redirect_stdout(first_stdout):
+                self.assertEqual(main(command), 0)
+            second_stdout = io.StringIO()
+            with redirect_stdout(second_stdout):
+                self.assertEqual(main(command), 0)
+
+            first = json.loads(first_stdout.getvalue())
+            second = json.loads(second_stdout.getvalue())
+            self.assertEqual(first, second)
+            self.assertEqual(first["task_id"], "TASK-WATCH-CLI-1")
+            self.assertEqual(first["trigger_policy_ref"], "trigger-policy.json")
+            trigger = json.loads((
+                workspace / ".herdr-loop" / "tasks" / "TASK-WATCH-CLI-1"
+                / "trigger-policy.json"
+            ).read_text(encoding="utf-8"))
+            self.assertEqual(trigger["trigger_mode"], "watcher")
+            self.assertEqual(trigger["source_event_id"], "herdr-event-cli-1")
+
+    def test_auto_visible_watcher_suppresses_concurrent_duplicate_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            publish_started = Event()
+            release_publish = Event()
+            published: list[dict[str, object]] = []
+
+            def publish(event: dict[str, object]) -> dict[str, object]:
+                published.append(event)
+                publish_started.set()
+                release_publish.wait(timeout=1)
+                task_id = "TASK-WATCH-CONCURRENT"
+                task_directory = workspace / ".herdr-loop" / "tasks" / task_id
+                task_directory.mkdir(parents=True, exist_ok=True)
+                return {"task_id": task_id, "task_directory": task_directory}
+
+            event = {
+                "source": "runtime_api",
+                "source_event_id": "herdr-event-concurrent",
+                "matched_signal": "queue item is ready",
+                "rule_ref": "runtime-policy.json#queue-ready",
+                "risk_classification": "low",
+                "selected_action": "publish_only",
+            }
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                first = executor.submit(
+                    HerdrAutoVisibleWatcher(workspace, publish).process,
+                    event,
+                )
+                self.assertTrue(publish_started.wait(timeout=1))
+                second = executor.submit(
+                    HerdrAutoVisibleWatcher(workspace, publish).process,
+                    event,
+                )
+                time.sleep(0.05)
+                release_publish.set()
+                first_result = first.result(timeout=1)
+                second_result = second.result(timeout=1)
+
+            self.assertEqual(len(published), 1)
+            self.assertEqual(first_result, second_result)
+
+    def test_auto_visible_watcher_publishes_duplicate_source_event_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            published: list[dict[str, object]] = []
+
+            def publish(event: dict[str, object]) -> dict[str, object]:
+                published.append(event)
+                task_id = "TASK-WATCH-1"
+                task_directory = workspace / ".herdr-loop" / "tasks" / task_id
+                task_directory.mkdir(parents=True)
+                return {"task_id": task_id, "task_directory": task_directory}
+
+            watcher = HerdrAutoVisibleWatcher(workspace, publish)
+            event = {
+                "source": "runtime_api",
+                "source_event_id": "herdr-event-42",
+                "matched_signal": "queue item is ready",
+                "rule_ref": "runtime-policy.json#queue-ready",
+                "risk_classification": "low",
+                "selected_action": "publish_only",
+            }
+            first = watcher.process(event)
+            second = HerdrAutoVisibleWatcher(workspace, publish).process(event)
+
+            self.assertEqual(len(published), 1)
+            self.assertEqual(first, second)
+            trigger = json.loads((
+                workspace / ".herdr-loop" / "tasks" / "TASK-WATCH-1"
+                / "trigger-policy.json"
+            ).read_text(encoding="utf-8"))
+            self.assertEqual(trigger["trigger_source"], "runtime_api")
+            self.assertEqual(trigger["matched_signal"], "queue item is ready")
+            self.assertEqual(trigger["task_id"], "TASK-WATCH-1")
+            self.assertFalse(trigger["approval_required"])
+            self.assertTrue(trigger["deduplication_identity"].startswith("sha256:"))
+
+    def test_auto_visible_watcher_blocks_high_risk_action_after_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+
+            def publish(_: dict[str, object]) -> dict[str, object]:
+                task_id = "TASK-WATCH-HIGH"
+                task_directory = workspace / ".herdr-loop" / "tasks" / task_id
+                task_directory.mkdir(parents=True)
+                return {"task_id": task_id, "task_directory": task_directory}
+
+            result = HerdrAutoVisibleWatcher(workspace, publish).process({
+                "source": "queue_watcher",
+                "source_event_id": "deploy-7",
+                "matched_signal": "release queue item",
+                "rule_ref": "runtime-policy.json#release",
+                "risk_classification": "high",
+                "selected_action": "validate_declared_route_and_dispatch",
+            })
+
+            self.assertEqual(result["selected_action"], "block_for_approval")
+            self.assertTrue(result["approval_required"])
+            trigger = json.loads((
+                workspace / ".herdr-loop" / "tasks" / "TASK-WATCH-HIGH"
+                / "trigger-policy.json"
+            ).read_text(encoding="utf-8"))
+            self.assertEqual(trigger["selected_action"], "block_for_approval")
+            self.assertTrue(trigger["approval_required"])
+
+    def test_verified_bootstrap_lifecycle_rejects_unsafe_evidence_paths(self) -> None:
+        binding = {
+            "lifecycle": "bootstrap_ready",
+            "generation": 1,
+            "runtime_identity": {"pane_id": "pane-owned"},
+            "bootstrap_verification": {
+                "status": "verified",
+                "evidence_ref": "evidence/bootstrap-probe-result.json",
+                "generation": 1,
+                "pane_id": "pane-owned",
+                "native_session_id": "session-native",
+                "expected_response": "BOOTSTRAP_READY",
+                "actual_response": "BOOTSTRAP_READY",
+                "native_turn_error": None,
+                "session_identity_status": "known",
+                "model_probe_status": "observed",
+            },
+        }
+
+        for unsafe_ref in ("/etc/passwd", "evidence/../../secret.json"):
+            with self.subTest(evidence_ref=unsafe_ref):
+                binding["bootstrap_verification"]["evidence_ref"] = unsafe_ref
+                self.assertFalse(binding_has_verified_bootstrap_lifecycle(binding))
+
+        binding["bootstrap_verification"]["evidence_ref"] = (
+            "evidence/bootstrap-probe-result.json"
+        )
+        binding["bootstrap_verification"]["consumed_by_dispatch_receipt_id"] = (
+            "TASK:codex:implementer:1:dispatch_submitted"
+        )
+        self.assertFalse(binding_has_verified_bootstrap_lifecycle(binding))
+
+    def test_done_task_owned_session_requires_explicit_fenced_reprovision(self) -> None:
+        project_root = Path("/example/project").resolve()
+        task_id = "TASK-DONE-SESSION"
+        session_name = "valp-" + hashlib.sha256(
+            f"{project_root}\0{task_id}\0codex".encode("utf-8")
+        ).hexdigest()[:16] + "-codex"
+        identity = {
+            "pane_id": "pane-done",
+            "terminal_id": "terminal-done",
+            "workspace_id": "workspace-done",
+            "tab_id": "tab-done",
+        }
+        identity["token"] = "sha256:" + hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        binding = {
+            "agent": "codex",
+            "session_name": session_name,
+            "generation": 1,
+            "ownership": {
+                "scope": "task",
+                "task_id": task_id,
+                "project_identity": "sha256:" + hashlib.sha256(str(project_root).encode("utf-8")).hexdigest(),
+            },
+            "context": {"cwd": str(project_root)},
+            "launch": {"argv": ["/test/bin/codex"]},
+            "focused_at_provisioning": False,
+            "runtime_scope": {
+                "kind": "workspace",
+                "ownership": "task",
+                "workspace_id": "workspace-done",
+                "label": "valp-task-done-session-codex-g1",
+            },
+            "runtime_identity": identity,
+            "lifecycle": "provisioned",
+            "dispatch_eligible": True,
+        }
+
+        closed = False
+
+        def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
+            nonlocal closed
+            if command[1:] == ["pane", "list", "--workspace", "workspace-done"]:
+                if closed:
+                    return {
+                        "ok": False,
+                        "exit_code": 1,
+                        "stdout": "",
+                        "stderr": json.dumps({"error": {"code": "workspace_not_found"}}),
+                    }
+                stdout = json.dumps({"result": {"panes": [{
+                    "agent": "codex",
+                    "agent_status": "done",
+                    "cwd": str(project_root),
+                    "name": session_name,
+                    **{key: value for key, value in identity.items() if key != "token"},
+                }]}})
+            elif command[1:] == ["workspace", "close", "workspace-done"]:
+                closed = True
+                stdout = '{"result":{"type":"workspace_closed"}}'
+            elif command[1:3] == ["workspace", "create"]:
+                stdout = json.dumps({"result": {"workspace": {
+                    "workspace_id": "workspace-new",
+                    "label": command[command.index("--label") + 1],
+                }}})
+            elif command[1:] == ["agent", "--help"]:
+                stdout = "herdr agent start <name> [--cwd PATH] -- <argv...>"
+            elif command[1:3] == ["agent", "start"]:
+                stdout = json.dumps({"result": {
+                    "type": "agent_started",
+                    "agent": {"pane_id": "pane-new"},
+                    "argv": ["/test/bin/codex"],
+                }})
+            elif command[1:3] == ["pane", "move"]:
+                stdout = '{"result":{"type":"pane_moved"}}'
+            elif command[1:3] == ["pane", "get"]:
+                stdout = json.dumps({"result": {"pane": {
+                    "agent": "codex",
+                    "label": session_name,
+                    "pane_id": "pane-new",
+                    "terminal_id": "terminal-new",
+                    "workspace_id": "workspace-new",
+                    "tab_id": "tab-new",
+                    "cwd": str(project_root),
+                    "focused": False,
+                }}})
+            else:
+                raise AssertionError(f"unexpected command: {command}")
+            return {"ok": True, "exit_code": 0, "stdout": stdout, "stderr": ""}
+
+        with self.assertRaisesRegex(HerdrSubmissionError, "explicit fenced reprovision"):
+            provision_herdr_agent_session(
+                "/test/herdr",
+                task_id=task_id,
+                agent="codex",
+                project_root=project_root,
+                launch_argv=["/test/bin/codex"],
+                existing_binding=binding,
+                run_command=fake_run,
+            )
+
+        replacement = provision_herdr_agent_session(
+            "/test/herdr",
+            task_id=task_id,
+            agent="codex",
+            project_root=project_root,
+            launch_argv=["/test/bin/codex"],
+            existing_binding=binding,
+            run_command=fake_run,
+            allow_done_session_reprovision=True,
+            readiness_interval_seconds=0,
+        )
+        self.assertTrue(closed)
+        self.assertEqual(replacement["generation"], 2)
+        self.assertEqual(replacement["lifecycle"], "provisioned")
+        self.assertEqual(replacement["runtime_identity"]["workspace_id"], "workspace-new")
+
+    def test_leader_provisioning_retries_until_new_workspace_shell_is_ready(self) -> None:
+        calls: list[list[str]] = []
+        start_attempts = 0
+        project_root = Path("/example/project")
+
+        def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
+            nonlocal start_attempts
+            calls.append(command)
+            if command[1:] == ["workspace", "list"]:
+                stdout = '{"result":{"workspaces":[{"workspace_id":"workspace-caller","focused":true}]}}'
+            elif command[1:3] == ["workspace", "create"]:
+                label = command[command.index("--label") + 1]
+                stdout = json.dumps({
+                    "result": {"workspace": {
+                        "workspace_id": "workspace-leader",
+                        "label": label,
+                    }}
+                })
+            elif command[1:] == ["agent", "--help"]:
+                stdout = "herdr agent start <name> -- <argv...>"
+            elif command[1:3] == ["pane", "list"]:
+                stdout = json.dumps({
+                    "result": {"panes": [{
+                        "pane_id": "pane-leader",
+                        "workspace_id": "workspace-leader",
+                    }]}
+                })
+            elif command[1:3] == ["agent", "start"]:
+                start_attempts += 1
+                if start_attempts == 1:
+                    return {
+                        "ok": False,
+                        "exit_code": 1,
+                        "stdout": '{"error":{"code":"agent_pane_busy"}}',
+                        "stderr": "",
+                    }
+                stdout = json.dumps({
+                    "result": {
+                        "type": "agent_started",
+                        "argv": command[command.index("--") + 1:],
+                        "agent": {"pane_id": "pane-leader"},
+                    }
+                })
+            elif command[1:3] == ["pane", "move"]:
+                stdout = '{"result":{"type":"pane_moved"}}'
+            elif command[1:3] == ["workspace", "focus"]:
+                self.assertEqual(command[-1], "workspace-caller")
+                stdout = '{"result":{"type":"workspace_focused"}}'
+            elif command[1:3] == ["pane", "get"]:
+                stdout = json.dumps({
+                    "result": {"pane": {
+                        "agent": "codex",
+                        "agent_status": "idle",
+                        "cwd": str(project_root),
+                        "focused": False,
+                        "name": next(
+                            call[3] for call in calls
+                            if call[1:3] == ["agent", "start"]
+                        ),
+                        "pane_id": "pane-leader",
+                        "terminal_id": "terminal-leader",
+                        "workspace_id": "workspace-leader",
+                        "tab_id": "tab-leader",
+                    }}
+                })
+            elif command[1:3] == ["agent", "get"]:
+                stdout = '{"result":{"agent":{"agent":"codex","agent_status":"idle"}}}'
+            elif command[1:3] == ["pane", "process-info"]:
+                stdout = '{"result":{"process_info":{"foreground_process_group_id":73}}}'
+            else:
+                raise AssertionError(f"unexpected command: {command}")
+            return {"ok": True, "exit_code": 0, "stdout": stdout, "stderr": ""}
+
+        binding = provision_herdr_leader_session(
+            "/test/herdr",
+            installation_id="installation-test",
+            principal_id="agent-codex-session-a",
+            agent="codex",
+            workspace_root=project_root,
+            launch_argv=["/test/bin/codex", "--example-mode"],
+            leader_epoch=1,
+            generation=1,
+            run_command=fake_run,
+            readiness_interval_seconds=0,
+        )
+
+        self.assertEqual(start_attempts, 2)
+        self.assertEqual(binding["health"]["status"], "pass")
+
     def test_leader_provisioning_creates_fresh_installation_owned_session(self) -> None:
         calls: list[list[str]] = []
         project_root = Path("/example/project")
 
         def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
             calls.append(command)
-            if command[1:3] == ["workspace", "create"]:
+            if command[1:] == ["workspace", "list"]:
+                stdout = '{"result":{"workspaces":[{"workspace_id":"workspace-caller","focused":true}]}}'
+            elif command[1:3] == ["workspace", "create"]:
                 label = command[command.index("--label") + 1]
                 stdout = json.dumps({
                     "result": {
@@ -223,7 +669,18 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                     }
                 })
             elif command[1:] == ["agent", "--help"]:
-                stdout = "herdr agent start <name> -- <argv...>"
+                stdout = "Commands:\n  start  Start a supported interactive agent\n"
+            elif command[1:] == ["agent", "start", "--help"]:
+                stdout = "Usage: herdr agent start <NAME> --kind <KIND> --pane <ID> [-- [AGENT_ARG]...]"
+            elif command[1:3] == ["pane", "list"]:
+                stdout = json.dumps({
+                    "result": {
+                        "panes": [{
+                            "pane_id": "pane-leader-shell",
+                            "workspace_id": "workspace-leader",
+                        }]
+                    }
+                })
             elif command[1:3] == ["agent", "start"]:
                 name = command[3]
                 stdout = json.dumps({
@@ -235,19 +692,16 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                 })
             elif command[1:3] == ["pane", "move"]:
                 stdout = '{"result":{"type":"pane_moved","pane_id":"pane-leader"}}'
+            elif command[1:3] == ["workspace", "focus"]:
+                self.assertEqual(command[-1], "workspace-caller")
+                stdout = '{"result":{"type":"workspace_focused"}}'
             elif command[1:3] == ["pane", "get"]:
-                name = next(
-                    call[call.index("--label") + 1]
-                    for call in calls
-                    if call[1:3] == ["pane", "move"]
-                )
                 stdout = json.dumps({
                     "result": {
                         "type": "pane_info",
                         "pane": {
                             "agent": "codex",
                             "agent_status": "idle",
-                            "name": name,
                             "pane_id": "pane-leader",
                             "terminal_id": "terminal-leader",
                             "workspace_id": "workspace-leader",
@@ -255,6 +709,15 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                             "cwd": str(project_root),
                             "focused": False,
                         },
+                    }
+                })
+            elif command[1:3] == ["agent", "get"]:
+                stdout = json.dumps({
+                    "result": {
+                        "agent": {
+                            "agent": "codex",
+                            "agent_status": "idle",
+                        }
                     }
                 })
             elif command[1:3] == ["pane", "process-info"]:
@@ -283,11 +746,24 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
         self.assertRegex(binding["runtime_identity"]["process_generation"], r"^sha256:[0-9a-f]{64}$")
         self.assertNotIn("foreground-process-group:73", json.dumps(binding))
         self.assertEqual(binding["health"]["status"], "pass")
-        self.assertFalse(any(command[1:3] == ["pane", "list"] for command in calls))
+        self.assertTrue(any(command[1:3] == ["pane", "list"] for command in calls))
         workspace_create = next(command for command in calls if command[1:3] == ["workspace", "create"])
-        agent_start = next(command for command in calls if command[1:3] == ["agent", "start"])
+        agent_start = next(
+            command
+            for command in calls
+            if command[1:3] == ["agent", "start"] and "--help" not in command
+        )
         self.assertIn("--no-focus", workspace_create)
-        self.assertIn("--no-focus", agent_start)
+        self.assertIn(
+            ["/test/herdr", "workspace", "focus", "workspace-caller"],
+            calls,
+        )
+        self.assertEqual(agent_start[agent_start.index("--pane") + 1], "pane-leader-shell")
+        self.assertEqual(agent_start[agent_start.index("--kind") + 1], "codex")
+        self.assertEqual(
+            agent_start[agent_start.index("--") + 1:],
+            ["--example-mode"],
+        )
 
     def test_open_leader_focuses_existing_attachment_without_reprovisioning(self) -> None:
         calls: list[list[str]] = []
@@ -359,7 +835,9 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
         def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
             nonlocal pane_get_attempts
             calls.append(command)
-            if command[1:3] == ["workspace", "create"]:
+            if command[1:] == ["workspace", "list"]:
+                stdout = '{"result":{"workspaces":[{"workspace_id":"workspace-caller","focused":true}]}}'
+            elif command[1:3] == ["workspace", "create"]:
                 label = command[command.index("--label") + 1]
                 stdout = json.dumps({
                     "result": {
@@ -371,6 +849,15 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                 })
             elif command[1:] == ["agent", "--help"]:
                 stdout = "herdr agent start <name> -- <argv...>"
+            elif command[1:3] == ["pane", "list"]:
+                stdout = json.dumps({
+                    "result": {
+                        "panes": [{
+                            "pane_id": "pane-leader-shell",
+                            "workspace_id": "workspace-leader",
+                        }]
+                    }
+                })
             elif command[1:3] == ["agent", "start"]:
                 name = command[3]
                 stdout = json.dumps({
@@ -382,6 +869,9 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                 })
             elif command[1:3] == ["pane", "move"]:
                 stdout = '{"result":{"type":"pane_moved","pane_id":"pane-leader"}}'
+            elif command[1:3] == ["workspace", "focus"]:
+                self.assertEqual(command[-1], "workspace-caller")
+                stdout = '{"result":{"type":"workspace_focused"}}'
             elif command[1:3] == ["pane", "get"]:
                 pane_get_attempts += 1
                 name = next(
@@ -454,6 +944,14 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                         "workspace_id": "workspace-leader",
                     }}
                 })
+            elif command[1:] == ["agent", "get", "workspace-leader:pane-recovered"]:
+                stdout = json.dumps({
+                    "result": {"agent": {
+                        "agent": "codex",
+                        "agent_status": "idle",
+                        "name": "valp-leader-codex-e7eee1444888-g1",
+                    }}
+                })
             elif command[1:] == ["workspace", "get", "workspace-leader"]:
                 stdout = json.dumps({
                     "result": {"workspace": {
@@ -472,6 +970,14 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                             "pid": 73,
                         }],
                         "pane_id": "workspace-leader:pane-recovered",
+                    }}
+                })
+            elif command[1:3] == ["agent", "get"]:
+                stdout = json.dumps({
+                    "result": {"agent": {
+                        "agent": "codex",
+                        "name": session_name,
+                        "agent_status": "idle",
                     }}
                 })
             else:
@@ -497,6 +1003,7 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
             calls,
             [
                 ["/test/herdr", "pane", "get", "workspace-leader:pane-recovered"],
+                ["/test/herdr", "agent", "get", "workspace-leader:pane-recovered"],
                 ["/test/herdr", "workspace", "get", "workspace-leader"],
                 ["/test/herdr", "pane", "process-info", "--pane", "workspace-leader:pane-recovered"],
             ],
@@ -521,6 +1028,13 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                         "tab_id": "workspace-leader:tab-recovered",
                         "terminal_id": "terminal-recovered",
                         "workspace_id": "workspace-leader",
+                    }}
+                })
+            elif command[1:3] == ["agent", "get"]:
+                stdout = json.dumps({
+                    "result": {"agent": {
+                        "agent": "codex",
+                        "name": "valp-leader-codex-e7eee1444888-g1",
                     }}
                 })
             elif command[1:3] == ["workspace", "get"]:
@@ -588,6 +1102,15 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                 "workspace_id": "workspace-other",
                 "tab_id": "tab-other",
             },
+            {
+                "agent": "qwen",
+                "agent_status": "idle",
+                "cwd": "/example/qwen-task",
+                "pane_id": "pane-qwen",
+                "terminal_id": "terminal-qwen",
+                "workspace_id": "workspace-qwen",
+                "tab_id": "tab-qwen",
+            },
         ]
 
         def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
@@ -605,6 +1128,62 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                 pane_id = command[-1]
                 process_group = 41 if pane_id == "pane-codex-bootstrap" else 42
                 stdout = json.dumps({"result": {"process_info": {"foreground_process_group_id": process_group}}})
+            elif command[1:3] == ["agent", "model-probe"]:
+                pane_id = command[3]
+                stdout = json.dumps({"result": {
+                    "type": "agent_model_probe",
+                    "probe": {
+                        "schema_version": "valp-model-probe.v1",
+                        "status": "observed",
+                        "source": "HERDR",
+                        "observed_at": "2026-08-06T04:00:00Z",
+                        "ttl_seconds": 3600,
+                        "model": {
+                            "model_id": f"model-for-{pane_id}",
+                            "provider": "provider-live",
+                            "reasoning_mode": "high",
+                            "confidence": "high",
+                        },
+                        "session_identity": {
+                            "status": "known",
+                            "token": f"sha256:{pane_id}",
+                            "source": "HERDR",
+                            "generation": f"session:{pane_id}",
+                        },
+                    },
+                }})
+            elif command[1:3] == ["agent", "readiness"]:
+                stdout = json.dumps({"result": {
+                    "type": "agent_readiness",
+                    "readiness": {
+                        "schema_version": "valp-named-agent-readiness.v1",
+                        "ready": True,
+                        "reason_code": "ready",
+                        "addressable": True,
+                        "detected_agent": "hermes",
+                        "agent_status": "idle",
+                        "interactive_ready": True,
+                        "prompt_eligible": True,
+                        "session_identity": {"status": "known", "identity": {"source": "herdr:hermes", "agent": "hermes", "kind": "id", "value": "session-1"}},
+                        "state_change_seq": 4,
+                    },
+                }})
+            elif command[1:3] == ["agent", "readiness"]:
+                stdout = json.dumps({"result": {"type": "agent_readiness", "readiness": {
+                    "schema_version": "valp-named-agent-readiness.v1", "ready": True,
+                    "reason_code": "ready", "addressable": True, "detected_agent": "hermes",
+                    "agent_status": "idle", "interactive_ready": True, "prompt_eligible": True,
+                    "session_identity": {"status": "known", "identity": {"source": "herdr:hermes", "agent": "hermes", "kind": "id", "value": "session-1"}},
+                    "state_change_seq": 4,
+                }}})
+            elif command[1:3] == ["agent", "readiness"]:
+                stdout = json.dumps({"result": {"type": "agent_readiness", "readiness": {
+                    "schema_version": "valp-named-agent-readiness.v1", "ready": True,
+                    "reason_code": "ready", "addressable": True, "detected_agent": "hermes",
+                    "agent_status": "idle", "interactive_ready": True, "prompt_eligible": True,
+                    "session_identity": {"status": "known", "identity": {"source": "herdr:hermes", "agent": "hermes", "kind": "id", "value": "session-1"}},
+                    "state_change_seq": 4,
+                }}})
             elif command[1:3] == ["pane", "layout"]:
                 stdout = json.dumps({
                     "result": {
@@ -635,10 +1214,11 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
         self.assertEqual(
             [session["model_probe"]["session_identity"]["generation"] for session in sessions],
             [
-                opaque_process_generation(41),
-                opaque_process_generation(42),
+                "session:pane-codex-bootstrap",
+                "session:pane-codex-other",
             ],
         )
+        self.assertEqual(preflight["agents"]["qwen"]["session_id"], "pane-qwen")
 
     def test_cli_preflight_uses_task_owned_launch_entrypoint(self) -> None:
         launch_argv = ["/verified/agy-stable"]
@@ -719,6 +1299,42 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                 }]}})
             elif command[1:3] == ["pane", "process-info"]:
                 stdout = '{"result":{"process_info":{"foreground_process_group_id":41}}}'
+            elif command[1:3] == ["agent", "model-probe"]:
+                stdout = json.dumps({"result": {
+                    "type": "agent_model_probe",
+                    "probe": {
+                        "schema_version": "valp-model-probe.v1",
+                        "status": "unsupported",
+                        "source": "HERDR",
+                        "ttl_seconds": 3600,
+                        "model": None,
+                        "session_identity": None,
+                    },
+                }})
+            elif command[1:3] == ["agent", "readiness"]:
+                stdout = json.dumps({"result": {
+                    "type": "agent_readiness",
+                    "readiness": {
+                        "schema_version": "valp-named-agent-readiness.v1",
+                        "ready": True,
+                        "reason_code": "ready",
+                        "addressable": True,
+                        "detected_agent": "claude",
+                        "agent_status": "idle",
+                        "interactive_ready": True,
+                        "prompt_eligible": True,
+                        "session_identity": {
+                            "status": "known",
+                            "identity": {
+                                "source": "herdr:claude",
+                                "agent": "claude",
+                                "kind": "id",
+                                "value": "session-owned",
+                            },
+                        },
+                        "state_change_seq": 1,
+                    },
+                }})
             elif command[1:3] == ["pane", "read"]:
                 stdout = '{"result":{"read":{"text":"[EXAMPLE_PROVIDER] example-model-2026 ░░ 0%"}}}'
             elif command[1:3] == ["pane", "layout"]:
@@ -902,7 +1518,43 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
             cross_task_reporter["agents"]["claude"]["notes"],
         )
 
-    def test_bound_agent_preflight_uses_structured_model_metadata(self) -> None:
+    def test_preflight_prefers_activated_runtime_beside_invoked_valp(self) -> None:
+        calls: list[list[str]] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            install_bin = Path(tmp) / "bin"
+            install_bin.mkdir()
+            invoked_valp = install_bin / "valp"
+            activated_herdr = install_bin / "herdr"
+            invoked_valp.write_text("#!/bin/sh\n", encoding="utf-8")
+            activated_herdr.write_text("#!/bin/sh\n", encoding="utf-8")
+            activated_herdr.chmod(0o755)
+
+            def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
+                calls.append(command)
+                if command[1:] == ["agent", "--help"]:
+                    stdout = "herdr agent start <name> -- <argv...>\nherdr agent prompt <target> <text>"
+                elif command[1:] == ["workspace", "--help"]:
+                    stdout = "herdr workspace create [--cwd PATH] [--no-focus]"
+                elif command[1:] == ["pane", "--help"]:
+                    stdout = "herdr pane move <pane> --new-tab\nherdr pane send-text <pane> <text>\nherdr pane send-keys <pane> <key>"
+                elif command[1:] == ["status", "--json"]:
+                    stdout = '{"client":{"version":"0.8.0"},"server":{"version":"0.8.0"}}'
+                elif command[1:] == ["pane", "list"]:
+                    stdout = '{"result":{"panes":[]}}'
+                else:
+                    raise AssertionError(f"unexpected command: {command}")
+                return {"ok": True, "exit_code": 0, "stdout": stdout, "stderr": ""}
+
+            with patch.object(sys, "argv", [str(invoked_valp), "preflight"]):
+                with patch("valp_cli.workflow.shutil.which", return_value="/stale/path/herdr"):
+                    with patch("valp_cli.workflow.run_command", side_effect=fake_run):
+                        preflight = collect_herdr_preflight([])
+
+        self.assertEqual(preflight["checks"]["herdr_status"]["status"], "pass")
+        self.assertTrue(calls)
+        self.assertTrue(all(command[0] == str(activated_herdr) for command in calls))
+
+    def test_bound_agent_preflight_uses_public_structured_model_probe(self) -> None:
         project_root = Path("/example/project")
         binding = {
             "agent": "hermes",
@@ -944,6 +1596,37 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                 }]}})
             elif command[1:3] == ["pane", "process-info"]:
                 stdout = '{"result":{"process_info":{"foreground_process_group_id":42}}}'
+            elif command[1:3] == ["agent", "model-probe"]:
+                stdout = json.dumps({"result": {
+                    "type": "agent_model_probe",
+                    "probe": {
+                        "schema_version": "valp-model-probe.v1",
+                        "status": "observed",
+                        "source": "herdr:hermes",
+                        "observed_at": "2026-08-06T04:00:00Z",
+                        "ttl_seconds": 3600,
+                        "model": {
+                            "model_id": "example-model-2026",
+                            "provider": "Example Provider",
+                            "reasoning_mode": "unknown",
+                            "confidence": "high",
+                        },
+                        "session_identity": {
+                            "status": "known",
+                            "token": "sha256:session",
+                            "source": "herdr:hermes",
+                            "generation": "session:1234",
+                        },
+                    },
+                }})
+            elif command[1:3] == ["agent", "readiness"]:
+                stdout = json.dumps({"result": {"type": "agent_readiness", "readiness": {
+                    "schema_version": "valp-named-agent-readiness.v1", "ready": True,
+                    "reason_code": "ready", "addressable": True, "detected_agent": "hermes",
+                    "agent_status": "idle", "interactive_ready": True, "prompt_eligible": True,
+                    "session_identity": {"status": "known", "identity": {"source": "herdr:hermes", "agent": "hermes", "kind": "id", "value": "session-1"}},
+                    "state_change_seq": 4,
+                }}})
             elif command[1:3] == ["pane", "layout"]:
                 stdout = '{"result":{"layout":{"panes":[{"pane_id":"pane-hermes","rect":{"width":120,"height":40}}]}}}'
             else:
@@ -970,6 +1653,33 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                 "reasoning_mode": "unknown",
                 "confidence": "high",
             },
+        )
+        self.assertTrue(preflight["agents"]["hermes"]["readiness"]["ready"])
+
+    def test_named_agent_readiness_fails_closed_for_false_ready(self) -> None:
+        with patch("valp_cli.workflow.run_command", return_value={
+            "ok": True,
+            "exit_code": 0,
+            "stdout": json.dumps({"result": {"type": "agent_readiness", "readiness": {
+                "schema_version": "valp-named-agent-readiness.v1",
+                "ready": False,
+                "reason_code": "not_interactive",
+                "addressable": True,
+                "detected_agent": "codex",
+                "agent_status": "idle",
+                "interactive_ready": False,
+                "prompt_eligible": False,
+                "session_identity": {"status": "known", "identity": {}},
+                "state_change_seq": 7,
+            }}}),
+            "stderr": "",
+        }) as run:
+            readiness = herdr_named_agent_readiness("/test/herdr", "pane-codex")
+        self.assertFalse(readiness["ready"])
+        self.assertEqual(readiness["reason_code"], "unavailable")
+        run.assert_called_once_with(
+            ["/test/herdr", "agent", "readiness", "pane-codex"],
+            timeout=5.0,
         )
     def test_launch_argv_resolves_bare_entrypoint_before_daemon_handoff(self) -> None:
         resolved_entrypoint = str((Path(sys.executable).parent / "build-agent").resolve())
@@ -1390,6 +2100,29 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
         )
         self.assertFalse(any(command[1:3] == ["agent", "start"] for command in calls))
 
+        def missing_name_run(
+            command: list[str],
+            **kwargs: object,
+        ) -> dict[str, object]:
+            result = fake_run(command, **kwargs)
+            if command[1:] != ["pane", "list", "--workspace", "workspace-owned"]:
+                return result
+            payload = json.loads(str(result["stdout"]))
+            payload["result"]["panes"][1].pop("name", None)
+            return {**result, "stdout": json.dumps(payload)}
+
+        reused_without_pane_name = provision_herdr_agent_session(
+            "/test/herdr",
+            task_id="TASK-OWNED-REUSE",
+            agent="codex",
+            project_root=project_root,
+            launch_argv=["codex"],
+            existing_binding=existing,
+            run_command=missing_name_run,
+        )
+        self.assertEqual(reused_without_pane_name["generation"], 3)
+        self.assertEqual(reused_without_pane_name["lifecycle"], "reused")
+
         reused_after_capability_drift = provision_herdr_agent_session(
             "/test/herdr",
             task_id="TASK-OWNED-REUSE",
@@ -1612,6 +2345,116 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
             )
             self.assertEqual(receipts[-1]["generation"], 1)
             self.assertEqual(receipts[-1]["launch"], binding["launch"])
+
+    def test_provision_reuses_verified_bootstrap_done_session_for_first_dispatch(self) -> None:
+        project_root = Path("/example/project").resolve()
+        task_id = "TASK-BOOTSTRAP-READY"
+        project_identity = "sha256:" + hashlib.sha256(
+            str(project_root).encode("utf-8")
+        ).hexdigest()
+        session_name = "valp-" + hashlib.sha256(
+            f"{project_root}\0{task_id}\0codex".encode("utf-8")
+        ).hexdigest()[:16] + "-codex"
+        runtime_identity = {
+            "pane_id": "pane-owned",
+            "terminal_id": "terminal-owned",
+            "workspace_id": "workspace-owned",
+            "tab_id": "tab-owned",
+        }
+        identity_token = "sha256:" + hashlib.sha256(
+            json.dumps(runtime_identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        existing = {
+            "agent": "codex",
+            "session_name": session_name,
+            "generation": 1,
+            "ownership": {
+                "scope": "task",
+                "task_id": task_id,
+                "project_identity": project_identity,
+            },
+            "context": {"cwd": str(project_root)},
+            "launch": {"argv": ["codex"]},
+            "focused_at_provisioning": False,
+            "runtime_scope": {
+                "kind": "workspace",
+                "ownership": "task",
+                "workspace_id": "workspace-owned",
+                "label": "valp-task-bootstrap-ready-codex-g1",
+            },
+            "runtime_identity": {**runtime_identity, "token": identity_token},
+            "lifecycle": "bootstrap_ready",
+            "bootstrap_verification": {
+                "status": "verified",
+                "evidence_ref": "evidence/bootstrap-probe-result.json",
+                "generation": 1,
+                "pane_id": "pane-owned",
+                "native_session_id": "session-native",
+                "expected_response": "BOOTSTRAP_READY",
+                "actual_response": "BOOTSTRAP_READY",
+                "native_turn_error": None,
+                "session_identity_status": "known",
+                "model_probe_status": "observed",
+            },
+            "dispatch_eligible": True,
+        }
+        calls: list[list[str]] = []
+        pane_status = "done"
+
+        def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
+            calls.append(command)
+            if command[1:] == ["pane", "list", "--workspace", "workspace-owned"]:
+                stdout = json.dumps(
+                    {
+                        "result": {
+                            "panes": [
+                                {
+                                    "agent": "codex",
+                                    "name": session_name,
+                                    **runtime_identity,
+                                    "cwd": str(project_root),
+                                    "agent_status": pane_status,
+                                }
+                            ]
+                        }
+                    }
+                )
+                return {"ok": True, "exit_code": 0, "stdout": stdout, "stderr": ""}
+            raise AssertionError(f"unexpected command: {command}")
+
+        binding = provision_herdr_agent_session(
+            "/test/herdr",
+            task_id=task_id,
+            agent="codex",
+            project_root=project_root,
+            launch_argv=["codex"],
+            existing_binding=existing,
+            run_command=fake_run,
+        )
+
+        self.assertEqual(binding["lifecycle"], "bootstrap_ready")
+        self.assertEqual(binding["generation"], 1)
+        self.assertFalse(any(command[1:3] == ["workspace", "close"] for command in calls))
+        self.assertFalse(any(command[1:3] == ["agent", "start"] for command in calls))
+
+        pane_status = "idle"
+        settled_binding = provision_herdr_agent_session(
+            "/test/herdr",
+            task_id=task_id,
+            agent="codex",
+            project_root=project_root,
+            launch_argv=["codex"],
+            existing_binding=existing,
+            run_command=fake_run,
+        )
+        self.assertEqual(settled_binding["lifecycle"], "bootstrap_ready")
+
+    def test_unverified_idle_owned_session_stays_provisioned_for_bootstrap(self) -> None:
+        source = inspect.getsource(provision_herdr_agent_session)
+
+        self.assertIn('runtime_status == "idle"', source)
+        self.assertIn('existing_binding.get("lifecycle") == "provisioned"', source)
+        self.assertIn("return dict(existing_binding)", source)
 
     def test_provision_fails_closed_when_bound_pane_identity_changes(self) -> None:
         project_root = Path("/example/project").resolve()
@@ -2078,6 +2921,118 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
 
             self.assertEqual(ledger.read_bytes(), original_bytes)
 
+    def test_formal_submission_consumes_verified_bootstrap_lifecycle(self) -> None:
+        task_id = "TASK-CONSUME-BOOTSTRAP"
+        expected = ["agents/codex/self-review.md"]
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            binding = {
+                "agent": "codex",
+                "session_name": "valp-task-codex",
+                "generation": 1,
+                "ownership": {
+                    "scope": "task",
+                    "task_id": task_id,
+                    "project_identity": "sha256:" + ("1" * 64),
+                },
+                "context": {"cwd": "/example/project"},
+                "launch": {"argv": ["/test/bin/codex"]},
+                "focused_at_provisioning": False,
+                "runtime_scope": {
+                    "kind": "workspace",
+                    "ownership": "task",
+                    "workspace_id": "workspace-1",
+                    "label": "valp-task-codex-g1",
+                },
+                "runtime_identity": {
+                    "pane_id": "pane-1",
+                    "terminal_id": "terminal-1",
+                    "workspace_id": "workspace-1",
+                    "tab_id": "tab-1",
+                    "token": "sha256:" + ("2" * 64),
+                },
+                "lifecycle": "bootstrap_ready",
+                "dispatch_eligible": True,
+                "bootstrap_verification": {
+                    "status": "verified",
+                    "evidence_ref": "evidence/bootstrap-probe-result.json",
+                    "generation": 1,
+                    "pane_id": "pane-1",
+                    "native_session_id": "session-native",
+                    "expected_response": "BOOTSTRAP_READY",
+                    "actual_response": "BOOTSTRAP_READY",
+                    "native_turn_error": None,
+                    "session_identity_status": "known",
+                    "model_probe_status": "observed",
+                },
+            }
+            (directory / "agent-sessions.json").write_text(
+                json.dumps({
+                    "schema_version": "valp-agent-sessions.v1",
+                    "task_id": task_id,
+                    "adapter": "herdr",
+                    "status": "ready",
+                    "bindings": {"codex": binding},
+                }),
+                encoding="utf-8",
+            )
+            (directory / "agent-session-receipts.jsonl").write_text(
+                json.dumps({
+                    "schema_version": "valp-agent-session-receipt.v1",
+                    "adapter": "herdr",
+                    "task_id": task_id,
+                    "event_sequence": 1,
+                    "agent": "codex",
+                    "event": "agent_session_bootstrap_verified",
+                    "binding_ref": "agent-sessions.json",
+                    "generation": 1,
+                    "identity_token": binding["runtime_identity"]["token"],
+                    "evidence_ref": "evidence/bootstrap-probe-result.json",
+                    "native_session_id": "session-native",
+                }) + "\n",
+                encoding="utf-8",
+            )
+            (directory / "submission-dependencies.json").write_text(
+                json.dumps({"work_items": [{
+                    "agent": "codex",
+                    "role": "coordinator",
+                    "work_item_id": "coordinator:codex",
+                    "dispatch_id": f"{task_id}:coordinator:1",
+                    "dispatch_generation": 1,
+                    "expected_refs": expected,
+                }]}),
+                encoding="utf-8",
+            )
+
+            proof = herdr_invocation_proof()
+            proof["session_binding"] = {
+                "ref": "agent-sessions.json",
+                "generation": 1,
+                "identity_token": binding["runtime_identity"]["token"],
+                "ownership": binding["ownership"],
+            }
+            write_herdr_submission_receipt(
+                directory,
+                task_id,
+                "codex",
+                "coordinator",
+                expected,
+                proof,
+            )
+
+            projection = json.loads(
+                (directory / "agent-sessions.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(projection["bindings"]["codex"]["lifecycle"], "reused")
+            session_receipts = [
+                json.loads(line)
+                for line in (directory / "agent-session-receipts.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(session_receipts[-1]["event"], "agent_session_reused")
+            self.assertEqual(session_receipts[-1]["generation"], 1)
+
     def test_submission_capability_downgrades_prompt_without_wait_support(self) -> None:
         def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
             if command[1:] == ["agent", "--help"]:
@@ -2108,6 +3063,141 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
         self.assertEqual(capability["status"], "warn")
         self.assertEqual(capability["mode"], "pane_send_text_enter")
         self.assertFalse(capability["commands"]["agent_prompt"])
+
+    def test_capability_detection_supports_clap_nested_help(self) -> None:
+        help_by_args = {
+            ("agent", "--help"): "Commands:\n  get\n  prompt\n  wait\n  start\n",
+            ("workspace", "--help"): "Commands:\n  create\n",
+            ("pane", "--help"): "Commands:\n  move\n  send-text\n  send-keys\n",
+            ("agent", "get", "--help"): "Usage: herdr agent get <target>\n",
+            ("agent", "prompt", "--help"): (
+                "Usage: herdr agent prompt <TARGET> <TEXT> [OPTIONS]\n"
+                "Options:\n  --wait\n  --until <STATUS>\n  --timeout <MS>\n"
+            ),
+            ("agent", "wait", "--help"): (
+                "Usage: herdr agent wait <TARGET> [OPTIONS]\n"
+            ),
+            ("agent", "start", "--help"): (
+                "Usage: herdr agent start <NAME> --kind <KIND> --pane <PANE>\n"
+            ),
+            ("workspace", "create", "--help"): (
+                "Usage: herdr workspace create [OPTIONS]\n"
+            ),
+            ("pane", "move", "--help"): (
+                "Usage: herdr pane move <PANE_ID> [OPTIONS]\n"
+            ),
+            ("pane", "send-text", "--help"): (
+                "Usage: herdr pane send-text <PANE_ID> <TEXT>\n"
+            ),
+            ("pane", "send-keys", "--help"): (
+                "Usage: herdr pane send-keys <PANE_ID> <KEY>...\n"
+            ),
+        }
+
+        def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
+            args = tuple(command[1:])
+            if args not in help_by_args:
+                raise AssertionError(f"unexpected command: {command}")
+            return {
+                "ok": True,
+                "exit_code": 0,
+                "stdout": help_by_args[args],
+                "stderr": "",
+            }
+
+        submission = detect_herdr_submission_capability("/test/herdr", fake_run)
+        provisioning = detect_herdr_session_provisioning_capability(
+            "/test/herdr",
+            fake_run,
+        )
+
+        self.assertEqual(submission["status"], "pass")
+        self.assertEqual(submission["mode"], "agent_prompt")
+        self.assertTrue(all(submission["commands"].values()))
+        self.assertEqual(provisioning["status"], "pass")
+
+    def test_provision_accepts_clap_nested_agent_start_help(self) -> None:
+        calls: list[list[str]] = []
+        project_root = Path("/example/project").resolve()
+        start_attempts = 0
+        session_name = "valp-" + hashlib.sha256(
+            f"{project_root}\0TASK-NESTED-START\0codex".encode("utf-8")
+        ).hexdigest()[:16] + "-codex"
+
+        def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
+            nonlocal start_attempts
+            calls.append(command)
+            if command[1:] == ["agent", "--help"]:
+                stdout = "Commands:\n  start\n"
+            elif command[1:] == ["agent", "start", "--help"]:
+                stdout = "Usage: herdr agent start <NAME> --kind <KIND> --pane <PANE>\n"
+            elif command[1:3] == ["workspace", "create"]:
+                stdout = json.dumps({
+                    "result": {"workspace": {
+                        "workspace_id": "workspace-owned",
+                        "label": command[command.index("--label") + 1],
+                    }}
+                })
+            elif command[1:3] == ["pane", "list"]:
+                stdout = json.dumps({"result": {"panes": [{
+                    "pane_id": "pane-owned",
+                    "workspace_id": "workspace-owned",
+                }]}})
+            elif command[1:3] == ["agent", "start"]:
+                start_attempts += 1
+                if start_attempts == 1:
+                    return {"ok": False, "exit_code": 1, "stdout": "", "stderr": "agent_pane_busy"}
+                stdout = json.dumps({
+                    "result": {
+                        "type": "agent_started",
+                        "agent": {"pane_id": "pane-owned"},
+                        "argv": [],
+                    }
+                })
+            elif command[1:3] == ["pane", "get"]:
+                stdout = json.dumps({
+                    "result": {"pane": {
+                        "agent": "codex",
+                        "label": session_name,
+                        "pane_id": "pane-owned",
+                        "terminal_id": "terminal-owned",
+                        "workspace_id": "workspace-owned",
+                        "tab_id": "tab-owned",
+                        "cwd": str(project_root),
+                        "agent_status": "idle",
+                        "focused": False,
+                    }}
+                })
+            elif command[1:3] == ["agent", "get"]:
+                stdout = json.dumps({
+                    "result": {"agent": {
+                        "agent": "codex",
+                        "name": session_name,
+                        "agent_status": "idle",
+                    }}
+                })
+            else:
+                raise AssertionError(f"unexpected command: {command}")
+            return {"ok": True, "exit_code": 0, "stdout": stdout, "stderr": ""}
+
+        binding = provision_herdr_agent_session(
+            "/test/herdr",
+            task_id="TASK-NESTED-START",
+            agent="codex",
+            project_root=project_root,
+            launch_argv=["codex"],
+            existing_binding=None,
+            run_command=fake_run,
+            readiness_attempts=2,
+            readiness_interval_seconds=0,
+        )
+
+        self.assertEqual(binding["lifecycle"], "provisioned")
+        self.assertIn(["/test/herdr", "agent", "start", "--help"], calls)
+        start = next(call for call in calls if call[1:3] == ["agent", "start"] and call[-1] != "--help")
+        self.assertIn("--kind", start)
+        self.assertIn("--pane", start)
+        self.assertEqual(start_attempts, 2)
 
     def test_fallback_keeps_transport_when_working_state_is_unproven(self) -> None:
         def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
@@ -2981,6 +4071,120 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                 if '"schema_version"' in line
             ]
             self.assertEqual([receipt["event"] for receipt in receipts], ["dispatch_inserted"])
+
+    def test_terminal_observer_waits_for_same_identity_and_later_idle_sequence(self) -> None:
+        submission = {
+            **herdr_invocation_proof(state_change_seq=2),
+            "agent_ref": "codex",
+            "runtime_target": "agent-codex",
+        }
+        calls = []
+        observations = iter((
+            {"agent_status": "working", "state_change_seq": 2},
+            {"agent_status": "idle", "state_change_seq": 3},
+        ))
+
+        def run_command(argv, **_kwargs):
+            calls.append(argv)
+            state = next(observations)
+            return {
+                "ok": True,
+                "returncode": 0,
+                "stdout": json.dumps({
+                    "id": "cli:agent:get",
+                    "result": {
+                        "type": "agent_info",
+                        "agent": {
+                            "terminal_id": "terminal-1",
+                            "name": "codex",
+                            "agent": "codex",
+                            **state,
+                            "pane_id": "pane-1",
+                        },
+                    },
+                }),
+                "stderr": "",
+            }
+
+        proof = observe_herdr_terminal(
+            "/fake/herdr",
+            task_id="TASK-HERDR-TERMINAL",
+            target="codex",
+            pane_id="pane-1",
+            submission_proof=submission,
+            run_command=run_command,
+            timeout_seconds=1,
+            poll_interval_seconds=0,
+        )
+
+        self.assertEqual(proof["status"], "completed")
+        self.assertEqual(proof["submission_state_change_seq"], 2)
+        self.assertEqual(proof["state_change_seq"], 3)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][2:], ["get", "agent-codex"])
+
+    def test_terminal_observer_maps_later_blocked_state_and_rejects_drift(self) -> None:
+        submission = {
+            **herdr_invocation_proof(state_change_seq=2),
+            "agent_ref": "codex",
+            "runtime_target": "agent-codex",
+        }
+
+        def response(*, status="blocked", sequence=3, pane_id="pane-1"):
+            def run_command(_argv, **_kwargs):
+                return {
+                    "ok": True,
+                    "returncode": 0,
+                    "stdout": json.dumps({
+                        "id": "cli:agent:get",
+                        "result": {
+                            "type": "agent_info",
+                            "agent": {
+                                "terminal_id": "terminal-1",
+                                "name": "codex",
+                                "agent": "codex",
+                                "agent_status": status,
+                                "pane_id": pane_id,
+                                "state_change_seq": sequence,
+                            },
+                        },
+                    }),
+                    "stderr": "",
+                }
+            return run_command
+
+        proof = observe_herdr_terminal(
+            "/fake/herdr",
+            task_id="TASK-HERDR-TERMINAL",
+            target="codex",
+            pane_id="pane-1",
+            submission_proof=submission,
+            run_command=response(),
+            timeout_seconds=0,
+        )
+        self.assertEqual(proof["status"], "blocked")
+        self.assertEqual(proof["failure_code"], "herdr_agent_blocked")
+
+        with self.assertRaisesRegex(HerdrSubmissionError, "changed.*identity"):
+            observe_herdr_terminal(
+                "/fake/herdr",
+                task_id="TASK-HERDR-TERMINAL",
+                target="codex",
+                pane_id="pane-1",
+                submission_proof=submission,
+                run_command=response(pane_id="pane-other"),
+                timeout_seconds=0,
+            )
+        with self.assertRaisesRegex(HerdrSubmissionError, "timed out"):
+            observe_herdr_terminal(
+                "/fake/herdr",
+                task_id="TASK-HERDR-TERMINAL",
+                target="codex",
+                pane_id="pane-1",
+                submission_proof=submission,
+                run_command=response(status="idle", sequence=2),
+                timeout_seconds=0,
+            )
 
 
 if __name__ == "__main__":

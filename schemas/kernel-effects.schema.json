@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:valp:schema:kernel-effects:v1",
+  "title": "VALP Kernel Effect Reconciliation",
+  "oneOf": [
+    {"$ref": "#/$defs/record"},
+    {"$ref": "#/$defs/reconciliation"}
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "obligation": {
+      "type": "string",
+      "pattern": "^adapter_cancel:\\{.+\\}$"
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "effect_id", "obligation", "status", "proof_ref",
+        "proof_digest", "ledger_revision", "prior_record_digest", "record_digest"
+      ],
+      "properties": {
+        "schema_version": {"const": "valp-kernel-effect-record.v1"},
+        "effect_id": {"$ref": "#/$defs/digest"},
+        "obligation": {"$ref": "#/$defs/obligation"},
+        "status": {"enum": ["fulfilled", "blocked"]},
+        "proof_ref": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+        },
+        "proof_digest": {"$ref": "#/$defs/digest"},
+        "ledger_revision": {"type": "integer", "minimum": 1},
+        "prior_record_digest": {"$ref": "#/$defs/digest"},
+        "record_digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "pending", "fulfilled", "blocked"],
+      "properties": {
+        "schema_version": {"const": "valp-kernel-effect-reconciliation.v1"},
+        "pending": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/obligation"}
+        },
+        "fulfilled": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/record"}
+        },
+        "blocked": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/record"}
+        }
+      }
+    }
+  }
+}

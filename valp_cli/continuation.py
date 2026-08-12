@@ -6,10 +6,12 @@ evidence before provider-consumption events can be committed.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
 import re
+import subprocess
 import tempfile
 import time
 from contextlib import contextmanager
@@ -42,6 +44,11 @@ RUNTIME_CHANNEL = {
     "raw_worker_output_allowed": False,
 }
 DIGEST_ID_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DIRECTORY_SYNC_UNSUPPORTED = {
+    errno.EINVAL,
+    getattr(errno, "ENOTSUP", errno.EINVAL),
+    getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+}
 ENVELOPE_FIELDS = {
     "schema_version", "task_id", "suspension_id", "suspension_epoch",
     "wake_id", "wake_event_id", "wake_reason", "accepted_state_revision",
@@ -116,14 +123,35 @@ def _write_once(path: Path, value: Any) -> None:
             handle.write(encoded)
             handle.flush()
             os.fsync(handle.fileno())
+        created = False
         try:
             os.link(temporary, path)
+            created = True
         except FileExistsError:
             if path.read_bytes() != encoded:
                 raise ContinuationError(f"immutable artifact conflict: {path}")
+        if created:
+            _sync_directory(path.parent)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def _sync_directory(directory: Path) -> bool:
+    if os.name == "nt":  # Windows has no portable directory-fsync primitive.
+        return False
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(directory, flags)
+    try:
+        try:
+            os.fsync(descriptor)
+            return True
+        except OSError as exc:
+            if exc.errno in _DIRECTORY_SYNC_UNSUPPORTED:
+                return False
+            raise
+    finally:
+        os.close(descriptor)
 
 
 def build_envelope(
@@ -215,6 +243,7 @@ class ContinuationStore:
 
     def _append(self, event: str, envelope: dict[str, Any], **extra: Any) -> dict[str, Any]:
         records = self._events()
+        new_ledger = not self.events_path.exists()
         record = {
             "schema_version": "valp-continuation-event.v1",
             "event_sequence": len(records) + 1,
@@ -238,6 +267,8 @@ class ContinuationStore:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
+        if new_ledger:
+            _sync_directory(self.events_path.parent)
         return record
 
     def _matches(self, event: dict[str, Any], envelope: dict[str, Any]) -> bool:
@@ -485,38 +516,111 @@ class ContinuationStore:
                 raise ContinuationError(f"provider receipt {field} is missing or unsafe")
         return receipt
 
-    def consume(self, envelope: dict[str, Any], invoke: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    def _finalize_receipt_locked(
+        self,
+        envelope: dict[str, Any],
+        validated: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._persisted(envelope)
+        receipt_path = self._artifact_dir(envelope) / "invocation-receipt.json"
+        _write_once(receipt_path, validated)
+        receipt_ref = receipt_path.relative_to(self.directory).as_posix()
+        receipt_digest = digest(validated)
+        invocation_id = validated["provider"]["invocation_id"]
+        events = self._events()
+        expected = {
+            "invocation_id": invocation_id,
+            "invocation_receipt_ref": receipt_ref,
+            "invocation_receipt_digest": receipt_digest,
+        }
+        started = next((
+            event for event in events
+            if event.get("event") == "continuation_started"
+            and self._matches(event, envelope)
+        ), None)
+        if started is not None and any(started.get(key) != value for key, value in expected.items()):
+            raise ContinuationError("committed continuation_started conflicts with receipt")
+        if started is None:
+            self._append("continuation_started", envelope, **expected)
+        events = self._events()
+        consumed = next((
+            event for event in events
+            if event.get("event") == "resume_consumed"
+            and self._matches(event, envelope)
+        ), None)
+        if consumed is not None and any(consumed.get(key) != value for key, value in expected.items()):
+            raise ContinuationError("committed resume_consumed conflicts with receipt")
+        if consumed is None:
+            self._append("resume_consumed", envelope, **expected)
+        (self._artifact_dir(envelope) / "invocation.inflight").unlink(missing_ok=True)
+        return validated
+
+    def consume(
+        self,
+        envelope: dict[str, Any],
+        invoke: Callable[[], dict[str, Any]],
+        reconcile: Callable[[], dict[str, Any] | None] | None = None,
+    ) -> dict[str, Any]:
         self.claim(envelope)
+        reconcile_only = False
         with self._locked():
             self._persisted(envelope)
             prior = next((event for event in self._events() if event.get("event") == "resume_consumed" and self._matches(event, envelope)), None)
             receipt_path = self._artifact_dir(envelope) / "invocation-receipt.json"
+            capability = self._capability(envelope)
             if prior:
                 if not receipt_path.is_file():
                     raise ContinuationError("committed invocation receipt is missing")
                 receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-                if digest(receipt) != prior.get("invocation_receipt_digest"):
+                validated = self._validate_receipt(receipt, envelope, capability)
+                if digest(validated) != prior.get("invocation_receipt_digest"):
                     raise ContinuationError("committed invocation receipt changed")
-                return receipt
-            capability = self._capability(envelope)
-            marker = self._artifact_dir(envelope) / "invocation.inflight"
-            try:
-                fd = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                    handle.write(idempotency_key(envelope) + "\n")
-                    handle.flush()
-                    os.fsync(handle.fileno())
-            except FileExistsError as exc:
-                raise ContinuationError("continuation invocation is already in flight or indeterminate") from exc
-        try:
-            receipt = invoke()
-        except Exception as exc:
-            with self._locked():
-                self._append(
-                    "continuation_failed",
-                    envelope,
-                    reason=f"provider invocation outcome indeterminate: {type(exc).__name__}",
+                return validated
+            if receipt_path.is_file():
+                try:
+                    persisted_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError as exc:
+                    raise ContinuationError("persisted invocation receipt is malformed") from exc
+                validated = self._validate_receipt(
+                    persisted_receipt, envelope, capability
                 )
+                return self._finalize_receipt_locked(envelope, validated)
+            marker = self._artifact_dir(envelope) / "invocation.inflight"
+            if marker.exists():
+                if reconcile is None:
+                    raise ContinuationError(
+                        "continuation invocation is already in flight or indeterminate"
+                    )
+                reconcile_only = True
+            else:
+                intent = {
+                    "schema_version": "valp-continuation-invocation-intent.v1",
+                    "task_id": envelope["task_id"],
+                    "wake_id": envelope["wake_id"],
+                    "continuation_generation": envelope["continuation_generation"],
+                    "idempotency_key": idempotency_key(envelope),
+                    "envelope_digest": digest(envelope),
+                    "target": envelope["target"],
+                }
+                _write_once(marker, intent)
+        try:
+            if reconcile_only:
+                assert reconcile is not None
+                receipt = reconcile()
+                if receipt is None:
+                    raise ContinuationError(
+                        "provider reconciliation did not prove continuation consumption"
+                    )
+            else:
+                receipt = invoke()
+        except Exception as exc:
+            if reconcile is None:
+                with self._locked():
+                    self._append(
+                        "continuation_failed",
+                        envelope,
+                        reason=f"provider invocation outcome indeterminate: {type(exc).__name__}",
+                    )
             raise
         try:
             validated = self._validate_receipt(receipt, envelope, capability)
@@ -525,15 +629,23 @@ class ContinuationStore:
                 self._reject_locked(envelope, str(exc))
             raise
         with self._locked():
-            self._persisted(envelope)
-            _write_once(receipt_path, validated)
-            receipt_ref = receipt_path.relative_to(self.directory).as_posix()
-            receipt_digest = digest(validated)
-            invocation_id = validated["provider"]["invocation_id"]
-            self._append("continuation_started", envelope, invocation_id=invocation_id, invocation_receipt_ref=receipt_ref, invocation_receipt_digest=receipt_digest)
-            self._append("resume_consumed", envelope, invocation_id=invocation_id, invocation_receipt_ref=receipt_ref, invocation_receipt_digest=receipt_digest)
-            marker.unlink(missing_ok=True)
-        return validated
+            return self._finalize_receipt_locked(envelope, validated)
+
+    def consume_with_adapter(
+        self,
+        envelope: dict[str, Any],
+        payload: Any,
+        adapter: Any,
+    ) -> dict[str, Any]:
+        reconcile = getattr(adapter, "reconcile", None)
+        return self.consume(
+            envelope,
+            lambda: adapter.invoke(envelope, payload),
+            (
+                (lambda: reconcile(envelope, payload))
+                if callable(reconcile) else None
+            ),
+        )
 
     def reject(self, envelope: dict[str, Any], reason: str) -> dict[str, Any]:
         with self._locked():
@@ -594,6 +706,92 @@ class HermesCliAdapter:
             self.adapter_id, "cli", self.provider_id, "hermes-coordinator",
             invocation_proof=False, duplicate_suppression=False,
         )
+
+
+class HerdrCoordinatorContinuationAdapter:
+    """Typed HERDR coordinator continuation with invocation receipts."""
+
+    adapter_id = "herdr-coordinator-continuation"
+    adapter_version = "1"
+
+    def __init__(
+        self,
+        *,
+        runtime_session_id: str,
+        provider_id: str,
+        coordinator_agent: str,
+        continue_coordinator: Callable[[dict[str, Any]], dict[str, Any]],
+        identity_evidence_ref: str,
+        duplicate_suppression_evidence_ref: str,
+    ):
+        values = (
+            runtime_session_id,
+            provider_id,
+            coordinator_agent,
+            identity_evidence_ref,
+            duplicate_suppression_evidence_ref,
+        )
+        if not all(isinstance(value, str) and value for value in values):
+            raise ContinuationError("HERDR coordinator continuation identity is incomplete")
+        if not callable(continue_coordinator):
+            raise ContinuationError("HERDR coordinator continuation API is unavailable")
+        self.runtime_session_id = runtime_session_id
+        self.provider_id = provider_id
+        self.coordinator_agent = coordinator_agent
+        self.continue_coordinator = continue_coordinator
+        self.identity_evidence_ref = identity_evidence_ref
+        self.duplicate_suppression_evidence_ref = (
+            duplicate_suppression_evidence_ref
+        )
+
+    def capability(self) -> dict[str, Any]:
+        return capability_declaration(
+            self.adapter_id,
+            self.adapter_version,
+            self.provider_id,
+            self.coordinator_agent,
+            automatic_full=True,
+            invocation_proof=True,
+            duplicate_suppression=True,
+            identity_evidence_ref=self.identity_evidence_ref,
+            duplicate_suppression_evidence_ref=(
+                self.duplicate_suppression_evidence_ref
+            ),
+        )
+
+    def invoke(self, envelope: dict[str, Any], payload: Any) -> dict[str, Any]:
+        target = envelope.get("target") if isinstance(envelope, dict) else None
+        if (
+            not isinstance(target, dict)
+            or target.get("adapter_id") != self.adapter_id
+            or target.get("provider_id") != self.provider_id
+            or target.get("coordinator_agent") != self.coordinator_agent
+        ):
+            raise ContinuationError("HERDR coordinator continuation target tuple mismatch")
+        response = self.continue_coordinator({
+            "schema_version": "valp-herdr-coordinator-continuation-request.v1",
+            "method": "coordinator.continue",
+            "session_id": self.runtime_session_id,
+            "idempotency_key": idempotency_key(envelope),
+            "channel": dict(RUNTIME_CHANNEL),
+            "envelope": envelope,
+            "payload": payload,
+            "identity_evidence_ref": self.identity_evidence_ref,
+            "duplicate_suppression_ref": (
+                self.duplicate_suppression_evidence_ref
+            ),
+        })
+        if (
+            not isinstance(response, dict)
+            or response.get("schema_version")
+            != "valp-herdr-coordinator-continuation-response.v1"
+            or response.get("status") != "consumed"
+            or not isinstance(response.get("receipt"), dict)
+        ):
+            raise ContinuationError(
+                "HERDR coordinator continuation response lacks a consumed receipt"
+            )
+        return response["receipt"]
 
 
 class HermesRuntimeControlAdapter:
@@ -703,6 +901,158 @@ class HermesRuntimeControlAdapter:
         raise ContinuationError("Hermes runtime-control receipt wait timed out")
 
 
+class SubprocessRuntimeControlAdapter:
+    """Provider-neutral JSON-RPC continuation over an explicit local argv."""
+
+    adapter_id = "subprocess-runtime-control"
+    adapter_version = "1"
+
+    def __init__(
+        self,
+        *,
+        command: tuple[str, ...],
+        provider_id: str,
+        coordinator_surface: str,
+        identity_evidence_ref: str,
+        duplicate_suppression_evidence_ref: str,
+        poll_interval: float = 0.1,
+        timeout: float = 120.0,
+    ):
+        if (
+            not isinstance(command, tuple)
+            or not command
+            or not all(isinstance(item, str) and item for item in command)
+        ):
+            raise ContinuationError("subprocess runtime-control command is invalid")
+        if not all(
+            isinstance(value, str) and value
+            for value in (
+                provider_id, coordinator_surface, identity_evidence_ref,
+                duplicate_suppression_evidence_ref,
+            )
+        ):
+            raise ContinuationError("subprocess runtime-control identity is incomplete")
+        self.command = command
+        self.provider_id = provider_id
+        self.coordinator_surface = coordinator_surface
+        self.identity_evidence_ref = identity_evidence_ref
+        self.duplicate_suppression_evidence_ref = (
+            duplicate_suppression_evidence_ref
+        )
+        self.poll_interval = max(0.01, float(poll_interval))
+        self.timeout = max(self.poll_interval, float(timeout))
+
+    def capability(self) -> dict[str, Any]:
+        return capability_declaration(
+            self.adapter_id,
+            self.adapter_version,
+            self.provider_id,
+            self.coordinator_surface,
+            automatic_full=True,
+            invocation_proof=True,
+            duplicate_suppression=True,
+            identity_evidence_ref=self.identity_evidence_ref,
+            duplicate_suppression_evidence_ref=(
+                self.duplicate_suppression_evidence_ref
+            ),
+        )
+
+    def _validate_target(self, envelope: dict[str, Any]) -> None:
+        target = envelope.get("target") if isinstance(envelope, dict) else None
+        if (
+            not isinstance(target, dict)
+            or target.get("adapter_id") != self.adapter_id
+            or target.get("provider_id") != self.provider_id
+            or target.get("coordinator_agent") != self.coordinator_surface
+        ):
+            raise ContinuationError("subprocess runtime-control target tuple mismatch")
+
+    def _call(
+        self,
+        method: str,
+        envelope: dict[str, Any],
+        payload: Any,
+    ) -> dict[str, Any]:
+        request = {
+            "jsonrpc": "2.0",
+            "id": idempotency_key(envelope),
+            "method": method,
+            "params": {
+                "envelope": envelope,
+                "payload": payload,
+                "idempotency_key": idempotency_key(envelope),
+                "identity_evidence_ref": self.identity_evidence_ref,
+                "duplicate_suppression_ref": (
+                    self.duplicate_suppression_evidence_ref
+                ),
+            },
+        }
+        try:
+            completed = subprocess.run(
+                list(self.command),
+                input=json.dumps(request, ensure_ascii=False),
+                text=True,
+                encoding="utf-8",
+                errors="strict",
+                capture_output=True,
+                timeout=self.timeout,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ContinuationError(
+                f"subprocess runtime-control invocation failed: {type(exc).__name__}"
+            ) from exc
+        if completed.returncode != 0:
+            raise ContinuationError(
+                f"subprocess runtime-control exited {completed.returncode}"
+            )
+        try:
+            response = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise ContinuationError(
+                "subprocess runtime-control response is malformed"
+            ) from exc
+        return HermesRuntimeControlAdapter._rpc_result(response)
+
+    @staticmethod
+    def _receipt(result: dict[str, Any]) -> dict[str, Any] | None:
+        if result.get("status") != "consumed":
+            return None
+        receipt = result.get("receipt")
+        if not isinstance(receipt, dict):
+            raise ContinuationError(
+                "subprocess consumed result has no invocation receipt"
+            )
+        return receipt
+
+    def invoke(self, envelope: dict[str, Any], payload: Any) -> dict[str, Any]:
+        self._validate_target(envelope)
+        result = self._call("runtime_control.submit", envelope, payload)
+        receipt = self._receipt(result)
+        if receipt is not None:
+            return receipt
+        deadline = time.monotonic() + self.timeout
+        while time.monotonic() < deadline:
+            receipt = self.reconcile(envelope, payload)
+            if receipt is not None:
+                return receipt
+            time.sleep(self.poll_interval)
+        raise ContinuationError(
+            "subprocess runtime-control receipt wait timed out"
+        )
+
+    def reconcile(
+        self, envelope: dict[str, Any], payload: Any
+    ) -> dict[str, Any] | None:
+        self._validate_target(envelope)
+        result = self._call("runtime_control.status", envelope, payload)
+        if result.get("status") in {"failed", "missing", "invalid"}:
+            raise ContinuationError(
+                f"subprocess runtime-control reconciliation failed: {result.get('status')}"
+            )
+        return self._receipt(result)
+
+
 class SafePointQueue:
     """Queue runtime-control envelopes and recover persisted pending work."""
 
@@ -752,3 +1102,85 @@ def capability_declaration(
             "duplicate_suppression_evidence_ref": duplicate_suppression_evidence_ref,
         },
     }
+
+
+def prepare_wake_continuation(
+    directory: Path,
+    task_id: str,
+    suspension: dict[str, Any],
+    wake_result: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist one wake-bound continuation only for a proven automatic provider."""
+
+    task_directory = Path(directory).resolve()
+    capability_path = task_directory / "continuations" / "capability.json"
+    binding_path = task_directory / "continuations" / "runtime-binding.json"
+    if not capability_path.is_file() and not binding_path.is_file():
+        return {"status": "not_available"}
+    if not capability_path.is_file() or not binding_path.is_file():
+        raise ContinuationError("continuation capability and runtime binding must be registered together")
+    try:
+        capability = json.loads(capability_path.read_text(encoding="utf-8"))
+        binding = json.loads(binding_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ContinuationError("continuation capability or runtime binding is malformed") from error
+    proof = capability.get("proof") if isinstance(capability, dict) else None
+    if (
+        capability.get("schema_version") != "valp-continuation-capability.v1"
+        or capability.get("mode") != "automatic_full"
+        or not isinstance(proof, dict)
+        or proof.get("invocation_receipt") is not True
+        or proof.get("duplicate_suppression") is not True
+    ):
+        raise ContinuationError("dependency wake cannot target an unproven automatic continuation")
+    required_binding = {
+        "schema_version", "adapter_id", "provider_id", "coordinator_agent",
+        "durable_boundary_ref",
+    }
+    if (
+        not isinstance(binding, dict)
+        or set(binding) != required_binding
+        or binding.get("schema_version") != "valp-continuation-runtime-binding.v1"
+        or binding.get("adapter_id") != capability.get("adapter_id")
+        or binding.get("provider_id") != capability.get("provider_id")
+        or binding.get("coordinator_agent") != capability.get("coordinator_surface")
+        or not all(str(binding.get(field) or "") for field in required_binding - {"schema_version"})
+    ):
+        raise ContinuationError("continuation runtime binding conflicts with capability identity")
+    control_ref = "control-contract.json"
+    control_path = task_directory / control_ref
+    if not control_path.is_file():
+        raise ContinuationError("continuation requires the immutable control contract")
+    result_ref = str((suspension.get("accepted_wake") or {}).get("result_ref") or "")
+    if not _safe_ref(result_ref) or not (task_directory / result_ref).is_file():
+        raise ContinuationError("continuation wake result ref is missing or unsafe")
+    payload = {
+        "schema_version": "valp-continuation-payload.v1",
+        "task_id": task_id,
+        "wake_id": wake_result.get("wake_id"),
+        "wake_result_ref": result_ref,
+        "wake_result_digest": file_digest(task_directory / result_ref),
+        "completed_work_item_ids": list(wake_result.get("completed_work_item_ids") or []),
+        "pending_work_item_ids": list(wake_result.get("pending_work_item_ids") or []),
+        "channel": dict(RUNTIME_CHANNEL),
+    }
+    accepted = suspension.get("accepted_wake") or {}
+    envelope = build_envelope(
+        task_id=task_id,
+        suspension_id=str(suspension.get("suspension_id") or ""),
+        suspension_epoch=int(suspension.get("suspension_epoch")),
+        wake_id=str(accepted.get("wake_id") or ""),
+        wake_event_id=str(accepted.get("wake_event_id") or ""),
+        wake_reason=str(accepted.get("wake_reason") or ""),
+        accepted_state_revision=int(accepted.get("resulting_state_revision")),
+        control_contract_ref=control_ref,
+        control_contract_digest=file_digest(control_path),
+        payload=payload,
+        coordinator_agent=str(binding["coordinator_agent"]),
+        adapter_id=str(binding["adapter_id"]),
+        provider_id=str(binding["provider_id"]),
+        durable_boundary_ref=str(binding["durable_boundary_ref"]),
+    )
+    store = ContinuationStore(task_directory, task_id)
+    store.pending(envelope, payload)
+    return {"status": "pending", "envelope": envelope, "payload": payload}

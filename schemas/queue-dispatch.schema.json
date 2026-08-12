@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:valp:schema:queue-dispatch:v2",
+  "title": "VALP Queue Dispatch v2",
+  "type": "object",
+  "required": ["schema_version", "task_id", "agent", "role", "work_item_id", "attempt_id", "dispatch_id", "dispatch_generation", "queue_id", "enqueue_transaction_id", "status", "dispatch_ref", "payload_digest", "expected_refs", "created_at", "claim_limit"],
+  "properties": {
+    "schema_version": {"const": "valp-queue-dispatch.v2"},
+    "task_id": {"type": "string", "minLength": 1},
+    "agent": {"type": "string", "minLength": 1},
+    "role": {"enum": ["coordinator", "implementer", "reviewer", "prototype", "researcher", "other"]},
+    "work_item_id": {"type": "string", "minLength": 1},
+    "attempt_id": {"type": "string", "minLength": 1},
+    "dispatch_id": {"type": "string", "minLength": 1},
+    "dispatch_generation": {"type": "integer", "minimum": 1},
+    "queue_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "enqueue_transaction_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "status": {"const": "queued"},
+    "dispatch_ref": {"type": "string", "minLength": 1},
+    "payload_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "expected_refs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "created_at": {"type": "string", "minLength": 1},
+    "claim_limit": {"const": "queue acceptance only; worker delivery and completion are unproven"}
+  },
+  "additionalProperties": false
+}

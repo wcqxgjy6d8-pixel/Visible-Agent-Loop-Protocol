@@ -349,7 +349,11 @@ def model_awareness_for(
     }
 
 
-def model_aware_provider_errors(matrix: dict[str, Any]) -> list[str]:
+def model_aware_provider_errors(
+    matrix: dict[str, Any],
+    *,
+    evaluated_at: Any | None = None,
+) -> list[str]:
     awareness = matrix.get("model_awareness") or {}
     if awareness.get("required") is not True:
         return []
@@ -387,7 +391,7 @@ def model_aware_provider_errors(matrix: dict[str, Any]) -> list[str]:
             else:
                 computed_freshness, _age = observation_freshness(
                     observed.get("timestamp"),
-                    evaluated_at=_now(),
+                    evaluated_at=evaluated_at or _now(),
                     ttl_seconds=ttl_seconds,
                 )
                 if probe_status != "observed":
@@ -472,6 +476,8 @@ def model_aware_provider_errors(matrix: dict[str, Any]) -> list[str]:
 def model_aware_role_errors(
     matrix: dict[str, Any],
     role_assignments: dict[str, Any] | None,
+    *,
+    evaluated_at: Any | None = None,
 ) -> list[str]:
     awareness = matrix.get("model_awareness") or {}
     if awareness.get("dynamic_discovery_required") is not True:
@@ -500,10 +506,20 @@ def model_aware_role_errors(
             if isinstance(identity, dict)
             else None
         )
+        ttl_seconds = probe.get("ttl_seconds") if isinstance(probe, dict) else None
+        evaluated_freshness = observed.get("freshness") if isinstance(observed, dict) else None
+        if type(ttl_seconds) is int:
+            evaluated_freshness, _age = observation_freshness(
+                observed.get("timestamp"),
+                evaluated_at=evaluated_at or _now(),
+                ttl_seconds=ttl_seconds,
+            )
+        if not isinstance(probe, dict) or probe.get("status") != "observed":
+            evaluated_freshness = "unknown"
         eligible = (
             isinstance(observed, dict)
             and observed.get("model_id") not in {None, "", UNKNOWN_MODEL}
-            and observed.get("freshness") == "current"
+            and evaluated_freshness == "current"
             and isinstance(probe, dict)
             and probe.get("status") == "observed"
             and isinstance(session, dict)

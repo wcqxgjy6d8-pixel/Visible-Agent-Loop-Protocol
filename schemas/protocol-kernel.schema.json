@@ -31,7 +31,13 @@
             "evidence",
             "receipt",
             "claim",
-            "result"
+            "result",
+            "suspension",
+            "wait_policy",
+            "wake",
+            "principal",
+            "interrupt",
+            "redirect"
           ]
         },
         "value": {"type": "string", "minLength": 1}
@@ -83,6 +89,42 @@
       "allOf": [
         {"$ref": "#/$defs/identity"},
         {"properties": {"kind": {"const": "result"}}}
+      ]
+    },
+    "suspensionIdentity": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {"properties": {"kind": {"const": "suspension"}}}
+      ]
+    },
+    "waitPolicyIdentity": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {"properties": {"kind": {"const": "wait_policy"}}}
+      ]
+    },
+    "wakeIdentity": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {"properties": {"kind": {"const": "wake"}}}
+      ]
+    },
+    "principalIdentity": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {"properties": {"kind": {"const": "principal"}}}
+      ]
+    },
+    "interruptIdentity": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {"properties": {"kind": {"const": "interrupt"}}}
+      ]
+    },
+    "redirectIdentity": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {"properties": {"kind": {"const": "redirect"}}}
       ]
     },
     "digest": {
@@ -165,7 +207,9 @@
           "items": {"$ref": "#/$defs/acceptedEvent"},
           "uniqueItems": true
         },
-        "work_items": {"type": "array", "items": {"$ref": "#/$defs/workItem"}}
+        "work_items": {"type": "array", "items": {"$ref": "#/$defs/workItem"}},
+        "suspension": {"$ref": "#/$defs/suspension"},
+        "control": {"$ref": "#/$defs/control"}
       },
       "oneOf": [
         {
@@ -180,6 +224,12 @@
             "revision": {"minimum": 1},
             "accepted_events": {"minItems": 1}
           }
+        }
+      ],
+      "allOf": [
+        {
+          "if": {"required": ["suspension"]},
+          "then": {"properties": {"status": {"const": "executing"}}}
         }
       ]
     },
@@ -221,13 +271,39 @@
             "task_failed",
             "task_cancelled"
             ,"work_item_eligible", "attempt_created", "attempt_submitted", "attempt_running", "attempt_completed", "attempt_failed", "attempt_cancelled", "attempt_fenced", "work_item_partial", "work_item_degraded", "work_item_blocked", "work_item_failed", "work_item_cancelled", "work_item_skipped"
+            ,"suspension_started", "wake_accepted", "interrupt_requested", "interrupt_resumed", "redirect_authorized"
           ]
         },
         "expected_revision": {"type": "integer", "minimum": 0},
         "work_item_id": {"$ref": "#/$defs/workItemIdentity"},
         "attempt_id": {"$ref": "#/$defs/attemptIdentity"},
         "dispatch_id": {"$ref": "#/$defs/dispatchIdentity"},
-        "dispatch_generation": {"type": "integer", "minimum": 0}
+        "dispatch_generation": {"type": "integer", "minimum": 0},
+        "suspension_id": {"$ref": "#/$defs/suspensionIdentity"},
+        "suspension_epoch": {"type": "integer", "minimum": 0},
+        "wait_policy_id": {"$ref": "#/$defs/waitPolicyIdentity"},
+        "wait_policy_digest": {"$ref": "#/$defs/digest"},
+        "required_work_item_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/workItemIdentity"}
+        },
+        "wake_id": {"$ref": "#/$defs/wakeIdentity"},
+        "wake_reason": {"const": "dependency_ready"},
+        "authority_principal_id": {"$ref": "#/$defs/principalIdentity"},
+        "authority_evidence_id": {"$ref": "#/$defs/evidenceIdentity"},
+        "control_reason": {"enum": ["user_requested", "runtime_failed", "policy_enforced", "superseded_by_redirect"]},
+        "cancellation_scope": {"enum": ["task", "work_item", "attempt"]},
+        "interrupt_id": {"$ref": "#/$defs/interruptIdentity"},
+        "redirect_id": {"$ref": "#/$defs/redirectIdentity"},
+        "intent_version": {"type": "integer", "minimum": 0},
+        "next_intent_version": {"type": "integer", "minimum": 1},
+        "superseded_work_item_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/workItemIdentity"}
+        }
       },
       "allOf": [
         {
@@ -237,6 +313,38 @@
         {
           "if": {"properties": {"kind": {"enum": ["work_item_eligible", "work_item_partial", "work_item_degraded", "work_item_blocked", "work_item_failed", "work_item_cancelled", "work_item_skipped"]}}, "required": ["kind"]},
           "then": {"required": ["work_item_id"]}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "suspension_started"}}, "required": ["kind"]},
+          "then": {"required": ["suspension_id", "suspension_epoch", "wait_policy_id", "wait_policy_digest", "required_work_item_ids"]}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "wake_accepted"}}, "required": ["kind"]},
+          "then": {"required": ["suspension_id", "suspension_epoch", "wait_policy_id", "wait_policy_digest", "required_work_item_ids", "wake_id", "wake_reason"]}
+        },
+        {
+          "if": {"properties": {"kind": {"enum": ["task_cancelled", "work_item_cancelled", "attempt_cancelled", "interrupt_requested", "interrupt_resumed", "redirect_authorized"]}}, "required": ["kind"]},
+          "then": {"required": ["authority_principal_id", "authority_evidence_id", "control_reason"]}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "task_cancelled"}}, "required": ["kind"]},
+          "then": {"properties": {"cancellation_scope": {"const": "task"}}, "required": ["cancellation_scope"]}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "work_item_cancelled"}}, "required": ["kind"]},
+          "then": {"properties": {"cancellation_scope": {"const": "work_item"}}, "required": ["cancellation_scope"]}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "attempt_cancelled"}}, "required": ["kind"]},
+          "then": {"properties": {"cancellation_scope": {"const": "attempt"}}, "required": ["cancellation_scope"]}
+        },
+        {
+          "if": {"properties": {"kind": {"enum": ["interrupt_requested", "interrupt_resumed"]}}, "required": ["kind"]},
+          "then": {"required": ["interrupt_id", "intent_version"]}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "redirect_authorized"}}, "required": ["kind"]},
+          "then": {"required": ["redirect_id", "intent_version", "next_intent_version"]}
         }
       ]
     },
@@ -271,6 +379,61 @@
         "dependencies": {"type": "array", "items": {"$ref": "#/$defs/dependency"}},
         "current_attempt": {"oneOf": [{"$ref": "#/$defs/attempt"}, {"type": "null"}]}
       }
+    },
+    "suspension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_id", "suspension_id", "suspension_epoch", "status",
+        "wait_policy_id", "wait_policy_digest", "required_work_item_ids"
+      ],
+      "properties": {
+        "task_id": {"$ref": "#/$defs/taskIdentity"},
+        "suspension_id": {"$ref": "#/$defs/suspensionIdentity"},
+        "suspension_epoch": {"type": "integer", "minimum": 0},
+        "status": {"enum": ["waiting", "resumed"]},
+        "wait_policy_id": {"$ref": "#/$defs/waitPolicyIdentity"},
+        "wait_policy_digest": {"$ref": "#/$defs/digest"},
+        "required_work_item_ids": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {"$ref": "#/$defs/workItemIdentity"}
+        },
+        "accepted_wake_id": {"$ref": "#/$defs/wakeIdentity"},
+        "wake_reason": {"const": "dependency_ready"}
+      },
+      "oneOf": [
+        {
+          "properties": {"status": {"const": "waiting"}},
+          "not": {"anyOf": [
+            {"required": ["accepted_wake_id"]},
+            {"required": ["wake_reason"]}
+          ]}
+        },
+        {
+          "properties": {"status": {"const": "resumed"}},
+          "required": ["accepted_wake_id", "wake_reason"]
+        }
+      ]
+    },
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intent_version", "status"],
+      "properties": {
+        "intent_version": {"type": "integer", "minimum": 0},
+        "status": {"enum": ["active", "interrupted"]},
+        "active_interrupt_id": {"$ref": "#/$defs/interruptIdentity"}
+      },
+      "oneOf": [
+        {
+          "properties": {"status": {"const": "active"}},
+          "not": {"required": ["active_interrupt_id"]}
+        },
+        {
+          "properties": {"status": {"const": "interrupted"}},
+          "required": ["active_interrupt_id"]
+        }
+      ]
     },
     "evidence": {
       "type": "object",

@@ -18,6 +18,7 @@
       "type": "string",
       "enum": ["manual", "policy_auto", "watcher", "disabled"]
     },
+    "task_id": {"type": "string", "minLength": 1},
     "trigger_source": {
       "type": "string",
       "enum": [
@@ -34,6 +35,11 @@
     },
     "matched_signal": {"type": "string"},
     "rule_ref": {"type": "string"},
+    "source_event_id": {"type": "string", "minLength": 1},
+    "deduplication_identity": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
     "risk_classification": {
       "type": "string",
       "enum": ["low", "medium", "high", "unknown"]
@@ -63,5 +69,22 @@
       "additionalProperties": {"type": "string"}
     },
     "notes": {"type": "array", "items": {"type": "string"}}
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"trigger_mode": {"const": "watcher"}},
+        "required": ["trigger_mode"]
+      },
+      "then": {
+        "required": [
+          "task_id",
+          "source_event_id",
+          "matched_signal",
+          "rule_ref",
+          "deduplication_identity"
+        ]
+      }
+    }
+  ]
 }

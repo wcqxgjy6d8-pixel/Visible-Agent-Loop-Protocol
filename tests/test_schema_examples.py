@@ -47,10 +47,42 @@ EXAMPLE_SCHEMA_BY_NAME = {
     "continuation-capability.json": "continuation-capability.schema.json",
     "continuation-event.json": "continuation-event.schema.json",
     "continuation-invocation-receipt.json": "continuation-invocation-receipt.schema.json",
+    "pricing-snapshots.json": "pricing-snapshots.schema.json",
+    "cost-budget.json": "cost-budget.schema.json",
+    "cost-report.json": "cost-report.schema.json",
 }
 
 
 class SchemaExampleTests(unittest.TestCase):
+    def test_watcher_trigger_requires_task_source_and_deduplication_identity(self) -> None:
+        validator = schema_validator(ROOT / "schemas" / "trigger-policy.schema.json")
+        trigger = {
+            "schema_version": "valp-trigger-policy.v1",
+            "task_id": "TASK-WATCH-1",
+            "trigger_mode": "watcher",
+            "trigger_source": "runtime_api",
+            "source_event_id": "herdr-event-42",
+            "matched_signal": "queue item is ready",
+            "rule_ref": "runtime-policy.json#queue-ready",
+            "risk_classification": "low",
+            "selected_action": "publish_only",
+            "approval_required": False,
+            "deduplication_identity": "sha256:" + "a" * 64,
+        }
+
+        self.assertEqual(list(validator.iter_errors(trigger)), [])
+        for required_field in (
+            "task_id",
+            "source_event_id",
+            "matched_signal",
+            "rule_ref",
+            "deduplication_identity",
+        ):
+            with self.subTest(required_field=required_field):
+                incomplete = dict(trigger)
+                incomplete.pop(required_field)
+                self.assertTrue(list(validator.iter_errors(incomplete)))
+
     def test_assignment_declaration_requires_user_selected_leader_evidence(self) -> None:
         declaration = json.loads(
             (ROOT / "examples" / "assignment-declaration.json").read_text(encoding="utf-8")
@@ -153,6 +185,18 @@ class SchemaExampleTests(unittest.TestCase):
                 data = json.loads(line)
                 for error in validator.iter_errors(data):
                     errors.append(f"{path.relative_to(ROOT)}:{lineno} {error.json_path}: {error.message}")
+        self.assertEqual(errors, [])
+
+    def test_cost_event_examples_match_schemas(self) -> None:
+        usage_validator = schema_validator(ROOT / "schemas" / "usage-event.schema.json")
+        billing_validator = schema_validator(ROOT / "schemas" / "billing-event.schema.json")
+        errors: list[str] = []
+        for path, validator in ((ROOT / "examples" / "cost-governance-task" / "usage-events.jsonl", usage_validator), (ROOT / "examples" / "cost-governance-task" / "billing-events.jsonl", billing_validator)):
+            if not path.exists():
+                continue
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if line.strip():
+                    errors.extend(f"{path.relative_to(ROOT)}:{lineno} {error.message}" for error in validator.iter_errors(json.loads(line)))
         self.assertEqual(errors, [])
 
     def test_bundled_agent_session_receipts_match_schema(self) -> None:

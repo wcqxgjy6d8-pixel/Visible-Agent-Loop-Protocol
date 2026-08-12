@@ -102,6 +102,9 @@ schema_by_name = {
     "continuation-capability.json": "continuation-capability.schema.json",
     "continuation-event.json": "continuation-event.schema.json",
     "continuation-invocation-receipt.json": "continuation-invocation-receipt.schema.json",
+    "pricing-snapshots.json": "pricing-snapshots.schema.json",
+    "cost-budget.json": "cost-budget.schema.json",
+    "cost-report.json": "cost-report.schema.json",
 }
 validators = {
     schema_name: validator_for(schema_name)
@@ -156,10 +159,13 @@ if errors:
 PY
 
 echo "==> Running unit tests"
-"$PYTHON_BIN" -m unittest tests/test_adapter_starter.py tests/test_catalog.py tests/test_continuation.py tests/test_control_plane.py tests/test_github_workflow.py tests/test_herdr_adapter.py tests/test_langgraph_adapter.py tests/test_model_aware_routing.py tests/test_protocol_kernel.py tests/test_protocol_receipts.py tests/test_receipt_store.py tests/test_readme_claims.py tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py tests/test_schema_examples.py
+"$PYTHON_BIN" -m unittest tests/test_adapter_abi.py tests/test_adapter_starter.py tests/test_catalog.py tests/test_continuation.py tests/test_control_plane.py tests/test_github_workflow.py tests/test_herdr_adapter.py tests/test_kernel_store.py tests/test_langgraph_adapter.py tests/test_model_aware_routing.py tests/test_protocol_kernel.py tests/test_protocol_receipts.py tests/test_receipt_store.py tests/test_readme_claims.py tests/test_runtime_adapters.py tests/test_valp_audit.py tests/test_valp_doctor.py tests/test_valp_workflow.py tests/test_schema_examples.py
 
 echo "==> Running v0.3 draft core conformance"
 "$PYTHON_BIN" -m valp_cli conformance --profile core-writer
+
+echo "==> Auditing cost-governance example"
+"$PYTHON_BIN" -m unittest tests.test_cost_governance.CostGovernanceTests.test_bundled_cost_governance_example_passes_cost_audit
 
 echo "==> Auditing minimal example"
 "$PYTHON_BIN" -m valp_cli audit examples/minimal-task

@@ -9,8 +9,17 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+from jsonschema import Draft202012Validator
+
 from valp_cli.audit import PASS, TaskAudit
-from valp_cli.langgraph_adapter import LangGraphAdapterError, resume_langgraph_run, submit_langgraph_run
+from valp_cli.adapter_abi import AdapterOperation, CapabilityStatus
+from valp_cli.langgraph_adapter import (
+    LangGraphAdapterError,
+    cancel_langgraph_run,
+    langgraph_adapter_manifest,
+    resume_langgraph_run,
+    submit_langgraph_run,
+)
 from valp_cli.protocol_receipts import ProofBinding, propose_receipt_append, receipt_subject_digest
 from valp_cli.receipt_store import DURABILITY_UNKNOWN_ERROR, ReceiptStore, ReceiptStoreError
 from valp_cli.submission import build_submission_dependencies
@@ -154,6 +163,25 @@ class LangGraphAdapterTests(unittest.TestCase):
             )
 
         self.assertEqual(second["status"], "completed")
+        abi_schema = json.loads((ROOT / "schemas" / "adapter-abi.schema.json").read_text())
+        abi_adoption = json.loads(
+            (self.task_dir / "runtime" / "langgraph" / "abi-adoption.json").read_text()
+        )
+        submit_observation = json.loads(
+            (self.task_dir / "runtime" / "langgraph" / "run-repair" / "abi-submit.json").read_text()
+        )
+        terminal_observation = json.loads(
+            (self.task_dir / "runtime" / "langgraph" / "run-repair" / "abi-observe.json").read_text()
+        )
+        self.assertEqual(abi_adoption["abi_version"], "1.0")
+        self.assertEqual(
+            [item["proof_kind"] for item in submit_observation["provenance"]],
+            ["process_bound", "content_bound"],
+        )
+        self.assertEqual(terminal_observation["status"], "completed")
+        self.assertEqual(terminal_observation["evidence_refs"], ["evidence/report.md"])
+        Draft202012Validator(abi_schema).validate(submit_observation)
+        Draft202012Validator(abi_schema).validate(terminal_observation)
         receipts = self.receipts()
         self.assertFalse((self.task_dir / "dispatch-receipts.jsonl").exists())
         self.assertTrue(all(receipt["schema_version"] == "valp-dispatch-receipt.v3" for receipt in receipts))
@@ -241,6 +269,103 @@ class LangGraphAdapterTests(unittest.TestCase):
         proof = json.loads((self.task_dir / proof_ref).read_text(encoding="utf-8"))
         self.assertEqual(proof["adapter_proof"]["adapter_record"]["submission_id"], "run-slow")
 
+    def test_langgraph_cancel_executes_provider_operation_and_writes_identity_bound_proof(self) -> None:
+        post_count = {"value": 0}
+        cancelled = {"value": False}
+
+        def api_request(api_url, method, path, payload=None, timeout_seconds=10.0):
+            if method == "POST" and path == "/threads":
+                return {"thread_id": "thread-cancel"}
+            if method == "POST" and path.endswith("/runs"):
+                return {
+                    "run_id": "run-cancel",
+                    "thread_id": "thread-cancel",
+                    "assistant_id": "assistant-worker",
+                    "status": "pending",
+                }
+            if method == "GET" and path.endswith("/runs/run-cancel"):
+                return {
+                    "status": "interrupted" if cancelled["value"] else "pending",
+                    "updated_at": "2026-08-05T00:00:00Z",
+                }
+            if method == "POST" and path.endswith("/runs/run-cancel/cancel"):
+                post_count["value"] += 1
+                cancelled["value"] = True
+                return {"status": "interrupted", "run_id": "run-cancel"}
+            raise AssertionError((method, path, payload))
+
+        with patch("valp_cli.langgraph_adapter._request", side_effect=api_request):
+            waiting = submit_langgraph_run(
+                self.workspace,
+                self.task_id,
+                "langgraph_worker",
+                "implementer",
+                wait_seconds=0,
+            )
+            submission = json.loads(
+                (self.task_dir / "runtime/langgraph/run-cancel/submission.json").read_text()
+            )
+            obligation = "adapter_cancel:" + json.dumps({
+                key: submission[key]
+                for key in (
+                    "attempt_id", "dispatch_generation", "dispatch_id", "task_id",
+                    "work_item_id",
+                )
+            }, sort_keys=True, separators=(",", ":"))
+            first = cancel_langgraph_run(
+                self.workspace, self.task_id, "run-cancel", obligation=obligation
+            )
+            second = cancel_langgraph_run(
+                self.workspace, self.task_id, "run-cancel", obligation=obligation
+            )
+
+        self.assertEqual(post_count["value"], 1)
+        self.assertEqual(first, second)
+        self.assertEqual(first["status"], "cancelled")
+        self.assertEqual(first["proof"]["obligation"], obligation)
+        self.assertEqual(first["proof"]["terminal_status"], "interrupted")
+        self.assertTrue(first["proof"]["acknowledged"])
+        self.assertEqual(first["observation"]["request"]["operation"], "cancel")
+        self.assertEqual(first["observation"]["status"], "cancelled")
+        Draft202012Validator(json.loads(
+            (ROOT / "schemas/adapter-cancellation-proof.schema.json").read_text()
+        )).validate(first["proof"])
+        self.assertEqual(
+            langgraph_adapter_manifest().capability(AdapterOperation.CANCEL).status,
+            CapabilityStatus.SUPPORTED,
+        )
+        self.assertTrue((self.task_dir / first["proof_ref"]).is_file())
+
+    def test_langgraph_cancel_rejects_wrong_obligation_without_calling_provider(self) -> None:
+        def api_request(api_url, method, path, payload=None, timeout_seconds=10.0):
+            if method == "POST" and path == "/threads":
+                return {"thread_id": "thread-cancel-bad"}
+            if method == "POST" and path.endswith("/runs"):
+                return {
+                    "run_id": "run-cancel-bad",
+                    "thread_id": "thread-cancel-bad",
+                    "assistant_id": "assistant-worker",
+                    "status": "pending",
+                }
+            if method == "GET" and path.endswith("/runs/run-cancel-bad"):
+                return {"status": "pending"}
+            raise AssertionError((method, path, payload))
+
+        with patch("valp_cli.langgraph_adapter._request", side_effect=api_request):
+            submit_langgraph_run(
+                self.workspace,
+                self.task_id,
+                "langgraph_worker",
+                "implementer",
+                wait_seconds=0,
+            )
+            with self.assertRaisesRegex(LangGraphAdapterError, "obligation"):
+                cancel_langgraph_run(
+                    self.workspace,
+                    self.task_id,
+                    "run-cancel-bad",
+                    obligation='adapter_cancel:{"attempt_id":"forged"}',
+                )
     def test_runtime_error_records_join_failure_reason(self) -> None:
         def api_request(api_url, method, path, payload=None, timeout_seconds=10.0):
             if method == "POST" and path == "/threads":

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:valp:schema:continuation-invocation-intent:v1",
+  "title": "VALP Continuation Invocation Intent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "task_id", "wake_id", "continuation_generation",
+    "idempotency_key", "envelope_digest", "target"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-continuation-invocation-intent.v1"},
+    "task_id": {"type": "string", "minLength": 1},
+    "wake_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "continuation_generation": {"type": "integer", "minimum": 1},
+    "idempotency_key": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "envelope_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coordinator_agent", "adapter_id", "provider_id", "durable_boundary_ref"],
+      "properties": {
+        "coordinator_agent": {"type": "string", "minLength": 1},
+        "adapter_id": {"type": "string", "minLength": 1},
+        "provider_id": {"type": "string", "minLength": 1},
+        "durable_boundary_ref": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

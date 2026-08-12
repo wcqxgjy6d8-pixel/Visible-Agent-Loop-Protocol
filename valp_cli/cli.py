@@ -8,9 +8,11 @@ import shutil
 import sqlite3
 import sys
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .audit import FAIL, TaskAudit, print_text_report, report_to_dict, resolve_task_dir
+from .cost_governance import CostGovernanceError, append_event, build_cost_report, enforce_cost_budget, estimate_usage
 from .catalog import CatalogError, EvidenceCatalog
 from .doctor import collect_doctor_report, render_text_summary, report_to_dict as doctor_report_to_dict, write_markdown_report
 from .control_plane import (
@@ -28,6 +30,7 @@ from .task_control import TASK_STATUSES, init_task, task_state, transition_task
 from .process_adapter import run_process
 from .langgraph_adapter import LangGraphAdapterError, resume_langgraph_run, submit_langgraph_run
 from .herdr_adapter import (
+    HerdrAutoVisibleWatcher,
     HerdrSubmissionError,
     open_herdr_leader_session,
     provision_herdr_leader_session,
@@ -77,6 +80,20 @@ notes:
     publish.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Runtime adapter to record and preflight")
     publish.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    watcher_intake = sub.add_parser(
+        "watcher-intake",
+        help="Publish one HERDR Auto Visible watcher event with durable replay suppression",
+    )
+    watcher_intake.add_argument("--workspace", default=".", help="Workspace root")
+    watcher_intake.add_argument("--task-id", required=True, help="Task id for the first publication")
+    watcher_intake.add_argument("--prompt", required=True, help="Task request for the first publication")
+    watcher_intake.add_argument("--profile", help="Override auto profile classification")
+    watcher_intake.add_argument("--runtime", choices=sorted(RUNTIME_CHOICES), default="auto", help="Runtime adapter to record")
+    watcher_event = watcher_intake.add_mutually_exclusive_group(required=True)
+    watcher_event.add_argument("--event", help="Structured watcher event as JSON")
+    watcher_event.add_argument("--event-file", help="Read structured watcher event JSON from a file")
+    watcher_intake.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     scan = sub.add_parser("scan", help="Scan local capabilities and overlay into a workspace")
     scan.add_argument("--workspace", default=".", help="Workspace root")
     scan.add_argument("--task", dest="task_id", help="Task id to update")
@@ -118,6 +135,14 @@ notes:
         help=(
             "Allow one explicitly targeted absent task-owned HERDR session to use "
             "the current capability launch argv in its next generation"
+        ),
+    )
+    dispatch.add_argument(
+        "--reprovision-done-session",
+        action="store_true",
+        help=(
+            "Fence and replace one explicitly targeted done task-owned HERDR session "
+            "before any delivery receipt exists"
         ),
     )
     dispatch.add_argument("--submit", action="store_true", help="Actually submit through the selected reference adapter when supported")
@@ -326,6 +351,45 @@ notes:
     task_transition.add_argument("--root", help="Explicit control root")
     task_transition.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    kernel = sub.add_parser("kernel", help="Inspect and reconcile durable pure-Kernel effects")
+    kernel_sub = kernel.add_subparsers(dest="kernel_command", required=True)
+    kernel_effects = kernel_sub.add_parser("effects", help="Inspect or record accepted Kernel effects")
+    kernel_effects_sub = kernel_effects.add_subparsers(dest="kernel_effects_command", required=True)
+    kernel_effects_status = kernel_effects_sub.add_parser(
+        "status", help="Reconcile accepted obligations against durable effect proof"
+    )
+    kernel_effects_status.add_argument("task_id")
+    kernel_effects_status.add_argument("--workspace", default=".", help="Workspace root")
+    kernel_effects_status.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    kernel_effects_record = kernel_effects_sub.add_parser(
+        "record", help="Record one fulfilled or blocked Adapter effect"
+    )
+    kernel_effects_record.add_argument("task_id")
+    kernel_effects_record.add_argument("--obligation", required=True)
+    kernel_effects_record.add_argument("--status", required=True, choices=["fulfilled", "blocked"])
+    kernel_effects_record.add_argument("--proof-ref", required=True, help="Task-local effect proof ref")
+    kernel_effects_record.add_argument("--workspace", default=".", help="Workspace root")
+    kernel_effects_record.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    kernel_effects_execute = kernel_effects_sub.add_parser(
+        "execute", help="Execute one accepted cancellation effect through its runtime Adapter"
+    )
+    kernel_effects_execute.add_argument("task_id")
+    kernel_effects_execute.add_argument("--obligation", required=True)
+    kernel_effects_execute.add_argument(
+        "--approve", action="store_true", help="Approve the exact external cancellation operation"
+    )
+    kernel_effects_execute.add_argument("--workspace", default=".", help="Workspace root")
+    kernel_effects_execute.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    kernel_control = kernel_sub.add_parser(
+        "control", help="Apply one canonical authority-bound Kernel control Event"
+    )
+    kernel_control.add_argument("task_id")
+    kernel_control.add_argument("--event-ref", required=True, help="Task-local canonical Event JSON")
+    kernel_control.add_argument("--authority-ref", required=True, help="Task-local authority Evidence")
+    kernel_control.add_argument("--approve", action="store_true", help="Approve the exact control Event")
+    kernel_control.add_argument("--workspace", default=".", help="Workspace root")
+    kernel_control.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     adapter = sub.add_parser("adapter", help="Run an explicit runtime adapter")
     adapter_sub = adapter.add_subparsers(dest="adapter_command", required=True)
     adapter_init = adapter_sub.add_parser("init", help="Create a provider-neutral adapter starter")
@@ -368,6 +432,138 @@ notes:
     langgraph_resume.add_argument("--run-id", required=True, help="Existing LangGraph runtime run ID")
     langgraph_resume.add_argument("--wait-seconds", type=float, default=30.0, help="Pause window; expiry keeps the runtime job alive")
     langgraph_resume.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    herdr_runtime = adapter_sub.add_parser(
+        "herdr", help="Observe the packaged HERDR runtime"
+    )
+    herdr_runtime_sub = herdr_runtime.add_subparsers(
+        dest="herdr_runtime_command", required=True
+    )
+    herdr_observe = herdr_runtime_sub.add_parser(
+        "observe", help="Append a terminal receipt from an identity-bound HERDR observation"
+    )
+    herdr_observe.add_argument("task_id", help="Task id")
+    herdr_observe.add_argument("--workspace", default=".", help="Workspace root")
+    herdr_observe.add_argument("--agent", required=True, help="Exact routed Agent")
+    herdr_observe.add_argument(
+        "--role", required=True,
+        choices=["coordinator", "implementer", "reviewer", "prototype", "researcher", "other"],
+    )
+    herdr_observe.add_argument("--attempt-id", help="Exact submitted Attempt when more than one exists")
+    herdr_observe.add_argument(
+        "--observation-ref", required=True, help="Task-local HERDR terminal observation JSON ref"
+    )
+    herdr_observe.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    queue = adapter_sub.add_parser("queue", help="Observe the durable file Queue runtime")
+    queue_sub = queue.add_subparsers(dest="queue_command", required=True)
+    for queue_action, queue_help in (
+        ("claim", "Atomically claim one accepted Queue Attempt"),
+        ("cancel", "Request cancellation on one accepted Queue Attempt"),
+        ("ack-cancel", "Acknowledge cancellation from the exact claimed worker"),
+    ):
+        queue_parser = queue_sub.add_parser(queue_action, help=queue_help)
+        queue_parser.add_argument("task_id", help="Task id")
+        queue_parser.add_argument("--workspace", default=".", help="Workspace root")
+        queue_parser.add_argument("--agent", required=True, help="Exact routed Agent")
+        queue_parser.add_argument(
+            "--role", required=True,
+            choices=["coordinator", "implementer", "reviewer", "prototype", "researcher", "other"],
+        )
+        queue_parser.add_argument("--attempt-id", help="Exact submitted Attempt when more than one exists")
+        queue_parser.add_argument("--expected-revision", required=True, type=int, help="Expected Queue lifecycle revision")
+        queue_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+        if queue_action in {"claim", "ack-cancel"}:
+            queue_parser.add_argument("--worker-id", required=True, help="Exact worker identity")
+            queue_parser.add_argument("--run-id", required=True, help="Exact worker run identity")
+            queue_parser.add_argument("--claim-token", required=True, help="Opaque claim fencing token")
+        if queue_action == "cancel":
+            queue_parser.add_argument("--authority", required=True, help="Authorized cancellation principal")
+            queue_parser.add_argument("--reason", required=True, help="Cancellation reason")
+        if queue_action == "ack-cancel":
+            queue_parser.add_argument("--claim-event-id", required=True, help="Accepted claim lifecycle event id")
+    queue_observe = queue_sub.add_parser(
+        "observe", help="Append a terminal receipt from a real worker observation"
+    )
+    queue_observe.add_argument("task_id", help="Task id")
+    queue_observe.add_argument("--workspace", default=".", help="Workspace root")
+    queue_observe.add_argument("--agent", required=True, help="Exact routed Agent")
+    queue_observe.add_argument(
+        "--role",
+        required=True,
+        choices=["coordinator", "implementer", "reviewer", "prototype", "researcher", "other"],
+    )
+    queue_observe.add_argument("--attempt-id", help="Exact submitted Attempt when more than one exists")
+    queue_observe.add_argument(
+        "--observation-ref", required=True, help="Task-local Queue worker observation JSON ref"
+    )
+    queue_observe.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    continuation = adapter_sub.add_parser(
+        "continuation", help="Consume a persisted runtime-control continuation"
+    )
+    continuation.add_argument("task_id", help="Task id")
+    continuation.add_argument("--workspace", default=".", help="Workspace root")
+    continuation.add_argument(
+        "--command-json", required=True,
+        help="JSON argv array for the provider-owned runtime-control process",
+    )
+    continuation.add_argument("--provider-id", required=True, help="Exact provider id")
+    continuation.add_argument(
+        "--coordinator-surface", required=True, help="Exact coordinator surface"
+    )
+    continuation.add_argument(
+        "--identity-evidence-ref", required=True,
+        help="Task-local provider identity evidence ref",
+    )
+    continuation.add_argument(
+        "--duplicate-suppression-ref", required=True,
+        help="Task-local provider duplicate-suppression evidence ref",
+    )
+    continuation.add_argument("--wake-id", help="Exact pending wake id when several exist")
+    continuation.add_argument(
+        "--approve", action="store_true", help="Approve external provider invocation"
+    )
+    continuation.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    manual = adapter_sub.add_parser("manual", help="Record identity-bound Manual Mode attestations")
+    manual_sub = manual.add_subparsers(dest="manual_command", required=True)
+    manual_attest = manual_sub.add_parser("attest", help="Append one canonical Manual receipt")
+    manual_attest.add_argument("task_id", help="Task id")
+    manual_attest.add_argument("--workspace", default=".", help="Workspace root")
+    manual_attest.add_argument("--agent", required=True, help="Exact routed Agent")
+    manual_attest.add_argument(
+        "--role",
+        required=True,
+        choices=["coordinator", "implementer", "reviewer", "prototype", "researcher", "other"],
+    )
+    manual_attest.add_argument(
+        "--event",
+        required=True,
+        choices=["manual_delivery_attested", "manual_result_attested", "manual_blocked"],
+    )
+    manual_attest.add_argument("--authority", required=True, help="Named attesting authority")
+    manual_attest.add_argument("--authority-ref", required=True, help="Task-local authority declaration ref")
+    manual_attest.add_argument("--statement", required=True, help="Exact attestation statement")
+    manual_attest.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    for decision_name in ("revoke", "adjudicate"):
+        decision = manual_sub.add_parser(
+            decision_name, help=f"Append one Manual attestation {decision_name} decision"
+        )
+        decision.add_argument("task_id", help="Task id")
+        decision.add_argument("--workspace", default=".", help="Workspace root")
+        decision.add_argument("--receipt-id", required=True, help="Target Manual receipt ID")
+        decision.add_argument("--authority", required=True, help="Named deciding authority")
+        decision.add_argument("--authority-ref", required=True, help="Task-local authority declaration ref")
+        decision.add_argument("--statement", required=True, help="Exact decision statement")
+        if decision_name == "adjudicate":
+            decision.add_argument(
+                "--conflicting-receipt-id",
+                action="append",
+                required=True,
+                help="Complete conflicting receipt set; repeat for every receipt",
+            )
+        decision.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     catalog = sub.add_parser("catalog", help="Build and query the optional local evidence catalog")
     catalog_sub = catalog.add_subparsers(dest="catalog_command", required=True)
@@ -465,6 +661,15 @@ notes:
     audit.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     audit.add_argument("--strict", action="store_true", help="Treat warnings as failures")
 
+    cost = sub.add_parser("cost", help="Manage provider-neutral task cost evidence")
+    cost_sub = cost.add_subparsers(dest="cost_command", required=True)
+    for name, help_text in (("report", "Render a deterministic cost report"), ("estimate", "Check projected cost before dispatch"), ("record-usage", "Append one usage event"), ("record-billing", "Append one billing event")):
+        command = cost_sub.add_parser(name, help=help_text)
+        command.add_argument("path", nargs="?", default=".", help="Task folder or workspace root")
+        command.add_argument("--task", dest="task_id", help="Task id under <workspace>/.herdr-loop/tasks/")
+        command.add_argument("--event", help="JSON event for append-only record commands")
+        command.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     doctor = sub.add_parser("doctor", help="Diagnose VALP workspace health without mutating by default")
     doctor.add_argument("--workspace", default=".", help="Workspace root")
     doctor.add_argument("--task", dest="task_id", help="Optional task id to audit under <workspace>/.herdr-loop/tasks/")
@@ -479,6 +684,17 @@ def prompt_from_args(args: argparse.Namespace) -> str:
     if args.prompt:
         return args.prompt
     raise SystemExit("publish requires --prompt or --prompt-file")
+
+
+def watcher_event_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    raw = Path(args.event_file).read_text(encoding="utf-8") if args.event_file else args.event
+    try:
+        event = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise SystemExit(f"watcher-intake event must be valid JSON: {error}") from error
+    if not isinstance(event, dict):
+        raise SystemExit("watcher-intake event must be a JSON object")
+    return event
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -506,6 +722,30 @@ def main(argv: list[str] | None = None) -> int:
             if visible.exists():
                 print()
                 print(visible.read_text(encoding="utf-8").strip())
+        return 0
+
+    if args.command == "watcher-intake":
+        workspace = Path(args.workspace)
+
+        def publish(event: dict[str, Any]) -> dict[str, Any]:
+            directory = publish_task(
+                workspace,
+                args.task_id,
+                args.prompt,
+                profile=args.profile,
+                runtime=args.runtime,
+                invoked_entrypoint=invoked_entrypoint,
+            )
+            return {"task_id": args.task_id, "task_directory": str(directory)}
+
+        result = HerdrAutoVisibleWatcher(workspace, publish).process(
+            watcher_event_from_args(args)
+        )
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print(f"Published VALP watcher task: {result['task_id']}")
+            print(f"Trigger policy: {result['trigger_policy_ref']}")
         return 0
 
     if args.command == "scan":
@@ -556,6 +796,7 @@ def main(argv: list[str] | None = None) -> int:
             recover_incomplete=args.recover_incomplete,
             retry_generation=args.retry_generation,
             replace_owned_session_launch=args.replace_owned_session_launch,
+            reprovision_done_session=args.reprovision_done_session,
         )
         if args.submit:
             print(f"Submitted dispatch for task {args.task_id}")
@@ -614,6 +855,37 @@ def main(argv: list[str] | None = None) -> int:
             print(f"VALP suspension resumed: {result.get('resume_event', 'unknown')}")
         return 0
 
+    if args.command == "cost":
+        task_dir = resolve_task_dir(Path(args.path), args.task_id)
+        task_id = str((json.loads((task_dir / "state.json").read_text(encoding="utf-8"))).get("task_id") or task_dir.name)
+        try:
+            if args.cost_command in {"record-usage", "record-billing"}:
+                if not args.event:
+                    raise CostGovernanceError("--event is required")
+                event = json.loads(args.event)
+                if event.get("task_id") != task_id:
+                    raise CostGovernanceError("event task_id does not match the task")
+                filename, schema = (("usage-events.jsonl", "valp-usage-event.v1") if args.cost_command == "record-usage" else ("billing-events.jsonl", "valp-billing-event.v1"))
+                append_event(task_dir / filename, event, schema)
+                print(json.dumps({"status": "appended", "ref": filename, "event_id": event["event_id"]}, indent=2) if args.json else f"Appended {args.cost_command} event: {event['event_id']}")
+                return 0
+            if args.cost_command == "estimate":
+                result = enforce_cost_budget(task_dir, task_id)
+                if result is None:
+                    raise CostGovernanceError("cost-budget.json is required")
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+                return 0
+            pricing = json.loads((task_dir / "pricing-snapshots.json").read_text(encoding="utf-8"))
+            budget = json.loads((task_dir / "cost-budget.json").read_text(encoding="utf-8"))
+            usage = [json.loads(line) for line in (task_dir / "usage-events.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+            billing_path = task_dir / "billing-events.jsonl"
+            billing = [json.loads(line) for line in billing_path.read_text(encoding="utf-8").splitlines() if line.strip()] if billing_path.exists() else []
+            result = build_cost_report(task_id, pricing.get("snapshots") or [], usage, billing, budget.get("planned_usage") or [])
+        except (OSError, json.JSONDecodeError, CostGovernanceError) as error:
+            raise SystemExit(f"Cost governance error: {error}") from error
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
+
     if args.command == "install":
         root = installation_root(Path(args.workspace), Path(args.root) if args.root else None)
         try:
@@ -630,6 +902,41 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "leader":
         root = leader_installation_root(Path(args.workspace), Path(args.root) if args.root else None)
         core = InstallationCore(root)
+        created_leader_workspaces: list[tuple[str, str]] = []
+        activated_leader_workspace: str | None = None
+
+        def tracked_leader_run_command(command: list[str], **kwargs: Any) -> dict[str, Any]:
+            command_result = run_command(command, **kwargs)
+            if command[1:3] == ["workspace", "create"] and command_result.get("ok") is True:
+                try:
+                    payload = json.loads(str(command_result.get("stdout") or ""))
+                except json.JSONDecodeError:
+                    payload = {}
+                record = payload.get("result") if isinstance(payload.get("result"), dict) else payload
+                workspace = record.get("workspace") if isinstance(record.get("workspace"), dict) else record
+                workspace_id = str(workspace.get("workspace_id") or "").strip() if isinstance(workspace, dict) else ""
+                if workspace_id:
+                    created_leader_workspaces.append((command[0], workspace_id))
+            return command_result
+
+        def cleanup_unbound_leader_workspaces(preserve: str | None = None) -> list[str]:
+            cleanup_errors: list[str] = []
+            for herdr_command, workspace_id in reversed(created_leader_workspaces):
+                if workspace_id == preserve:
+                    continue
+                cleanup_result = run_command(
+                    [herdr_command, "workspace", "close", workspace_id],
+                    timeout=10.0,
+                )
+                if cleanup_result.get("ok") is not True:
+                    detail = str(
+                        cleanup_result.get("stderr")
+                        or cleanup_result.get("stdout")
+                        or "unknown cleanup failure"
+                    ).strip()
+                    cleanup_errors.append(f"{workspace_id}: {detail}")
+            return cleanup_errors
+
         try:
             if args.leader_command == "candidates":
                 doctor_report = collect_doctor_report(Path(args.workspace))
@@ -638,6 +945,14 @@ def main(argv: list[str] | None = None) -> int:
                 result = core.select_leader(args.principal)
             elif args.leader_command in {"start", "open"}:
                 state = core.state()
+                if (
+                    args.leader_command == "open"
+                    and state.get("status") == "blocked"
+                    and state.get("active_blockers") == ["leader_activation_failed"]
+                    and int(state.get("active_leader_epoch") or 0) >= 1
+                ):
+                    core.restore_active_leader_after_failed_restart()
+                    state = core.state()
                 selected = state.get("selected_leader") if isinstance(state.get("selected_leader"), dict) else {}
                 runtime = selected.get("runtime") if isinstance(selected.get("runtime"), dict) else {}
                 if runtime.get("adapter_id") != "herdr":
@@ -660,7 +975,7 @@ def main(argv: list[str] | None = None) -> int:
                             "Active Leader has no runtime attachment record; run `valp leader restart` to repair it",
                             state_effect="blocked",
                         )
-                    opened = open_herdr_leader_session(herdr, binding, run_command)
+                    opened = open_herdr_leader_session(herdr, binding, tracked_leader_run_command)
                     if opened.get("status") == "opened":
                         result = {
                             "status": "active",
@@ -679,10 +994,31 @@ def main(argv: list[str] | None = None) -> int:
                             launch_argv=list(runtime["launch_argv"]),
                             leader_epoch=prepared["proposed_leader_epoch"],
                             generation=prepared["generation"],
-                            run_command=run_command,
+                            run_command=tracked_leader_run_command,
                         )
                         result = core.activate_leader(provisioned)
                         result["action"] = "reopened_missing_leader_attachment"
+                        binding = result["binding"]
+                        bound_workspace = str(
+                            (binding.get("runtime_identity") or {}).get("workspace_id") or ""
+                        ).strip()
+                        activated_leader_workspace = bound_workspace
+                        cleanup_errors = cleanup_unbound_leader_workspaces(bound_workspace)
+                        if cleanup_errors:
+                            raise HerdrSubmissionError(
+                                "HERDR Leader opened but temporary workspace cleanup failed: "
+                                + "; ".join(cleanup_errors)
+                            )
+                        opened = open_herdr_leader_session(
+                            herdr,
+                            binding,
+                            tracked_leader_run_command,
+                        )
+                        if opened.get("status") != "opened":
+                            raise HerdrSubmissionError(
+                                "HERDR activated Leader could not be focused"
+                            )
+                        result["attachment"] = opened
                 else:
                     prepared = core.prepare_leader_start()
                     provisioned = provision_herdr_leader_session(
@@ -694,7 +1030,7 @@ def main(argv: list[str] | None = None) -> int:
                         launch_argv=list(runtime["launch_argv"]),
                         leader_epoch=prepared["proposed_leader_epoch"],
                         generation=1,
-                        run_command=run_command,
+                        run_command=tracked_leader_run_command,
                     )
                     result = core.activate_leader(provisioned)
             elif args.leader_command == "recover-start":
@@ -802,16 +1138,37 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 result = core.status()
         except HerdrSubmissionError as error:
+            cleanup_errors = cleanup_unbound_leader_workspaces(
+                activated_leader_workspace
+            )
+            if cleanup_errors:
+                error = HerdrSubmissionError(
+                    f"{error}; temporary workspace cleanup failed: "
+                    + "; ".join(cleanup_errors)
+                )
             if args.leader_command in {"start", "open"} and core.state().get("status") == "active":
                 raise SystemExit(f"VALP-E-LEADER-UNREACHABLE: {error}") from error
+            failure_operation = (
+                "restart"
+                if args.leader_command == "open"
+                and core.state().get("status") == "restarting_leader"
+                else args.leader_command
+            )
             try:
                 core.fail_leader_activation(
-                    args.leader_command,
+                    failure_operation,
                     adapter_id="herdr",
                     failure_class=type(error).__name__,
                 )
             except ControlPlaneError as blocked:
-                raise SystemExit(f"{blocked.code}: {blocked}") from error
+                if (
+                    args.leader_command == "open"
+                    and failure_operation == "restart"
+                    and blocked.code == "VALP-E-LEADER-UNREACHABLE"
+                ):
+                    core.restore_active_leader_after_failed_restart()
+                detail = error if blocked.code == "VALP-E-LEADER-UNREACHABLE" else blocked
+                raise SystemExit(f"{blocked.code}: {detail}") from error
             raise AssertionError("Leader activation failure must fail closed") from error
         except ControlPlaneError as error:
             raise SystemExit(f"{error.code}: {error}") from error
@@ -980,6 +1337,133 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Task {args.task_id}: {result['status']} (revision {result['revision']})")
         return 0
 
+    if args.command == "kernel" and args.kernel_command == "control":
+        from .kernel_store import KernelStore, KernelStoreError, decode_event
+        from .protocol_kernel import Evidence, IdentityKind, ReplayEntry, ResultVariant, reduce
+        from .protocol_receipts import digest
+
+        if not args.approve:
+            raise SystemExit("Kernel control Event requires explicit --approve")
+        workspace = Path(args.workspace).resolve()
+        directory = workspace / ".herdr-loop" / "tasks" / args.task_id
+        store = KernelStore(directory / "runtime" / "kernel")
+        try:
+            event_path = (directory / args.event_ref).resolve()
+            event_path.relative_to(directory)
+            authority_path = (directory / args.authority_ref).resolve()
+            authority_path.relative_to(directory)
+            event = decode_event(json.loads(event_path.read_text(encoding="utf-8")))
+            authority_payload = authority_path.read_bytes()
+            if not authority_payload:
+                raise ValueError("Kernel control authority Evidence is empty")
+            if event.task_id.value != args.task_id:
+                raise ValueError("Kernel control Event Task identity differs")
+            if (
+                event.authority_evidence_id is None
+                or event.authority_evidence_id.kind != IdentityKind.EVIDENCE
+            ):
+                raise ValueError("Kernel control Event lacks authority Evidence identity")
+            evidence_set = (
+                Evidence(event.authority_evidence_id, digest(authority_payload)),
+            )
+            recovery = store.recover()
+            result = reduce(recovery.replay.state, event, evidence_set)
+            if result.variant == ResultVariant.REJECTED:
+                raise ValueError(
+                    f"Kernel control Event rejected: {result.rejected.error_code}"
+                )
+            if result.variant == ResultVariant.ACCEPTED:
+                recovery = store.append(ReplayEntry(event, evidence_set, result))
+                state = recovery.replay.state
+            else:
+                state = result.no_op.state
+            reconciliation = store.reconcile_effects()
+            output = {
+                "variant": result.variant.value,
+                "event_id": event.event_id.value,
+                "state": state.canonical(),
+                "effects": reconciliation.canonical(),
+            }
+        except (KernelStoreError, OSError, ValueError, json.JSONDecodeError) as error:
+            raise SystemExit(f"Kernel control Event failed: {error}") from error
+        if args.json:
+            print(json.dumps(output, indent=2, ensure_ascii=False))
+        else:
+            print(
+                f"Kernel control {output['variant']}: {output['event_id']} "
+                f"-> {output['state']['status']}"
+            )
+            if output["effects"]["pending"]:
+                print(f"Pending Adapter effects: {len(output['effects']['pending'])}")
+        return 1 if output["effects"]["pending"] or output["effects"]["blocked"] else 0
+
+    if args.command == "kernel" and args.kernel_command == "effects":
+        from .kernel_store import KernelEffectStatus, KernelStore, KernelStoreError
+        from .protocol_receipts import digest
+
+        workspace = Path(args.workspace).resolve()
+        directory = workspace / ".herdr-loop" / "tasks" / args.task_id
+        store = KernelStore(directory / "runtime" / "kernel")
+        try:
+            if args.kernel_effects_command == "status":
+                result = store.reconcile_effects().canonical()
+            elif args.kernel_effects_command == "record":
+                proof_path = (directory / args.proof_ref).resolve()
+                proof_path.relative_to(directory)
+                proof_payload = proof_path.read_bytes()
+                if not proof_payload:
+                    raise ValueError("Kernel effect proof is empty")
+                record = store.record_effect(
+                    args.obligation,
+                    status=KernelEffectStatus(args.status),
+                    proof_ref=args.proof_ref,
+                    proof_digest=digest(proof_payload),
+                )
+                result = {
+                    "record": record.canonical(),
+                    "reconciliation": store.reconcile_effects().canonical(),
+                }
+            else:
+                from .effect_runtime import EffectRuntimeError, execute_kernel_effect
+
+                try:
+                    result = execute_kernel_effect(
+                        workspace,
+                        args.task_id,
+                        args.obligation,
+                        approve=args.approve,
+                    )
+                except EffectRuntimeError as error:
+                    raise ValueError(str(error)) from error
+        except (KernelStoreError, OSError, ValueError) as error:
+            raise SystemExit(f"Kernel effect reconciliation failed: {error}") from error
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        elif args.kernel_effects_command == "status":
+            print(
+                f"Kernel effects: pending={len(result['pending'])} "
+                f"fulfilled={len(result['fulfilled'])} blocked={len(result['blocked'])}"
+            )
+        elif args.kernel_effects_command == "record":
+            print(
+                f"Recorded Kernel effect {result['record']['effect_id']}: "
+                f"{result['record']['status']}"
+            )
+        elif result["status"] == "dry_run":
+            print(
+                f"Kernel effect dry run: {result['adapter_id']} run {result['run_id']}"
+            )
+            print("Re-run with --approve to execute external cancellation.")
+        else:
+            print(
+                f"Executed Kernel effect {result['record']['effect_id']}: "
+                f"{result['record']['status']}"
+            )
+        reconciliation = result if args.kernel_effects_command == "status" else result["reconciliation"]
+        if args.kernel_effects_command == "execute" and result["status"] == "dry_run":
+            return 0
+        return 1 if reconciliation["pending"] or reconciliation["blocked"] else 0
+
     if args.command == "adapter" and args.adapter_command == "process" and args.process_command == "run":
         root = installation_root(Path(args.workspace), Path(args.root) if args.root else None)
         try:
@@ -1047,6 +1531,284 @@ def main(argv: list[str] | None = None) -> int:
             if result["status"] == "waiting":
                 print("Runtime job remains active; resume this run ID after the pause window.")
         return 0 if result["status"] in {"completed", "waiting"} else 1
+
+    if args.command == "adapter" and args.adapter_command == "herdr":
+        from .runtime_adapters import (
+            RuntimeAdapterError,
+            load_runtime_v3_receipts,
+            record_herdr_completion,
+        )
+
+        workspace = Path(args.workspace).resolve()
+        directory = workspace / ".herdr-loop" / "tasks" / args.task_id
+        try:
+            submissions = [
+                receipt
+                for receipt in load_runtime_v3_receipts(directory, "herdr")
+                if receipt.get("event") == "dispatch_submitted"
+                and receipt.get("agent") == args.agent
+                and receipt.get("role") == args.role
+                and (args.attempt_id is None or receipt.get("attempt_id") == args.attempt_id)
+            ]
+            if len(submissions) != 1:
+                raise RuntimeAdapterError(
+                    "HERDR observation requires exactly one matching submitted Attempt"
+                )
+            observation_path = (directory / args.observation_ref).resolve()
+            observation_path.relative_to(directory)
+            terminal_proof = json.loads(observation_path.read_text(encoding="utf-8"))
+            receipt, observation = record_herdr_completion(
+                directory,
+                args.task_id,
+                submissions[0],
+                list(submissions[0].get("expected_refs") or []),
+                terminal_proof,
+            )
+        except (RuntimeAdapterError, OSError, ValueError, json.JSONDecodeError) as error:
+            raise SystemExit(f"HERDR v3 terminal observation failed: {error}") from error
+        result = {"receipt": receipt, "observation": observation}
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print(
+                f"Recorded HERDR v3 terminal observation: {receipt['event']} "
+                f"for {args.agent}/{args.role} ({receipt['receipt_id']})"
+            )
+        return 0 if receipt["event"] == "dispatch_completed" else 1
+
+    if args.command == "adapter" and args.adapter_command == "continuation":
+        from .continuation import (
+            ContinuationError,
+            ContinuationStore,
+            SubprocessRuntimeControlAdapter,
+            idempotency_key,
+        )
+
+        workspace = Path(args.workspace).resolve()
+        directory = workspace / ".herdr-loop" / "tasks" / args.task_id
+        try:
+            command = json.loads(args.command_json)
+            if (
+                not isinstance(command, list)
+                or not command
+                or not all(isinstance(item, str) and item for item in command)
+            ):
+                raise ContinuationError("--command-json must be a non-empty JSON argv array")
+            candidates = []
+            for envelope_path in sorted((directory / "continuations").glob("*/envelope.json")):
+                envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+                if args.wake_id is not None and envelope.get("wake_id") != args.wake_id:
+                    continue
+                payload_path = envelope_path.with_name("payload.json")
+                payload = json.loads(payload_path.read_text(encoding="utf-8"))
+                candidates.append((envelope, payload))
+            if len(candidates) != 1:
+                raise ContinuationError(
+                    "continuation consume requires exactly one matching persisted envelope"
+                )
+            envelope, payload = candidates[0]
+            adapter = SubprocessRuntimeControlAdapter(
+                command=tuple(command), provider_id=args.provider_id,
+                coordinator_surface=args.coordinator_surface,
+                identity_evidence_ref=args.identity_evidence_ref,
+                duplicate_suppression_evidence_ref=args.duplicate_suppression_ref,
+            )
+            capability_path = directory / "continuations" / "capability.json"
+            capability = json.loads(capability_path.read_text(encoding="utf-8"))
+            if capability != adapter.capability():
+                raise ContinuationError(
+                    "CLI continuation Adapter conflicts with registered capability"
+                )
+            if not args.approve:
+                result = {
+                    "status": "dry_run",
+                    "task_id": args.task_id,
+                    "wake_id": envelope["wake_id"],
+                    "idempotency_key": idempotency_key(envelope),
+                    "target": envelope["target"],
+                    "command": command,
+                }
+            else:
+                receipt = ContinuationStore(
+                    directory, args.task_id
+                ).consume_with_adapter(envelope, payload, adapter)
+                result = {
+                    "status": "consumed",
+                    "task_id": args.task_id,
+                    "wake_id": envelope["wake_id"],
+                    "receipt": receipt,
+                }
+        except (ContinuationError, OSError, json.JSONDecodeError) as error:
+            raise SystemExit(f"VALP-E-CONTINUATION-ADAPTER: {error}") from error
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        elif result["status"] == "dry_run":
+            print(
+                f"Continuation dry run: {result['wake_id']} "
+                f"({result['idempotency_key']})"
+            )
+        else:
+            print(f"Continuation consumed: {result['wake_id']}")
+        return 0
+
+    if args.command == "adapter" and args.adapter_command == "queue":
+        from .runtime_adapters import (
+            RuntimeAdapterError,
+            load_runtime_v3_receipts,
+            record_queue_cancellation_acknowledgement,
+            record_queue_cancellation_proof,
+            record_queue_cancellation_request,
+            record_queue_claim,
+            record_queue_terminal_observation,
+        )
+
+        workspace = Path(args.workspace).resolve()
+        directory = workspace / ".herdr-loop" / "tasks" / args.task_id
+        try:
+            submissions = [
+                receipt
+                for receipt in load_runtime_v3_receipts(directory, "queue")
+                if receipt.get("event") == "dispatch_submitted"
+                and receipt.get("agent") == args.agent
+                and receipt.get("role") == args.role
+                and (args.attempt_id is None or receipt.get("attempt_id") == args.attempt_id)
+            ]
+            if len(submissions) != 1:
+                raise RuntimeAdapterError(
+                    "Queue observation requires exactly one matching submitted Attempt"
+                )
+            submission = submissions[0]
+            if args.queue_command == "claim":
+                lifecycle = record_queue_claim(
+                    directory, args.task_id, submission,
+                    worker_id=args.worker_id, run_id=args.run_id,
+                    claim_token=args.claim_token,
+                    expected_revision=args.expected_revision,
+                )
+                result = {"lifecycle": lifecycle}
+                exit_code = 0
+            elif args.queue_command == "cancel":
+                lifecycle = record_queue_cancellation_request(
+                    directory, args.task_id, submission,
+                    authority=args.authority, reason=args.reason,
+                    expected_revision=args.expected_revision,
+                )
+                result = {"lifecycle": lifecycle}
+                if lifecycle["event"] == "cancelled":
+                    proof_ref, observation = record_queue_cancellation_proof(
+                        directory, args.task_id, submission, lifecycle
+                    )
+                    result.update({"proof_ref": proof_ref, "observation": observation})
+                exit_code = 0
+            elif args.queue_command == "ack-cancel":
+                lifecycle, observation = record_queue_cancellation_acknowledgement(
+                    directory, args.task_id, submission,
+                    worker_id=args.worker_id, run_id=args.run_id,
+                    claim_token=args.claim_token,
+                    claim_event_id=args.claim_event_id,
+                    expected_revision=args.expected_revision,
+                )
+                result = {"lifecycle": lifecycle, "observation": observation}
+                exit_code = 0
+            else:
+                receipt, observation = record_queue_terminal_observation(
+                    directory, args.task_id, submission, args.observation_ref,
+                )
+                result = {"receipt": receipt, "observation": observation}
+                exit_code = 0 if receipt["event"] == "dispatch_completed" else 1
+        except RuntimeAdapterError as error:
+            raise SystemExit(f"Queue v3 {args.queue_command} failed: {error}") from error
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            if args.queue_command == "observe":
+                print(
+                    f"Recorded Queue v3 terminal observation: {receipt['event']} "
+                    f"for {args.agent}/{args.role} ({receipt['receipt_id']})"
+                )
+            else:
+                print(
+                    f"Recorded Queue v3 lifecycle event: {result['lifecycle']['event']} "
+                    f"for {args.agent}/{args.role} ({result['lifecycle']['event_id']})"
+                )
+        return exit_code
+
+    if args.command == "adapter" and args.adapter_command == "manual":
+        from .runtime_adapters import (
+            RuntimeAdapterError,
+            record_manual_attestation,
+            record_manual_decision,
+        )
+
+        workspace = Path(args.workspace).resolve()
+        directory = workspace / ".herdr-loop" / "tasks" / args.task_id
+        if args.manual_command in {"revoke", "adjudicate"}:
+            try:
+                decision = record_manual_decision(
+                    directory,
+                    args.task_id,
+                    action=args.manual_command,
+                    target_receipt_id=args.receipt_id,
+                    conflicting_receipt_ids=(
+                        args.conflicting_receipt_id
+                        if args.manual_command == "adjudicate"
+                        else None
+                    ),
+                    authority=args.authority,
+                    authority_ref=args.authority_ref,
+                    statement=args.statement,
+                )
+            except RuntimeAdapterError as error:
+                raise SystemExit(f"Manual v3 decision failed: {error}") from error
+            if args.json:
+                print(json.dumps(decision, indent=2, ensure_ascii=False))
+            else:
+                print(
+                    f"Recorded Manual v3 {args.manual_command}: "
+                    f"{decision['decision_id']}"
+                )
+            return 0
+
+        from .submission import work_item_identity
+
+        dependencies = read_json(directory / "submission-dependencies.json")
+        identity = next(
+            (
+                item
+                for item in dependencies.get("work_items") or []
+                if isinstance(item, dict)
+                and item.get("agent") == args.agent
+                and item.get("role") == args.role
+            ),
+            work_item_identity(args.task_id, args.agent, args.role),
+        )
+        try:
+            receipt, observation = record_manual_attestation(
+                directory,
+                args.task_id,
+                agent=args.agent,
+                role=args.role,
+                work_item_id=str(identity["work_item_id"]),
+                dispatch_id=str(identity["dispatch_id"]),
+                dispatch_generation=int(identity["dispatch_generation"]),
+                dispatch_ref=f"agents/{args.agent}/dispatch.md",
+                expected_refs=list(identity.get("expected_refs") or []),
+                event=args.event,
+                authority=args.authority,
+                authority_ref=args.authority_ref,
+                statement=args.statement,
+            )
+        except RuntimeAdapterError as error:
+            raise SystemExit(f"Manual v3 attestation failed: {error}") from error
+        result = {"receipt": receipt, "observation": observation}
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print(
+                f"Recorded Manual v3 attestation: {args.event} "
+                f"for {args.agent}/{args.role} ({receipt['receipt_id']})"
+            )
+        return 0
 
     if args.command == "catalog":
         try:

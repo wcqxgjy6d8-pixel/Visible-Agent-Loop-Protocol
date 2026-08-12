@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/adapter-cancellation-proof.v1.json",
+  "title": "VALP Adapter Cancellation Proof",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "adapter_id", "abi_version", "task_id", "work_item_id",
+    "attempt_id", "dispatch_id", "dispatch_generation", "obligation",
+    "runtime_identity", "pre_cancel_status", "provider_response_digest",
+    "terminal_observation_digest", "terminal_status", "acknowledged", "proof_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-adapter-cancellation-proof.v1"},
+    "adapter_id": {"type": "string", "minLength": 1},
+    "abi_version": {"const": "1.0"},
+    "task_id": {"type": "string", "minLength": 1},
+    "work_item_id": {"type": "string", "minLength": 1},
+    "attempt_id": {"type": "string", "minLength": 1},
+    "dispatch_id": {"type": "string", "minLength": 1},
+    "dispatch_generation": {"type": "integer", "minimum": 0},
+    "obligation": {"type": "string", "pattern": "^adapter_cancel:\\{"},
+    "runtime_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["thread_id", "run_id"],
+      "properties": {
+        "thread_id": {"type": "string", "minLength": 1},
+        "run_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "pre_cancel_status": {"type": "string", "minLength": 1},
+    "provider_response_digest": {"$ref": "#/$defs/digest"},
+    "terminal_observation_digest": {"$ref": "#/$defs/digest"},
+    "terminal_status": {"const": "interrupted"},
+    "acknowledged": {"const": true},
+    "proof_digest": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

@@ -8,6 +8,10 @@ import unittest
 from jsonschema import Draft202012Validator
 
 from valp_cli.protocol_kernel import (
+    CancellationScope,
+    ControlReason,
+    ControlState,
+    ControlStatus,
     Evidence,
     Event,
     EventKind,
@@ -26,6 +30,8 @@ from valp_cli.protocol_kernel import (
     ResultVariant,
     STATE_CONFLICT_ERROR,
     State,
+    Suspension,
+    SuspensionStatus,
     TaskStatus,
     Dependency,
     Attempt,
@@ -33,6 +39,7 @@ from valp_cli.protocol_kernel import (
     WorkItem,
     WorkItemRequirement,
     WorkItemStatus,
+    WakeReason,
     UNKNOWN_ENUM_ERROR,
     reduce,
     replay,
@@ -41,6 +48,404 @@ from valp_cli.protocol_kernel import (
 
 
 class ProtocolKernelTests(unittest.TestCase):
+    WAIT_POLICY_DIGEST = "sha256:" + "1" * 64
+    AUTHORITY_DIGEST = "sha256:" + "a" * 64
+
+    def authority(self, name="authority"):
+        evidence_id = Identity(IdentityKind.EVIDENCE, f"{name}-evidence")
+        return {
+            "authority_principal_id": Identity(IdentityKind.PRINCIPAL, f"{name}-principal"),
+            "authority_evidence_id": evidence_id,
+            "control_reason": ControlReason.USER_REQUESTED,
+        }, (Evidence(evidence_id, self.AUTHORITY_DIGEST),)
+
+    def make_executing_state(self, *, dependency_status=WorkItemStatus.COMPLETED):
+        installation = Identity(IdentityKind.INSTALLATION, "installation-suspension")
+        task = Identity(IdentityKind.TASK, "task-suspension")
+        dependency = Identity(IdentityKind.WORK_ITEM, "dependency-suspension")
+        state = State(
+            PROTOCOL_VERSION,
+            installation,
+            1,
+            task,
+            0,
+            TaskStatus.PUBLISHED,
+            work_items=(WorkItem(
+                task,
+                dependency,
+                WorkItemRequirement.REQUIRED,
+                status=dependency_status,
+            ),),
+        )
+        for index, kind in enumerate((
+            EventKind.ROUTING_VALIDATION_STARTED,
+            EventKind.ROUTING_VALIDATION_PASSED,
+            EventKind.DISPATCH_ACCEPTED,
+        )):
+            result = reduce(state, Event(
+                Identity(IdentityKind.EVENT, f"suspension-spine-{index}"),
+                installation,
+                1,
+                task,
+                kind,
+                state.revision,
+            ), ())
+            self.assertEqual(result.variant, ResultVariant.ACCEPTED)
+            state = result.accepted.state
+        return state, dependency
+
+    def suspension_event(self, state, dependency, *, event_id="suspend", epoch=0):
+        return Event(
+            event_id=Identity(IdentityKind.EVENT, event_id),
+            installation_id=state.installation_id,
+            leader_epoch=state.leader_epoch,
+            task_id=state.task_id,
+            kind=EventKind.SUSPENSION_STARTED,
+            expected_revision=state.revision,
+            suspension_id=Identity(IdentityKind.SUSPENSION, f"suspension-{epoch}"),
+            suspension_epoch=epoch,
+            wait_policy_id=Identity(IdentityKind.WAIT_POLICY, "wait-policy"),
+            wait_policy_digest=self.WAIT_POLICY_DIGEST,
+            required_work_item_ids=(dependency,),
+        )
+
+    def wake_event(self, state, *, event_id="wake", **changes):
+        suspension = state.suspension
+        values = {
+            "event_id": Identity(IdentityKind.EVENT, event_id),
+            "installation_id": state.installation_id,
+            "leader_epoch": state.leader_epoch,
+            "task_id": state.task_id,
+            "kind": EventKind.WAKE_ACCEPTED,
+            "expected_revision": state.revision,
+            "suspension_id": suspension.suspension_id,
+            "suspension_epoch": suspension.suspension_epoch,
+            "wait_policy_id": suspension.wait_policy_id,
+            "wait_policy_digest": suspension.wait_policy_digest,
+            "required_work_item_ids": suspension.required_work_item_ids,
+            "wake_id": Identity(IdentityKind.WAKE, "wake-0"),
+            "wake_reason": WakeReason.DEPENDENCY_READY,
+        }
+        values.update(changes)
+        return Event(**values)
+
+    def test_suspension_and_dependency_ready_wake_are_kernel_truth(self) -> None:
+        executing, dependency = self.make_executing_state()
+        started = reduce(executing, self.suspension_event(executing, dependency), ())
+
+        self.assertEqual(started.variant, ResultVariant.ACCEPTED)
+        waiting = started.accepted.state
+        self.assertEqual(waiting.status, TaskStatus.EXECUTING)
+        self.assertEqual(waiting.suspension.status, SuspensionStatus.WAITING)
+        self.assertEqual(waiting.suspension.required_work_item_ids, (dependency,))
+
+        accepted = reduce(waiting, self.wake_event(waiting), ())
+
+        self.assertEqual(accepted.variant, ResultVariant.ACCEPTED)
+        self.assertEqual(accepted.accepted.state.status, TaskStatus.EXECUTING)
+        self.assertEqual(accepted.accepted.state.suspension.status, SuspensionStatus.RESUMED)
+        self.assertEqual(accepted.accepted.state.suspension.accepted_wake_id,
+                         Identity(IdentityKind.WAKE, "wake-0"))
+        self.assertEqual(accepted.accepted.obligations, ())
+
+    def test_dependency_ready_wake_is_computed_from_work_item_truth(self) -> None:
+        executing, dependency = self.make_executing_state(
+            dependency_status=WorkItemStatus.RUNNING)
+        waiting = reduce(
+            executing, self.suspension_event(executing, dependency), ()
+        ).accepted.state
+
+        result = reduce(waiting, self.wake_event(waiting), ())
+
+        self.assertEqual(result.variant, ResultVariant.REJECTED)
+        self.assertEqual(result.rejected.error_code, STATE_CONFLICT_ERROR)
+        self.assertIs(result.rejected.state, waiting)
+
+    def test_wake_requires_exact_suspension_policy_frontier_and_cas_bindings(self) -> None:
+        executing, dependency = self.make_executing_state()
+        waiting = reduce(
+            executing, self.suspension_event(executing, dependency), ()
+        ).accepted.state
+        cases = {
+            "suspension": {"suspension_id": Identity(IdentityKind.SUSPENSION, "other")},
+            "epoch": {"suspension_epoch": 1},
+            "policy": {"wait_policy_digest": "sha256:" + "2" * 64},
+            "frontier": {"required_work_item_ids": ()},
+            "revision": {"expected_revision": waiting.revision - 1},
+            "task": {"task_id": Identity(IdentityKind.TASK, "other-task")},
+        }
+        for name, changes in cases.items():
+            with self.subTest(name=name):
+                result = reduce(waiting, self.wake_event(
+                    waiting, event_id=f"wake-{name}", **changes), ())
+                self.assertEqual(result.variant, ResultVariant.REJECTED)
+                self.assertEqual(result.rejected.error_code, STATE_CONFLICT_ERROR)
+
+    def test_next_suspension_requires_new_identity_and_exact_next_epoch(self) -> None:
+        executing, dependency = self.make_executing_state()
+        waiting = reduce(
+            executing, self.suspension_event(executing, dependency), ()
+        ).accepted.state
+        resumed = reduce(waiting, self.wake_event(waiting), ()).accepted.state
+
+        for name, suspension_id, epoch in (
+            ("same-id", waiting.suspension.suspension_id, 1),
+            ("stale-epoch", Identity(IdentityKind.SUSPENSION, "new"), 0),
+            ("skipped-epoch", Identity(IdentityKind.SUSPENSION, "new"), 2),
+        ):
+            with self.subTest(name=name):
+                event = self.suspension_event(
+                    resumed, dependency, event_id=f"start-{name}", epoch=epoch)
+                event = replace(event, suspension_id=suspension_id)
+                result = reduce(resumed, event, ())
+                self.assertEqual(result.variant, ResultVariant.REJECTED)
+                self.assertEqual(result.rejected.error_code, STATE_CONFLICT_ERROR)
+
+        accepted = reduce(
+            resumed, self.suspension_event(
+                resumed, dependency, event_id="suspend-next", epoch=1), ())
+        self.assertEqual(accepted.variant, ResultVariant.ACCEPTED)
+        self.assertEqual(accepted.accepted.state.suspension.suspension_epoch, 1)
+
+    def test_unknown_wake_reason_uses_closed_enum_error(self) -> None:
+        executing, dependency = self.make_executing_state()
+        waiting = reduce(
+            executing, self.suspension_event(executing, dependency), ()
+        ).accepted.state
+
+        result = reduce(
+            waiting, self.wake_event(waiting, wake_reason="future_reason"), ())
+
+        self.assertEqual(result.variant, ResultVariant.REJECTED)
+        self.assertEqual(result.rejected.error_code, UNKNOWN_ENUM_ERROR)
+
+    def test_waiting_blocks_normal_progress_and_resume_clears_suspension(self) -> None:
+        executing, dependency = self.make_executing_state()
+        waiting = reduce(
+            executing, self.suspension_event(executing, dependency), ()
+        ).accepted.state
+        work_completed = Event(
+            Identity(IdentityKind.EVENT, "work-after-wait"),
+            waiting.installation_id, waiting.leader_epoch, waiting.task_id,
+            EventKind.WORK_COMPLETED, waiting.revision,
+        )
+
+        blocked = reduce(waiting, work_completed, ())
+        self.assertEqual(blocked.variant, ResultVariant.REJECTED)
+        self.assertEqual(blocked.rejected.error_code, STATE_CONFLICT_ERROR)
+
+        resumed = reduce(waiting, self.wake_event(waiting), ()).accepted.state
+        progressed = reduce(resumed, replace(
+            work_completed,
+            event_id=Identity(IdentityKind.EVENT, "work-after-resume"),
+            expected_revision=resumed.revision,
+        ), ())
+        self.assertEqual(progressed.variant, ResultVariant.ACCEPTED)
+        self.assertEqual(progressed.accepted.state.status, TaskStatus.VERIFYING)
+        self.assertIsNone(progressed.accepted.state.suspension)
+
+    def test_explicit_terminal_event_clears_waiting_suspension(self) -> None:
+        for kind, target in (
+            (EventKind.TASK_BLOCKED, TaskStatus.BLOCKED),
+            (EventKind.TASK_FAILED, TaskStatus.FAILED),
+            (EventKind.TASK_CANCELLED, TaskStatus.CANCELLED),
+        ):
+            with self.subTest(kind=kind.value):
+                executing, dependency = self.make_executing_state()
+                waiting = reduce(
+                    executing, self.suspension_event(executing, dependency), ()
+                ).accepted.state
+                authority, evidence = self.authority(f"terminate-{kind.value}")
+                extra = {}
+                if kind == EventKind.TASK_CANCELLED:
+                    extra = {
+                        **authority,
+                        "cancellation_scope": CancellationScope.TASK,
+                        "suspension_epoch": waiting.suspension.suspension_epoch,
+                    }
+                result = reduce(waiting, Event(
+                    Identity(IdentityKind.EVENT, f"terminate-{kind.value}"),
+                    waiting.installation_id, waiting.leader_epoch, waiting.task_id,
+                    kind, waiting.revision, **extra,
+                ), evidence if kind == EventKind.TASK_CANCELLED else ())
+                self.assertEqual(result.variant, ResultVariant.ACCEPTED)
+                self.assertEqual(result.accepted.state.status, target)
+                self.assertIsNone(result.accepted.state.suspension)
+
+    def test_suspension_events_are_idempotent_and_replay_without_obligations(self) -> None:
+        installation = Identity(IdentityKind.INSTALLATION, "installation-replay-suspension")
+        task = Identity(IdentityKind.TASK, "task-replay-suspension")
+        dependency = Identity(IdentityKind.WORK_ITEM, "dependency-replay-suspension")
+        genesis = State(
+            PROTOCOL_VERSION, installation, 1, task, 0, TaskStatus.PUBLISHED,
+            work_items=(WorkItem(
+                task, dependency, WorkItemRequirement.REQUIRED,
+                status=WorkItemStatus.COMPLETED,
+            ),),
+        )
+        current = genesis
+        entries = []
+        for index, kind in enumerate((
+            EventKind.ROUTING_VALIDATION_STARTED,
+            EventKind.ROUTING_VALIDATION_PASSED,
+            EventKind.DISPATCH_ACCEPTED,
+        )):
+            event = Event(
+                Identity(IdentityKind.EVENT, f"replay-suspension-spine-{index}"),
+                installation, 1, task, kind, current.revision,
+            )
+            result = reduce(current, event, ())
+            entries.append(ReplayEntry(event, (), result))
+            current = result.accepted.state
+
+        start_event = self.suspension_event(current, dependency)
+        started = reduce(current, start_event, ())
+        duplicate = reduce(started.accepted.state, start_event, ())
+        self.assertEqual(duplicate.variant, ResultVariant.NO_OP)
+        wake_event = self.wake_event(started.accepted.state)
+        woken = reduce(started.accepted.state, wake_event, ())
+        entries.extend((
+            ReplayEntry(start_event, (), started),
+            ReplayEntry(wake_event, (), woken),
+        ))
+
+        replayed = replay(GenesisRoot(genesis), tuple(entries))
+
+        self.assertEqual(replayed.state, woken.accepted.state)
+        self.assertEqual(replayed.obligations, ())
+
+    def test_task_only_canonical_bytes_remain_unchanged_without_suspension(self) -> None:
+        installation = Identity(IdentityKind.INSTALLATION, "legacy-installation")
+        task = Identity(IdentityKind.TASK, "legacy-task")
+        state = State(PROTOCOL_VERSION, installation, 7, task, 0, TaskStatus.PUBLISHED)
+        canonical_bytes = json.dumps(
+            state.canonical(), sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        ) + "\n"
+        self.assertEqual(canonical_bytes,
+            '{"accepted_events":[],"installation_id":{"kind":"installation","value":"legacy-installation"},'
+            '"leader_epoch":7,"protocol_version":"0.3.0-draft","revision":0,'
+            '"schema_version":"valp-kernel-state.v1","status":"published",'
+            '"task_id":{"kind":"task","value":"legacy-task"}}\n')
+
+    def test_authorized_attempt_cancellation_emits_reconcilable_effect_and_fences_late_output(self) -> None:
+        installation = Identity(IdentityKind.INSTALLATION, "installation-cancel")
+        task = Identity(IdentityKind.TASK, "task-cancel")
+        work = Identity(IdentityKind.WORK_ITEM, "work-cancel")
+        attempt_id = Identity(IdentityKind.ATTEMPT, "attempt-cancel")
+        dispatch = Identity(IdentityKind.DISPATCH, "dispatch-cancel")
+        state = State(
+            PROTOCOL_VERSION, installation, 1, task, 0, TaskStatus.PUBLISHED,
+            work_items=(WorkItem(
+                task, work, WorkItemRequirement.REQUIRED, WorkItemStatus.RUNNING,
+                current_attempt=Attempt(
+                    task, work, attempt_id, dispatch, 4, AttemptStatus.RUNNING,
+                ),
+            ),),
+        )
+        authority, evidence = self.authority("cancel-attempt")
+        event = Event(
+            Identity(IdentityKind.EVENT, "cancel-attempt"), installation, 1, task,
+            EventKind.ATTEMPT_CANCELLED, 0,
+            work_item_id=work, attempt_id=attempt_id, dispatch_id=dispatch,
+            dispatch_generation=4, cancellation_scope=CancellationScope.ATTEMPT,
+            **authority,
+        )
+
+        missing_authority = reduce(state, event, ())
+        self.assertEqual(missing_authority.variant, ResultVariant.REJECTED)
+        accepted = reduce(state, event, evidence)
+        self.assertEqual(accepted.variant, ResultVariant.ACCEPTED)
+        self.assertEqual(
+            accepted.accepted.state.work_items[0].current_attempt.status,
+            AttemptStatus.CANCELLED,
+        )
+        self.assertEqual(len(accepted.accepted.obligations), 1)
+        self.assertTrue(accepted.accepted.obligations[0].startswith("adapter_cancel:"))
+        late = reduce(accepted.accepted.state, replace(
+            event,
+            event_id=Identity(IdentityKind.EVENT, "late-after-cancel"),
+            kind=EventKind.ATTEMPT_COMPLETED,
+            expected_revision=1,
+            authority_principal_id=None,
+            authority_evidence_id=None,
+            control_reason=None,
+            cancellation_scope=None,
+        ), ())
+        self.assertEqual(late.variant, ResultVariant.REJECTED)
+
+    def test_interrupt_freezes_progress_until_exact_authorized_resume(self) -> None:
+        executing, _ = self.make_executing_state()
+        authority, evidence = self.authority("interrupt")
+        interrupt_id = Identity(IdentityKind.INTERRUPT, "interrupt-1")
+        interrupted = reduce(executing, Event(
+            Identity(IdentityKind.EVENT, "interrupt-requested"),
+            executing.installation_id, executing.leader_epoch, executing.task_id,
+            EventKind.INTERRUPT_REQUESTED, executing.revision,
+            interrupt_id=interrupt_id, intent_version=0, **authority,
+        ), evidence)
+        self.assertEqual(interrupted.variant, ResultVariant.ACCEPTED)
+        frozen = interrupted.accepted.state
+        self.assertEqual(frozen.control.status, ControlStatus.INTERRUPTED)
+
+        progress = reduce(frozen, Event(
+            Identity(IdentityKind.EVENT, "progress-while-interrupted"),
+            frozen.installation_id, frozen.leader_epoch, frozen.task_id,
+            EventKind.WORK_COMPLETED, frozen.revision,
+        ), ())
+        self.assertEqual(progress.variant, ResultVariant.REJECTED)
+
+        resume_authority, resume_evidence = self.authority("resume")
+        resumed = reduce(frozen, Event(
+            Identity(IdentityKind.EVENT, "interrupt-resumed"),
+            frozen.installation_id, frozen.leader_epoch, frozen.task_id,
+            EventKind.INTERRUPT_RESUMED, frozen.revision,
+            interrupt_id=interrupt_id, intent_version=0, **resume_authority,
+        ), resume_evidence)
+        self.assertEqual(resumed.variant, ResultVariant.ACCEPTED)
+        self.assertEqual(resumed.accepted.state.control.status, ControlStatus.ACTIVE)
+
+    def test_redirect_versions_intent_cancels_invalidated_work_and_enters_fixing(self) -> None:
+        executing, dependency = self.make_executing_state(
+            dependency_status=WorkItemStatus.RUNNING
+        )
+        attempt_id = Identity(IdentityKind.ATTEMPT, "redirect-attempt")
+        dispatch = Identity(IdentityKind.DISPATCH, "redirect-dispatch")
+        executing = replace(executing, work_items=(replace(
+            executing.work_items[0],
+            current_attempt=Attempt(
+                executing.task_id, dependency, attempt_id, dispatch, 2,
+                AttemptStatus.RUNNING,
+            ),
+        ),))
+        authority, evidence = self.authority("redirect")
+        redirected = reduce(executing, Event(
+            Identity(IdentityKind.EVENT, "redirect-authorized"),
+            executing.installation_id, executing.leader_epoch, executing.task_id,
+            EventKind.REDIRECT_AUTHORIZED, executing.revision,
+            redirect_id=Identity(IdentityKind.REDIRECT, "redirect-1"),
+            intent_version=0, next_intent_version=1,
+            superseded_work_item_ids=(dependency,), **authority,
+        ), evidence)
+
+        self.assertEqual(redirected.variant, ResultVariant.ACCEPTED)
+        state = redirected.accepted.state
+        self.assertEqual(state.status, TaskStatus.FIXING)
+        self.assertEqual(state.control, ControlState(1, ControlStatus.ACTIVE, None))
+        self.assertEqual(state.work_items[0].status, WorkItemStatus.CANCELLED)
+        self.assertEqual(state.work_items[0].current_attempt.status, AttemptStatus.CANCELLED)
+        self.assertEqual(len(redirected.accepted.obligations), 1)
+
+        stale = reduce(state, Event(
+            Identity(IdentityKind.EVENT, "stale-redirect"),
+            state.installation_id, state.leader_epoch, state.task_id,
+            EventKind.REDIRECT_AUTHORIZED, state.revision,
+            redirect_id=Identity(IdentityKind.REDIRECT, "redirect-2"),
+            intent_version=0, next_intent_version=1,
+            superseded_work_item_ids=(), **authority,
+        ), evidence)
+        self.assertEqual(stale.variant, ResultVariant.REJECTED)
+
     def test_dependency_satisfied_work_item_becomes_eligible(self) -> None:
         installation = Identity(IdentityKind.INSTALLATION, "installation-work")
         task = Identity(IdentityKind.TASK, "task-work")
@@ -545,6 +950,35 @@ class ProtocolKernelTests(unittest.TestCase):
         ])
         self.machine_contract_validator().validate(canonical)
 
+    def test_dependency_has_canonical_machine_contract_object(self) -> None:
+        task = Identity(IdentityKind.TASK, "dependency-canonical-task")
+        prerequisite = Identity(IdentityKind.WORK_ITEM, "dependency-canonical-source")
+        target = Identity(IdentityKind.WORK_ITEM, "dependency-canonical-target")
+        state = State(
+            PROTOCOL_VERSION,
+            Identity(IdentityKind.INSTALLATION, "dependency-canonical-installation"),
+            1,
+            task,
+            0,
+            TaskStatus.PUBLISHED,
+            work_items=(
+                WorkItem(task, prerequisite, WorkItemRequirement.REQUIRED),
+                WorkItem(
+                    task,
+                    target,
+                    WorkItemRequirement.REQUIRED,
+                    dependencies=(Dependency(
+                        prerequisite, WorkItemRequirement.REQUIRED),),
+                ),
+            ),
+        )
+
+        self.assertEqual(state.canonical()["work_items"][1]["dependencies"], [{
+            "work_item_id": prerequisite.canonical(),
+            "requirement": "required",
+        }])
+        self.machine_contract_validator().validate(state.canonical())
+
     def test_work_event_schema_requires_its_exact_identity_fields(self) -> None:
         state, _ = self.make_transition()
         validator = self.machine_contract_validator()
@@ -616,6 +1050,8 @@ class ProtocolKernelTests(unittest.TestCase):
         attempt_id = None
         dispatch_id = None
         dispatch_generation = None
+        suspension_fields = {}
+        control_fields = {}
         if kind.value.startswith("work_item_"):
             work_item_id = Identity(IdentityKind.WORK_ITEM, f"work-{event_id}")
         if kind.value.startswith("attempt_"):
@@ -623,6 +1059,59 @@ class ProtocolKernelTests(unittest.TestCase):
             attempt_id = Identity(IdentityKind.ATTEMPT, f"attempt-{event_id}")
             dispatch_id = Identity(IdentityKind.DISPATCH, f"dispatch-{event_id}")
             dispatch_generation = 0
+        if kind in {EventKind.SUSPENSION_STARTED, EventKind.WAKE_ACCEPTED}:
+            suspension_fields = {
+                "suspension_id": Identity(IdentityKind.SUSPENSION, f"suspension-{event_id}"),
+                "suspension_epoch": 0,
+                "wait_policy_id": Identity(IdentityKind.WAIT_POLICY, f"policy-{event_id}"),
+                "wait_policy_digest": self.WAIT_POLICY_DIGEST,
+                "required_work_item_ids": (
+                    Identity(IdentityKind.WORK_ITEM, f"required-{event_id}"),
+                ),
+            }
+        if kind == EventKind.WAKE_ACCEPTED:
+            suspension_fields.update({
+                "wake_id": Identity(IdentityKind.WAKE, f"wake-{event_id}"),
+                "wake_reason": WakeReason.DEPENDENCY_READY,
+            })
+        if kind in {
+            EventKind.TASK_CANCELLED,
+            EventKind.WORK_ITEM_CANCELLED,
+            EventKind.ATTEMPT_CANCELLED,
+            EventKind.INTERRUPT_REQUESTED,
+            EventKind.INTERRUPT_RESUMED,
+            EventKind.REDIRECT_AUTHORIZED,
+        }:
+            control_fields = {
+                "authority_principal_id": Identity(
+                    IdentityKind.PRINCIPAL, f"principal-{event_id}"
+                ),
+                "authority_evidence_id": Identity(
+                    IdentityKind.EVIDENCE, f"evidence-{event_id}"
+                ),
+                "control_reason": ControlReason.USER_REQUESTED,
+            }
+        if kind in {
+            EventKind.TASK_CANCELLED,
+            EventKind.WORK_ITEM_CANCELLED,
+            EventKind.ATTEMPT_CANCELLED,
+        }:
+            control_fields["cancellation_scope"] = {
+                EventKind.TASK_CANCELLED: CancellationScope.TASK,
+                EventKind.WORK_ITEM_CANCELLED: CancellationScope.WORK_ITEM,
+                EventKind.ATTEMPT_CANCELLED: CancellationScope.ATTEMPT,
+            }[kind]
+        if kind in {EventKind.INTERRUPT_REQUESTED, EventKind.INTERRUPT_RESUMED}:
+            control_fields.update({
+                "interrupt_id": Identity(IdentityKind.INTERRUPT, f"interrupt-{event_id}"),
+                "intent_version": 0,
+            })
+        if kind == EventKind.REDIRECT_AUTHORIZED:
+            control_fields.update({
+                "redirect_id": Identity(IdentityKind.REDIRECT, f"redirect-{event_id}"),
+                "intent_version": 0,
+                "next_intent_version": 1,
+            })
         return Event(
             event_id=Identity(IdentityKind.EVENT, event_id),
             installation_id=state.installation_id,
@@ -634,7 +1123,14 @@ class ProtocolKernelTests(unittest.TestCase):
             attempt_id=attempt_id,
             dispatch_id=dispatch_id,
             dispatch_generation=dispatch_generation,
+            **suspension_fields,
+            **control_fields,
         )
+
+    def evidence_for_event(self, event: Event):
+        if event.authority_evidence_id is None:
+            return ()
+        return (Evidence(event.authority_evidence_id, self.AUTHORITY_DIGEST),)
 
     def state_reached_from_genesis(self, target: TaskStatus, prefix: str) -> State:
         initial, _ = self.make_transition()
@@ -706,7 +1202,8 @@ class ProtocolKernelTests(unittest.TestCase):
         }
         current = initial
         for index, kind in enumerate(paths[target]):
-            result = reduce(current, self.event_for(current, f"{prefix}-reach-{index}", kind), ())
+            event = self.event_for(current, f"{prefix}-reach-{index}", kind)
+            result = reduce(current, event, self.evidence_for_event(event))
             self.assertEqual(result.variant, ResultVariant.ACCEPTED)
             current = result.accepted.state
         self.assertEqual(current.status, target)
@@ -749,7 +1246,8 @@ class ProtocolKernelTests(unittest.TestCase):
         for index, (source, kind, target) in enumerate(explicit_edges + terminal_edges):
             with self.subTest(source=source.value, kind=kind.value):
                 state = self.state_reached_from_genesis(source, f"edge-{index}")
-                result = reduce(state, self.event_for(state, f"edge-{index}", kind), ())
+                event = self.event_for(state, f"edge-{index}", kind)
+                result = reduce(state, event, self.evidence_for_event(event))
                 self.assertEqual(result.variant, ResultVariant.ACCEPTED)
                 self.assertEqual(result.accepted.state.status, target)
                 self.assertEqual(result.accepted.state.revision, state.revision + 1)
@@ -767,6 +1265,8 @@ class ProtocolKernelTests(unittest.TestCase):
                 "attempt_completed", "attempt_failed", "attempt_cancelled", "attempt_fenced",
                 "work_item_partial", "work_item_degraded", "work_item_blocked",
                 "work_item_failed", "work_item_cancelled", "work_item_skipped",
+                "suspension_started", "wake_accepted", "interrupt_requested",
+                "interrupt_resumed", "redirect_authorized",
             },
         )
         state, _ = self.make_transition()
@@ -789,7 +1289,8 @@ class ProtocolKernelTests(unittest.TestCase):
         for index, (status, kind) in enumerate(cases):
             with self.subTest(status=status.value, kind=kind.value):
                 state = self.state_reached_from_genesis(status, f"illegal-{index}")
-                result = reduce(state, self.event_for(state, f"illegal-{index}", kind), ())
+                event = self.event_for(state, f"illegal-{index}", kind)
+                result = reduce(state, event, self.evidence_for_event(event))
                 self.assertEqual(result.variant, ResultVariant.REJECTED)
                 self.assertEqual(result.rejected.error_code, STATE_CONFLICT_ERROR)
                 self.assertIs(result.rejected.state, state)

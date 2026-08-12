@@ -40,7 +40,11 @@ LEGAL_TRANSITIONS = {
     "uninitialized": {"bootstrapping"},
     "bootstrapping": {"discovering_leader_candidates", "blocked"},
     "discovering_leader_candidates": {"awaiting_leader_selection", "blocked"},
-    "awaiting_leader_selection": {"awaiting_leader_start", "blocked"},
+    "awaiting_leader_selection": {
+        "discovering_leader_candidates",
+        "awaiting_leader_start",
+        "blocked",
+    },
     "awaiting_leader_start": {"activating_leader", "blocked"},
     "activating_leader": {"active", "blocked"},
     "active": {"restarting_leader", "reconciling_capabilities", "migrating", "rotating_leader", "degraded", "blocked", "retired"},
@@ -573,7 +577,8 @@ class InstallationCore:
 
     def discover_candidates(self, passports: Iterable[dict[str, Any]] | None = None) -> dict[str, Any]:
         state = self.state()
-        if state["status"] == "bootstrapping":
+        if state["status"] in {"bootstrapping", "awaiting_leader_selection"}:
+            refresh = state["status"] == "awaiting_leader_selection"
             self._transition(
                 event_kind="bootstrap_discovery_started",
                 message_kind="command.bootstrap.discover_candidates",
@@ -583,7 +588,11 @@ class InstallationCore:
                 expected_revision=state["revision"],
                 payload={"read_only": True},
                 target_status="discovering_leader_candidates",
-                idempotency_key="bootstrap-discovery-start",
+                idempotency_key=(
+                    f"bootstrap-discovery-refresh-{state['revision']}"
+                    if refresh
+                    else "bootstrap-discovery-start"
+                ),
             )
             state = self.state()
         if state["status"] != "discovering_leader_candidates":
@@ -662,7 +671,11 @@ class InstallationCore:
             expected_revision=state["revision"],
             payload={"candidate_count": len(candidates), "candidate_ref": "leader-candidates.json"},
             target_status="awaiting_leader_selection",
-            idempotency_key="bootstrap-discovery-complete",
+            idempotency_key=(
+                "bootstrap-discovery-complete"
+                if state["revision"] == 2
+                else f"bootstrap-discovery-complete-{state['revision']}"
+            ),
         )
         return dict(result, candidates=candidates)
 
@@ -813,8 +826,6 @@ class InstallationCore:
         blocking_event = events[-1] if events else None
         if (
             not isinstance(blocking_event, dict)
-            or blocking_event.get("event_id") != state.get("last_event_id")
-            or blocking_event.get("event_digest") != state.get("last_event_digest")
             or blocking_event.get("event_digest") != digest_without(blocking_event, "event_digest")
             or blocking_event.get("event_kind") != "leader_activation_failed"
             or blocking_event.get("leader_epoch") != 0
@@ -888,6 +899,7 @@ class InstallationCore:
                 + failed_receipt["receipt_digest"].removeprefix("sha256:")
                 + "-"
                 + hashlib.sha256(approved_session_id.encode("utf-8")).hexdigest()
+                + f"-r{state['revision']}"
             ),
         )
         recovery_approval = {
@@ -944,7 +956,10 @@ class InstallationCore:
                 "proposed_generation": generation,
             },
             target_status="restarting_leader",
-            idempotency_key=f"leader-restart-{binding['binding_digest']}-{proposed_epoch}",
+            idempotency_key=(
+                f"leader-restart-{binding['binding_digest']}-{proposed_epoch}"
+                f"-r{state['revision']}"
+            ),
         )
         return {
             "selected_leader": selected,
@@ -953,6 +968,39 @@ class InstallationCore:
             "generation": generation,
             "restart": started,
         }
+
+    def restore_active_leader_after_failed_restart(self) -> dict[str, Any]:
+        """Restore the prior healthy binding after fail-closed restart provisioning."""
+        state = self.state()
+        binding = read_json(self._path("leader-session-binding.json"))
+        events = read_jsonl(self._path("events.jsonl"))
+        latest = events[-1] if events else {}
+        payload = latest.get("payload") if isinstance(latest.get("payload"), dict) else {}
+        if (
+            state["status"] != "blocked"
+            or state.get("active_blockers") != ["leader_activation_failed"]
+            or latest.get("event_kind") != "leader_activation_failed"
+            or payload.get("operation") != "restart"
+            or not isinstance(binding, dict)
+            or binding.get("status") != "active"
+            or binding.get("binding_digest") != digest_without(binding, "binding_digest")
+            or binding.get("leader_epoch") != state.get("active_leader_epoch")
+        ):
+            raise ControlPlaneError(
+                "VALP-E-STATE-TRANSITION",
+                "Failed Leader restart cannot restore an unproven prior binding",
+            )
+        return self._transition(
+            event_kind="leader_restart_rolled_back",
+            message_kind="result.leader.restart_rolled_back",
+            principal_id="reference-runtime-adapter",
+            principal_kind="runtime-adapter",
+            epoch=state["active_leader_epoch"],
+            expected_revision=state["revision"],
+            payload={"binding_digest": binding["binding_digest"]},
+            target_status="active",
+            idempotency_key=f"leader-restart-rollback-{latest['event_id']}",
+        )
 
     def fail_leader_activation(
         self,
@@ -1046,7 +1094,7 @@ class InstallationCore:
             target_status="blocked",
             idempotency_key=(
                 f"leader-activation-failed-{operation}-{selected['selection_id']}-"
-                f"{proposed_epoch}-{generation}"
+                f"{proposed_epoch}-{generation}-r{state['revision']}"
             ),
         )
         receipt = {

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:valp:schema:herdr-terminal-observation:v1",
+  "title": "VALP HERDR Terminal Observation",
+  "type": "object",
+  "required": ["schema_version", "runtime", "proof_class", "task_id", "agent", "terminal_id", "pane_id", "submission_state_change_seq", "state_change_seq", "status", "acknowledged"],
+  "properties": {
+    "schema_version": {"const": "valp-herdr-terminal-observation.v1"},
+    "runtime": {"const": "HERDR"},
+    "proof_class": {"const": "agent_terminal_observation"},
+    "task_id": {"type": "string", "minLength": 1},
+    "agent": {"type": "string", "minLength": 1},
+    "terminal_id": {"type": "string", "minLength": 1},
+    "pane_id": {"type": "string", "minLength": 1},
+    "submission_state_change_seq": {"type": "integer", "minimum": 0},
+    "state_change_seq": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["completed", "blocked"]},
+    "acknowledged": {"const": true},
+    "failure_code": {"type": "string", "minLength": 1}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "blocked"}}, "required": ["status"]},
+      "then": {"required": ["failure_code"]},
+      "else": {"not": {"required": ["failure_code"]}}
+    }
+  ],
+  "additionalProperties": false
+}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import subprocess
 import sys
@@ -8,13 +10,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from jsonschema import Draft202012Validator
+
 from valp_cli.audit import FAIL, PASS, TaskAudit
+from valp_cli.cli import main
 from valp_cli.continuation import (
     ContinuationError,
     ContinuationStore,
+    HerdrCoordinatorContinuationAdapter,
     HermesCliAdapter,
     HermesRuntimeControlAdapter,
     SafePointQueue,
+    SubprocessRuntimeControlAdapter,
     build_envelope,
     capability_declaration,
     file_digest,
@@ -94,6 +101,72 @@ class ContinuationStoreTests(unittest.TestCase):
             self.assertEqual([event["event"] for event in store.events()], list(("resume_pending", "resume_received", "digest_verified", "resume_accepted", "continuation_started", "resume_consumed")))
             persisted = root / "continuations" / ("b" * 64) / "invocation-receipt.json"
             self.assertEqual(json.loads(persisted.read_text()), receipt)
+
+    def test_herdr_coordinator_continuation_invokes_once_and_completes_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.setup_store(root)
+            payload = {"wake": "ready"}
+            envelope = self.envelope(
+                root,
+                payload,
+                adapter="herdr-coordinator-continuation",
+                provider="herdr",
+                coordinator="codex",
+            )
+            requests: list[dict[str, object]] = []
+
+            def continue_coordinator(request: dict[str, object]) -> dict[str, object]:
+                requests.append(request)
+                return {
+                    "schema_version": "valp-herdr-coordinator-continuation-response.v1",
+                    "status": "consumed",
+                    "receipt": self.receipt(
+                        envelope,
+                        adapter={"id": "herdr-coordinator-continuation", "version": "1"},
+                        provider={
+                            "id": "herdr",
+                            "invocation_id": "herdr-invocation-1",
+                            "turn_id": "herdr-turn-1",
+                        },
+                    ),
+                }
+
+            adapter = HerdrCoordinatorContinuationAdapter(
+                runtime_session_id="herdr-session-1",
+                provider_id="herdr",
+                coordinator_agent="codex",
+                continue_coordinator=continue_coordinator,
+                identity_evidence_ref="evidence/provider-identity.json",
+                duplicate_suppression_evidence_ref="evidence/provider-dedup.json",
+            )
+            store.register_capability(adapter.capability())
+            store.pending(envelope, payload)
+            store.receive(envelope, payload)
+
+            first = store.consume_with_adapter(envelope, payload, adapter)
+            replay = store.consume_with_adapter(envelope, payload, adapter)
+
+            self.assertEqual(first, replay)
+            self.assertEqual(len(requests), 1)
+            self.assertEqual(requests[0]["method"], "coordinator.continue")
+            self.assertEqual(requests[0]["session_id"], "herdr-session-1")
+            self.assertEqual(requests[0]["channel"], {
+                "kind": "runtime_control",
+                "user_input_allowed": False,
+                "raw_worker_output_allowed": False,
+            })
+            self.assertEqual(
+                [event["event"] for event in store.events()],
+                [
+                    "resume_pending",
+                    "resume_received",
+                    "digest_verified",
+                    "resume_accepted",
+                    "continuation_started",
+                    "resume_consumed",
+                ],
+            )
 
     def test_receive_cannot_bypass_persisted_pending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -295,6 +368,159 @@ print(json.dumps(store.consume(envelope, invoke), sort_keys=True))
             self.assertEqual(
                 [event["event"] for event in restarted.events()],
                 list(("resume_pending", "resume_received", "digest_verified", "resume_accepted", "continuation_started", "resume_consumed")),
+            )
+
+    def test_committed_receipt_recovers_missing_terminal_events_without_reinvoke(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store, envelope = self.prepare(root, {"wake": "ready"})
+            store.claim(envelope)
+            original_append = store._append
+
+            def crash_before_started(event: str, value: dict, **extra: object) -> dict:
+                if event == "continuation_started":
+                    raise OSError("injected process crash")
+                return original_append(event, value, **extra)
+
+            with patch.object(store, "_append", side_effect=crash_before_started):
+                with self.assertRaisesRegex(OSError, "injected process crash"):
+                    store.consume(envelope, lambda: self.receipt(envelope))
+            receipt_path = root / "continuations" / ("b" * 64) / "invocation-receipt.json"
+            self.assertTrue(receipt_path.is_file())
+
+            restarted = ContinuationStore(root, "TASK-1")
+            recovered = restarted.consume(
+                envelope,
+                lambda: self.fail("provider must not be reinvoked"),
+            )
+            self.assertEqual(recovered, self.receipt(envelope))
+            self.assertEqual(
+                [event["event"] for event in restarted.events()],
+                list(("resume_pending", "resume_received", "digest_verified", "resume_accepted", "continuation_started", "resume_consumed")),
+            )
+
+    def test_external_subprocess_provider_is_invoked_once_and_reconciles_after_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            root = workspace / ".herdr-loop" / "tasks" / "TASK-1"
+            root.mkdir(parents=True)
+            store = self.setup_store(root)
+            payload = {"wake": "ready"}
+            envelope = self.envelope(
+                root, payload, adapter="subprocess-runtime-control",
+                provider="local-provider", coordinator="coordinator",
+            )
+            provider_root = root / "provider-state"
+            script = root / "provider.py"
+            script.write_text('''
+import json
+from pathlib import Path
+import sys
+
+provider_root = Path(sys.argv[1])
+provider_root.mkdir(parents=True, exist_ok=True)
+request = json.load(sys.stdin)
+params = request["params"]
+envelope = params["envelope"]
+state_path = provider_root / "receipt.json"
+calls_path = provider_root / "calls.jsonl"
+with calls_path.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps({"method": request["method"], "key": params["idempotency_key"]}) + "\\n")
+if request["method"] == "runtime_control.submit":
+    receipt = {
+        "schema_version": "valp-continuation-invocation-receipt.v1",
+        "task_id": envelope["task_id"],
+        "suspension_id": envelope["suspension_id"],
+        "suspension_epoch": envelope["suspension_epoch"],
+        "wake_id": envelope["wake_id"],
+        "continuation_generation": envelope["continuation_generation"],
+        "idempotency_key": params["idempotency_key"],
+        "payload_digest": envelope["payload_digest"],
+        "adapter": {"id": "subprocess-runtime-control", "version": "1"},
+        "provider": {"id": "local-provider", "invocation_id": "local-invocation-1", "turn_id": "local-turn-1"},
+        "durable_boundary_ref": envelope["target"]["durable_boundary_ref"],
+        "identity_evidence_ref": "evidence/provider-identity.json",
+        "duplicate_suppression_ref": "evidence/provider-dedup.json",
+        "started_at": "2026-08-05T00:00:00Z",
+        "consumed_at": "2026-08-05T00:00:01Z",
+        "result": "consumed",
+    }
+    state_path.write_text(json.dumps(receipt), encoding="utf-8")
+else:
+    receipt = json.loads(state_path.read_text(encoding="utf-8"))
+print(json.dumps({"result": {"status": "consumed", "receipt": receipt}}))
+''', encoding="utf-8")
+            adapter = SubprocessRuntimeControlAdapter(
+                command=(sys.executable, str(script), str(provider_root)),
+                provider_id="local-provider", coordinator_surface="coordinator",
+                identity_evidence_ref="evidence/provider-identity.json",
+                duplicate_suppression_evidence_ref="evidence/provider-dedup.json",
+                timeout=5,
+            )
+            store.register_capability(adapter.capability())
+            store.pending(envelope, payload)
+            store.receive(envelope, payload)
+
+            command = [
+                "adapter", "continuation", "TASK-1",
+                "--workspace", str(workspace),
+                "--command-json", json.dumps(list(adapter.command)),
+                "--provider-id", "local-provider",
+                "--coordinator-surface", "coordinator",
+                "--identity-evidence-ref", "evidence/provider-identity.json",
+                "--duplicate-suppression-ref", "evidence/provider-dedup.json",
+                "--json",
+            ]
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(command), 0)
+            self.assertEqual(json.loads(output.getvalue())["status"], "dry_run")
+            self.assertFalse((provider_root / "calls.jsonl").exists())
+
+            def consumed_then_crash() -> dict:
+                adapter.invoke(envelope, payload)
+                raise OSError("crash after provider consumption")
+
+            with self.assertRaisesRegex(OSError, "crash after provider consumption"):
+                store.consume(
+                    envelope,
+                    consumed_then_crash,
+                    reconcile=lambda: adapter.reconcile(envelope, payload),
+                )
+            intent_path = root / "continuations" / ("b" * 64) / "invocation.inflight"
+            intent_schema = json.loads((
+                Path(__file__).parents[1]
+                / "schemas/continuation-invocation-intent.schema.json"
+            ).read_text(encoding="utf-8"))
+            Draft202012Validator(intent_schema).validate(
+                json.loads(intent_path.read_text(encoding="utf-8"))
+            )
+            self.assertEqual(
+                TaskAudit(root, strict=True).check_continuation_ledger().status,
+                PASS,
+            )
+            receipt = ContinuationStore(root, "TASK-1").consume_with_adapter(
+                envelope, payload, adapter
+            )
+            replay = ContinuationStore(root, "TASK-1").consume_with_adapter(
+                envelope, payload, adapter
+            )
+            self.assertEqual(receipt, replay)
+            self.assertEqual(
+                TaskAudit(root, strict=True).check_continuation_ledger().status,
+                PASS,
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main([*command, "--approve"]), 0)
+            self.assertEqual(json.loads(output.getvalue())["status"], "consumed")
+            calls = [
+                json.loads(line)
+                for line in (provider_root / "calls.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(
+                [item["method"] for item in calls],
+                ["runtime_control.submit", "runtime_control.status"],
             )
 
     def test_unknown_locking_platform_fails_closed(self) -> None:

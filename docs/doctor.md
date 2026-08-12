@@ -57,6 +57,11 @@ live_callable   -> current runtime/session probe
 task_verified   -> passed task history bound to this exact model and session
 ```
 
+The commissioned set is the union of registry entries, local overlay profiles,
+and runtime-discovered surfaces. Doctor must not silently omit an overlay-only
+or live runtime surface merely because the static registry is stale. Facts that
+the discovering source did not prove remain `unknown`.
+
 Each passport records:
 
 ```text

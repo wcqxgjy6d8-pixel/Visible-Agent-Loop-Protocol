@@ -22,8 +22,10 @@ Start here:
 - [Visible dispatch process proof](case-studies/visible-dispatch-process-proof.md)
 - [Failure gallery](failure-gallery.md)
 - [Correction cycle evidence](correction-cycle.md)
+- [Cost governance](cost-governance.md)
 - [Runtime adapter checklist](adapter-checklist.md)
 - [Runtime adapters](runtime-adapters.md)
+- [Layered runtime promotion readiness](layered-runtime-promotion-readiness.md)
 - [Community](community.md)
 - [Maintainer governance](maintainer-governance.md)
 - [Support](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SUPPORT.md)
@@ -47,7 +49,7 @@ and External Runtime And Ecosystem. The
 defines the normative ownership and proof boundaries; [RFC 0002](rfcs/0002-layered-architecture.md)
 records public D01-D19 traceability and the staged implementation boundary.
 
-Pure Protocol Kernel Slice 1 implements the closed Layer 02 Task transition
+Pure Protocol Kernel slices implement the closed Layer 02 Task transition
 graph across its 13 truth statuses, with typed Events, terminal-state closure,
 canonical identities, closed enums, State and `accepted` / `no_op` /
 `rejected` Result contract, deterministic duplicate behavior, and ordered
@@ -60,20 +62,29 @@ recomputes an ordered suffix through the same reducer while emitting zero
 obligations. The machine contract and negative tests reject bare State roots,
 impossible revision/history combinations, malformed or mismatched checkpoint
 authentication, identity drift, suffix gaps/reordering/duplicates, and tampered
-Results. This remains Layer 02 local proof, not checkpoint storage, effect
-reconciliation, wait/wake, Adapter continuation, or runtime recovery. The repository also
+Results. A task-scoped Reference System `KernelStore` now adds canonical journal
+and authenticated checkpoint persistence with strict restart recovery. The repository also
 implements a pure v3 receipt-write reducer and digest-bound legacy/v2 migration
 projection fixtures. A file-backed Reference System store performs cooperative
 inter-process locking, canonical-prefix replay, CAS, atomic replacement, and
 file plus directory synchronization. Its current evidence covers process-crash
 recovery on the tested macOS/APFS host; it does not establish sudden-power-loss,
-hostile-writer, or Windows parity. LangGraph is the only bounded Adapter path
-that uses this canonical v3 store end to end. HERDR, Queue, Manual Mode, and
-workflow observation/recovery remain legacy/v2 compatibility-only paths. This
-remains a bounded Kernel and Reference System slice, not the complete Protocol
-Kernel or complete third-layer implementation. No broader Adapter conformance,
-cross-platform parity, or release support is claimed. The stable public release
-remains `0.2.0`.
+hostile-writer, or Windows parity. LangGraph, atomic HERDR, the file Queue, and
+Manual Mode now have explicit task-local ABI 1.0 and canonical v3 adoption.
+Queue terminal observation requires a real worker/run record, and Manual
+revocation/adjudication is append-only and fail-closed. Adopted runtime waits
+are bound to the durable Kernel graph across multiple dependency frontiers.
+The Kernel control machine also implements authority-bound cancellation,
+Interrupt/resume, and versioned Redirect. Cancellation of submitted or running
+work creates deterministic Adapter obligations, while a task-local,
+digest-chained effect ledger records pending, fulfilled, or blocked outcomes
+against real proof without replaying effects.
+This remains a bounded Kernel and Reference System implementation, not proof of
+every external runtime, platform, or production deployment. No cross-platform
+parity or release support is claimed. The stable public release remains
+`0.2.0`. See the [promotion-readiness matrix](layered-runtime-promotion-readiness.md)
+for the exact boundary between local implementation evidence and live or
+cross-platform gates.
 
 ## v0.3 Draft Implementation
 

@@ -3126,7 +3126,7 @@ model, tool, or network, allocate external identity, inspect a UI, or perform a
 side effect. Time, identity, runtime status, content digests, and other
 observations enter only as typed Events and Evidence.
 
-For the `0.3.0-draft` Kernel machine contracts, canonical JSON bytes are UTF-8
+For the `0.3.0` Kernel machine contracts, canonical JSON bytes are UTF-8
 JSON with object keys sorted lexicographically, no insignificant whitespace,
 protocol arrays kept in their declared order, set-like Evidence collections
 sorted by each Evidence canonical byte representation, non-ASCII characters

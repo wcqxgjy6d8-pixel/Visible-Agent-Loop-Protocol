@@ -196,7 +196,7 @@
       ],
       "properties": {
         "schema_version": {"const": "valp-kernel-state.v1"},
-        "protocol_version": {"const": "0.3.0-draft"},
+        "protocol_version": {"const": "0.3.0"},
         "installation_id": {"$ref": "#/$defs/installationIdentity"},
         "leader_epoch": {"type": "integer", "minimum": 0},
         "task_id": {"$ref": "#/$defs/taskIdentity"},

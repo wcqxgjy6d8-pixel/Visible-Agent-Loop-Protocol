@@ -1,6 +1,6 @@
 # RFC 0002: VALP Layered Architecture
 
-Status: Draft; based on frozen Blueprint 0001 layered-architecture semantics
+Status: Accepted for VALP `0.3.0`; based on frozen Blueprint 0001 layered-architecture semantics
 
 Target: VALP 0.3 design line
 
@@ -35,10 +35,10 @@ and runtime proof belong in separate acceptance artifacts.
 
 ## 2. Status And Normative Language
 
-This RFC is a draft and does not change the stable `0.2.0` protocol or release.
-Selected `0.3.0-draft` schemas and Reference System CLI slices are incorporated
-in the current candidate through reviewed changes; they remain non-stable and
-do not imply complete Kernel, Adapter, platform, or production conformance.
+This RFC is accepted as part of the stable `0.3.0` protocol and reference CLI.
+Its schemas and Reference System slices are incorporated through reviewed
+changes. Acceptance does not imply complete Kernel, Adapter, platform, or
+production conformance beyond the evidence in the project status matrix.
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are normative.
 
@@ -174,7 +174,7 @@ network, allocate an external identity, inspect a UI, or perform a side effect.
 Time, runtime status, content digests, and identity observations enter as typed
 Events and Evidence created by the System or Adapter.
 
-For the `0.3.0-draft` Kernel contracts, canonical JSON bytes use UTF-8, sorted
+For the `0.3.0` Kernel contracts, canonical JSON bytes use UTF-8, sorted
 object keys, no insignificant whitespace, declared protocol array order,
 Evidence-set ordering by each Evidence canonical byte representation, unescaped
 non-ASCII UTF-8, no non-finite numbers, and one trailing LF byte. Digests are
@@ -608,14 +608,14 @@ provider hosting remain outside this local machine-contract proof.
 
 ## 19. Acceptance Criteria
 
-This RFC is ready for implementation only when:
+This RFC's implementation acceptance criteria are:
 
 - all five resolved decisions remain visibly closed;
 - an independent Reviewer checks the exact RFC digest;
 - core entities, `ReplayEntry`, legal replay roots, and transition rules have
-  machine-contract drafts;
+  machine contracts;
 - State, status enums, all three Result variants, and the four-dimensional
-  evaluation boundary have machine-contract drafts and negative tests;
+  evaluation boundary have machine contracts and negative tests;
 - replay tests prove reducer re-execution, complete canonical Result equality,
   zero re-emitted obligations, and rejection of malformed genesis/checkpoint
   roots and impossible revision/history combinations;

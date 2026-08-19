@@ -324,7 +324,7 @@ class ProtocolKernelTests(unittest.TestCase):
         ) + "\n"
         self.assertEqual(canonical_bytes,
             '{"accepted_events":[],"installation_id":{"kind":"installation","value":"legacy-installation"},'
-            '"leader_epoch":7,"protocol_version":"0.3.0-draft","revision":0,'
+            '"leader_epoch":7,"protocol_version":"0.3.0","revision":0,'
             '"schema_version":"valp-kernel-state.v1","status":"published",'
             '"task_id":{"kind":"task","value":"legacy-task"}}\n')
 
@@ -910,8 +910,8 @@ class ProtocolKernelTests(unittest.TestCase):
 
         self.assertEqual(
             root.prefix_digest,
-            "sha256:96debe3c80c80eda97052e4277458381"
-            "f9f40db274a695bea563de1f1fd8321a",
+            "sha256:8004145c263658ae96a9113a1a2dae17"
+            "10178d60072df4b3b17d7ebdeeb5b461",
         )
 
     def test_task_only_state_canonical_form_remains_compatible(self) -> None:

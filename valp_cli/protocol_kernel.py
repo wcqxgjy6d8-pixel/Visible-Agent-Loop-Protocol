@@ -9,7 +9,7 @@ import json
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple, Union
 
 
-PROTOCOL_VERSION = "0.3.0-draft"
+PROTOCOL_VERSION = "0.3.0"
 
 
 class IdentityKind(str, Enum):

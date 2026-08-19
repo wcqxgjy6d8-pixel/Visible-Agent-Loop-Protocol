@@ -104,7 +104,7 @@ failed or pending work item into success.
 - `tests/test_valp_workflow.py`: barrier, identity, duplicate, concurrency, and
   recovery cases.
 - `tests/test_valp_audit.py`: deterministic-wake and provenance gates.
-- `docs/rfcs/0001-v0.3-installation-control-plane.md`: proposed target only.
+- `docs/rfcs/0001-v0.3-installation-control-plane.md`: accepted `0.3.0` protocol contract.
 
 ## Update Rule
 

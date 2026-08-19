@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+- Promotes the installation control plane, layered protocol kernel, adapter
+  boundary, evidence contracts, and reference CLI to the stable `0.3.0`
+  protocol line while keeping runtime, platform, and production claims scoped
+  to concrete evidence.
 
 - Redesigns Doctor and routing authority: Doctor commissions per-surface/session
   capability passports, the user selects the Leader, the Leader declares task

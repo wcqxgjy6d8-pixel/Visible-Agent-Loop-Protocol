@@ -13,7 +13,7 @@ Start here:
 - [中文注解](zh-CN/README.md)
 - [Protocol specification](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SPEC.md)
 - [RFC 0002: layered architecture and D01-D19 traceability](rfcs/0002-layered-architecture.md)
-- [v0.3 draft installation control plane](v0.3-implementation.md) and RFC
+- [v0.3.0 installation control plane](v0.3-implementation.md) and RFC
 - [Twelve-layer N/I/P audit matrix](twelve-layer-nip-matrix.md)
 - [Quickstart](quickstart.md)
 - [Compound learning loop](compound-learning-loop.md)
@@ -35,7 +35,7 @@ completion requires automation policy, dispatch receipts, expected evidence,
 verification/review, approval gates when needed, final synthesis, and
 task-local learning feedback that points to proof.
 
-VALP is currently `0.2.0`. It is an open protocol release plus a reference CLI,
+VALP is currently `0.3.0`. It is an open protocol release plus a reference CLI,
 not a hosted production platform.
 
 ## Protocol 0.3 Layered Architecture
@@ -81,32 +81,30 @@ digest-chained effect ledger records pending, fulfilled, or blocked outcomes
 against real proof without replaying effects.
 This remains a bounded Kernel and Reference System implementation, not proof of
 every external runtime, platform, or production deployment. No cross-platform
-parity or release support is claimed. The stable public release remains
-`0.2.0`. See the [promotion-readiness matrix](layered-runtime-promotion-readiness.md)
+parity or release support is claimed. The stable protocol and reference CLI are
+`0.3.0`. See the [promotion-readiness matrix](layered-runtime-promotion-readiness.md)
 for the exact boundary between local implementation evidence and live or
 cross-platform gates.
 
-## v0.3 Draft Implementation
+## v0.3.0 Protocol And Reference CLI
 
-The current stable release remains `0.2.0`. The
+The stable protocol and reference CLI are `0.3.0`. The
 [v0.3 installation control plane RFC](rfcs/0001-v0.3-installation-control-plane.md)
-targets `0.3.0-draft`. RFC 0001 remains incomplete and is not stable as a
-whole. Its deterministic-wake and installation-core slices are implemented and
-tested in the reference CLI, schemas, and conformance runner; the remaining
-live-runtime work does not change current release or runtime-support claims.
+is accepted and incorporated into the reference CLI, schemas, and conformance
+runner. Remaining live-runtime work does not broaden the release's explicitly
+scoped adapter, platform, or production-support claims.
 
-The draft implementation extends VALP's evidence discipline from individual tasks to the
+The `0.3.0` implementation extends VALP's evidence discipline from individual tasks to the
 installation control plane: the user selects an Installation Leader;
 capability truth remains separated into declared, present, callable, and
 task-verified layers; messages, state, claims, failures, and review gain strict
 machine contracts; and provider plugins stay outside the deterministic core.
 
-The first real non-HERDR end-to-end proof now exists for the local LangGraph API
-development runtime. Stable `0.3.0` still requires the remaining implementation,
-schema and migration work, negative/recovery conformance, and stronger restart
-and continuation proof. See the [project status matrix](project-status.md) for
-what is verified today and the [RFC](rfcs/0001-v0.3-installation-control-plane.md)
-for the proposed target.
+The first real non-HERDR end-to-end proof exists for the local LangGraph API
+development runtime. That proof remains scoped to the tested adapter/runtime
+pair. See the [project status matrix](project-status.md) for what is verified
+today and the [RFC](rfcs/0001-v0.3-installation-control-plane.md) for the
+accepted protocol contract.
 
 First useful actions:
 

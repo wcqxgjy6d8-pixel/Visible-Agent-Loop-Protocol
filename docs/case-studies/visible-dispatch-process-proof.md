@@ -1,27 +1,17 @@
-# Visible Dispatch Process Proof
+# Visible Dispatch Process Evidence
 
-> Historical process evidence from 2026-07-06. This clip predates the
-> Doctor/Leader authority contract. It proves receipt and fail-closed dispatch
-> behavior only; its automatic Agent-selection flow is legacy behavior and is
-> not the current VALP assignment model.
+> Historical process evidence from 2026-07-06. The original local recording
+> was removed from the publication tree because it exposed machine-specific
+> paths, runtime identifiers, and provider details. The sanitized ledger excerpt
+> below preserves only the provider-neutral receipt semantics.
 
-This page records a short public process proof for VALP's live dispatch path.
-It responds to a specific credibility gap: the repository should show more than
-schemas, fixtures, and written rules.
+This page records a sanitized process-evidence excerpt for VALP's dispatch path.
 
-It is still not a standalone public live Full Mode completion case study. The
-clip proves publish and visible dispatch behavior, plus VALP's refusal to treat
-missing evidence as done. A full case study must also publish the complete,
-sanitized task folder and final audit closure.
+It is not a standalone public live Full Mode completion case study. A full case
+study must publish a complete sanitized task folder, runtime submission proof,
+and final audit closure without local operator data.
 
-<video controls src="../assets/valp-herdr-dispatch-proof-public-55s-20260706.mp4" width="100%">
-  <a href="../assets/valp-herdr-dispatch-proof-public-55s-20260706.mp4">Watch the VALP/HERDR visible dispatch proof video.</a>
-</video>
-
-Direct video link:
-[valp-herdr-dispatch-proof-public-55s-20260706.mp4](../assets/valp-herdr-dispatch-proof-public-55s-20260706.mp4)
-
-## What The Clip Shows
+## What The Historical Run Showed
 
 - `valp publish` creates task `VALP-INTEGRITY-AUDIT-20260706`.
 - The legacy runtime prepares dispatches for its then-selected Agents.
@@ -55,9 +45,9 @@ important behavior is that VALP distinguishes:
 
 ## What This Answers
 
-The critique that VALP had more protocol prose than public running evidence was
-valid. This video improves that proof path by showing a real VALP/HERDR
-publish-and-dispatch run.
+This excerpt demonstrates the receipt-state distinction without publishing the
+operator's local recording. It is historical supporting evidence, not current
+runtime or platform conformance proof.
 
 The critique that HERDR is an external reference runtime is also valid as an
 ecosystem risk. The protocol remains runtime-neutral, but the repository still

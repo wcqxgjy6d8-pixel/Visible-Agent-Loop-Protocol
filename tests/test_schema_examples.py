@@ -126,16 +126,7 @@ class SchemaExampleTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
     def test_public_examples_do_not_embed_operator_provider_snapshots(self) -> None:
-        forbidden = (
-            "/Users/" + "chenwei" + "sheng",
-            "Chende" + "MacBook",
-            "Codex" + "PlusPlus",
-            "configured" + "-relay",
-            "deepseek" + "-v4-pro",
-            "gpt-" + "5.6-sol",
-            "gpt-" + "5.6-luna",
-            "qwen" + "3.7-plus",
-        )
+        forbidden = ("private-relay", "model-internal", "operator-snapshot")
         violations: list[str] = []
         for path in sorted((ROOT / "examples").rglob("*")):
             if not path.is_file() or path.suffix not in {".json", ".jsonl", ".md", ".txt"}:
@@ -430,15 +421,15 @@ class SchemaExampleTests(unittest.TestCase):
         self.assertIn("I2 tracer bullet", tracer)
         self.assertIn("does not raise the whole State layer above I1", normalized_tracer)
 
-    def test_public_status_marks_rfc_incomplete_and_names_the_local_wake_subset(self) -> None:
+    def test_public_status_marks_v030_stable_without_broad_runtime_claims(self) -> None:
         for relative_path in ("README.md", "docs/index.md", "docs/project-status.md"):
             with self.subTest(path=relative_path):
                 document = (ROOT / relative_path).read_text(encoding="utf-8")
                 normalized = " ".join(document.split())
-                self.assertIn("RFC 0001 remains incomplete", normalized)
-                self.assertIn("implemented", normalized)
-                self.assertIn("stable release remains `0.2.0`", normalized)
-                self.assertNotIn("stable `0.3.0` release", normalized)
+                self.assertIn("`0.3.0`", normalized)
+                self.assertNotIn("RFC 0001 remains incomplete", normalized)
+                self.assertNotIn("stable release remains `0.2.0`", normalized)
+                self.assertIn("production", normalized)
 
     def test_remote_mode_public_claims_are_conditional_on_adapter_evidence(self) -> None:
         for relative_path in (

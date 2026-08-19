@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-PROTOCOL_VERSION = "0.3.0-draft"
+PROTOCOL_VERSION = "0.3.0"
 IMPLEMENTATION_ID = "valp-reference-cli"
 _WINDOWS_REPLACE_RETRY_SECONDS = 0.01
 _WINDOWS_REPLACE_TIMEOUT_SECONDS = 1.0
@@ -365,7 +365,7 @@ class InstallationCore:
             "required_core_message_kinds": sorted(BOOTSTRAP_READ_ONLY_KINDS | {"command.leader.select", "command.leader.start", "command.leader.recover_start", "command.leader.restart", "command.leader.rotate", "command.capabilities.reconcile"}),
             "enabled_extension_namespaces": [],
             "digest_algorithms": ["sha256"],
-            "migration_paths": ["0.2.0->0.3.0-draft"],
+            "migration_paths": ["0.2.0->0.3.0"],
             "implementation_id": implementation_id,
             "manifest_digest": "",
         }

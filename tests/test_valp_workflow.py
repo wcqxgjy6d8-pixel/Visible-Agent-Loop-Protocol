@@ -130,7 +130,7 @@ class ValpWorkflowTests(unittest.TestCase):
                     "project_identity": "sha256:" + ("c" * 64),
                 },
                 "context": {"cwd": str(directory)},
-                "launch": {"argv": ["/test/codex", "-m", "gpt-5.6-terra"]},
+                "launch": {"argv": ["/test/codex", "-m", "model-implementation-large"]},
                 "focused_at_provisioning": False,
                 "runtime_scope": {"kind": "workspace", "ownership": "task"},
                 "runtime_identity": {
@@ -243,7 +243,7 @@ class ValpWorkflowTests(unittest.TestCase):
                         "schema_version": "valp-model-probe.v1", "status": "observed",
                         "source": "herdr:codex structured Stop hook", "observed_at": workflow_module.now_iso(),
                         "ttl_seconds": 3600,
-                        "model": {"model_id": "gpt-5.6-terra", "provider": "CodexPlusPlus", "reasoning_mode": "medium", "confidence": "high"},
+                        "model": {"model_id": "model-implementation-large", "provider": "provider-relay", "reasoning_mode": "medium", "confidence": "high"},
                         "session_identity": {
                             "status": "known",
                             "token": f"sha256:{native_digest}",
@@ -487,7 +487,7 @@ class ValpWorkflowTests(unittest.TestCase):
                         "observed_at": workflow_module.now_iso(),
                         "ttl_seconds": 3600,
                         "model": {
-                            "model_id": "deepseek-v4-pro",
+                            "model_id": "model-review-large",
                             "provider": "deepseek",
                             "reasoning_mode": "low",
                             "confidence": "high",
@@ -541,7 +541,7 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertEqual(evidence["target"]["native_session_id"], native_session_id)
             self.assertEqual(evidence["structured_observation"]["session_id"], native_session_id)
             self.assertEqual(evidence["native_turn"]["provider"], "deepseek")
-            self.assertEqual(evidence["native_turn"]["model"], "deepseek-v4-pro")
+            self.assertEqual(evidence["native_turn"]["model"], "model-review-large")
             self.assertEqual(evidence["native_turn"]["reasoning_mode"], "low")
             self.assertEqual(evidence["formal_dispatch_count"], 0)
             self.assertEqual(model_probe_calls, 2)
@@ -691,7 +691,7 @@ class ValpWorkflowTests(unittest.TestCase):
                     "generation": 1,
                     "ownership": {"scope": "task", "task_id": task_id},
                     "context": {"cwd": str(directory)},
-                    "launch": {"argv": ["/test/codex", "-m", "gpt-5.6-terra"]},
+                    "launch": {"argv": ["/test/codex", "-m", "model-implementation-large"]},
                     "focused_at_provisioning": False,
                     "runtime_scope": {"kind": "workspace", "ownership": "task"},
                     "runtime_identity": {
@@ -838,8 +838,8 @@ class ValpWorkflowTests(unittest.TestCase):
                                         "observed_at": workflow_module.now_iso(),
                                         "ttl_seconds": 3600,
                                         "model": {
-                                            "model_id": "gpt-5.6-terra",
-                                            "provider": "CodexPlusPlus",
+                                            "model_id": "model-implementation-large",
+                                            "provider": "provider-relay",
                                             "reasoning_mode": "medium",
                                             "confidence": "high",
                                         },
@@ -1073,7 +1073,7 @@ class ValpWorkflowTests(unittest.TestCase):
                 "argv": [
                     "/test/bin/codex",
                     "-m",
-                    "gpt-5.6-terra",
+                    "model-implementation-large",
                     "-c",
                     'model_reasoning_effort="medium"',
                 ]
@@ -1099,7 +1099,7 @@ class ValpWorkflowTests(unittest.TestCase):
         self.assertEqual(
             result["agents"]["codex"]["launch_attestation"]["model"],
             {
-                "model_id": "gpt-5.6-terra",
+                "model_id": "model-implementation-large",
                 "provider": "unknown",
                 "reasoning_mode": "medium",
                 "confidence": "low",
@@ -1120,7 +1120,7 @@ class ValpWorkflowTests(unittest.TestCase):
             "observed_at": "2026-08-06T00:00:00Z",
             "ttl_seconds": 3600,
             "model": {
-                "model_id": "gpt-5.6-terra",
+                "model_id": "model-implementation-large",
                 "provider": "unknown",
                 "reasoning_mode": "medium",
                 "confidence": "unknown",
@@ -1136,7 +1136,7 @@ class ValpWorkflowTests(unittest.TestCase):
             "model_identity": {
                 "provider": "codex",
                 "declared_model": {
-                    "model_id": "gpt-5.6-terra",
+                    "model_id": "model-implementation-large",
                     "reasoning_mode": "medium",
                     "confidence": "high",
                 },
@@ -1176,7 +1176,7 @@ class ValpWorkflowTests(unittest.TestCase):
             "dispatch_eligible": True,
             "provisioned_at": "2026-08-06T00:00:00Z",
             "ownership": {"scope": "task", "task_id": "TASK-IMMUTABLE-ATTESTATION"},
-            "launch": {"argv": ["/test/bin/codex", "-m", "gpt-5.6-terra"]},
+            "launch": {"argv": ["/test/bin/codex", "-m", "model-implementation-large"]},
             "runtime_identity": {
                 "pane_id": "pane-owned",
                 "terminal_id": "terminal-owned",
@@ -1422,8 +1422,8 @@ class ValpWorkflowTests(unittest.TestCase):
                             "expected_response": "BOOTSTRAP_READY",
                             "actual_response": "BOOTSTRAP_READY",
                             "error": None,
-                            "model": "gpt-5.6-terra",
-                            "provider": "CodexPlusPlus",
+                            "model": "model-implementation-large",
+                            "provider": "provider-relay",
                             "reasoning_mode": "medium",
                             "completed_turn_count": 2,
                             "aborted_turn_count": 0,
@@ -1437,8 +1437,8 @@ class ValpWorkflowTests(unittest.TestCase):
                         },
                         "structured_observation": {
                             "session_id": "session-native",
-                            "model_id": "gpt-5.6-terra",
-                            "provider": "CodexPlusPlus",
+                            "model_id": "model-implementation-large",
+                            "provider": "provider-relay",
                             "reasoning_mode": "medium",
                             "task_complete_timestamps": [
                                 "2026-08-07T12:10:41.468Z",
@@ -1594,8 +1594,8 @@ class ValpWorkflowTests(unittest.TestCase):
                         "expected_response": "BOOTSTRAP_READY",
                         "actual_response": "BOOTSTRAP_READY",
                         "error": None,
-                        "model": "gpt-5.6-terra",
-                        "provider": "CodexPlusPlus",
+                        "model": "model-implementation-large",
+                        "provider": "provider-relay",
                         "reasoning_mode": "medium",
                         "completed_turn_count": 1,
                         "aborted_turn_count": 0,
@@ -1609,8 +1609,8 @@ class ValpWorkflowTests(unittest.TestCase):
                     },
                     "structured_observation": {
                         "session_id": "session-native",
-                        "model_id": "gpt-5.6-terra",
-                        "provider": "CodexPlusPlus",
+                        "model_id": "model-implementation-large",
+                        "provider": "provider-relay",
                         "reasoning_mode": "medium",
                         "task_complete_timestamps": ["2026-08-07T12:10:41.468Z"],
                     },
@@ -2341,7 +2341,7 @@ class ValpWorkflowTests(unittest.TestCase):
                     "source": "herdr:qwen",
                     "observed_at": "2026-08-09T16:00:00Z" if observed else None,
                     "ttl_seconds": 3600,
-                    "model": {"model_id": "qwen3.7-plus", "provider": "qwen-code"} if observed else None,
+                    "model": {"model_id": "model-research-large", "provider": "qwen-code"} if observed else None,
                     "session_identity": {"status": "known" if observed else "unknown"},
                 }}})
             elif command[1:3] == ["agent", "readiness"]:
@@ -2415,7 +2415,7 @@ class ValpWorkflowTests(unittest.TestCase):
                 "argv": [
                     "/test/bin/codex",
                     "-m",
-                    "gpt-5.6-terra",
+                    "model-implementation-large",
                     "-c",
                     'model_reasoning_effort="medium"',
                 ]
@@ -2490,8 +2490,8 @@ class ValpWorkflowTests(unittest.TestCase):
             "observed_at": workflow_module.now_iso(),
             "ttl_seconds": 3600,
             "model": {
-                "model_id": "gpt-5.6-terra",
-                "provider": "CodexPlusPlus",
+                "model_id": "model-implementation-large",
+                "provider": "provider-relay",
                 "reasoning_mode": "medium",
                 "confidence": "high",
             },
@@ -2602,7 +2602,7 @@ class ValpWorkflowTests(unittest.TestCase):
             "observed_at": workflow_module.now_iso(),
             "ttl_seconds": 3600,
             "model": {
-                "model_id": "deepseek-v4-pro",
+                "model_id": "model-review-large",
                 "provider": "deepseek",
                 "reasoning_mode": "low",
                 "confidence": "high",

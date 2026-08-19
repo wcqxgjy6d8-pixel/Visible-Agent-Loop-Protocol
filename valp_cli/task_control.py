@@ -74,7 +74,7 @@ def _initial_task_state(installation_id: str, task_id: str) -> dict[str, Any]:
         "gates": {},
         "last_event_id": None,
         "last_event_digest": None,
-        "protocol_version": "0.3.0-draft",
+        "protocol_version": "0.3.0",
         "updated_at": utc_now(),
         "projection_digest": "",
     }

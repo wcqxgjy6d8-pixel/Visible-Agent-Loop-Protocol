@@ -8,22 +8,23 @@ multi-agent platform.
 
 | Area | Current state |
 |---|---|
-| Protocol | Stable `0.2.0`; `0.3.0-draft` normative documentation target |
+| Protocol | Stable `0.3.0` protocol and reference CLI |
 | Repository license | MIT |
 | Reference CLI | `bin/valp` with task workflow, v0.3 installation, leader, capability, migration, plugin, hello, conformance, audit, and doctor commands |
 | Reference runtime | HERDR for the documented Full Mode path |
 | Other runtime adapters | Local-process and LangGraph API adapters are implemented; LangGraph includes approved, identity-bound cancellation effect execution, but its proof uses the local development runtime rather than production hosting |
-| Public examples | Three synthetic fixtures, two sanitized real task case studies, and one visible dispatch process video |
-| Public release | Stable evaluation release `v0.2.0` |
+| Public examples | Three synthetic fixtures, two sanitized real task case studies, and one sanitized visible-dispatch process ledger |
+| Public release | Stable protocol and reference CLI release `v0.3.0`; runtime/platform claims remain evidence-scoped |
 
-## v0.3 Draft Implementation
+## v0.3.0 Protocol And Reference CLI
 
 [RFC 0001: VALP v0.3 Installation Control Plane](rfcs/0001-v0.3-installation-control-plane.md)
-is partially implemented as an executable `0.3.0-draft` core. The current stable
-release remains `0.2.0`; RFC 0001 remains incomplete and is not stable as a whole.
+is accepted and implemented as the executable `0.3.0` protocol and reference
+CLI. Runtime, adapter, platform, and production claims remain limited to the
+evidence in this matrix.
 The implementation guide is [docs/v0.3-implementation.md](v0.3-implementation.md).
 
-The shipped draft core covers control-root bootstrap, Doctor-backed Leader
+The shipped `0.3.0` core covers control-root bootstrap, Doctor-backed Leader
 candidate discovery, selection/start separation, exact installation-owned
 Leader session binding, restart/rotation epoch fencing, message/event ledgers,
 replayable state, capability layers, plugin manifest boundary checks, migration
@@ -187,7 +188,7 @@ and exports the required receipts and evidence.
 | Provider-specific live cancellation breadth remains bounded | LangGraph and the reference Queue now have executable cancellation/proof paths; HERDR 0.7.4 still exposes no atomic cancel command | Keep HERDR cancellation unsupported until the runtime executes the operation and records identity-bound effect proof; retain Queue production-host and cross-platform proof as separate gates |
 | Optional App installer behavior is not a protocol runtime | First-launch UX can accidentally hide path, Leader binding, preflight, and submit boundaries | First-install health gate is specified; any App must expose the same CLI-verifiable evidence |
 | Windows local Full Mode is conditional | Native Windows runtime support is beta-dependent | Recommend SSH remote for stable Windows workflow |
-| Stable release is early | Users need clear limits around runtime proof and adapter coverage | Use the v0.3 draft core for installation-control-plane evaluation; keep stable/live-runtime claims tied to adapter proof |
+| Stable release is early | Users need clear limits around runtime proof and adapter coverage | Use the v0.3.0 protocol and reference CLI with stable/live-runtime claims tied to adapter proof |
 | Small public community | Social proof is low | Avoid community-size overclaims |
 
 ## Promotion Language
@@ -221,4 +222,4 @@ HERDR-free automation path already shipped
 1. Turn the visible dispatch process proof into a full sanitized live Full Mode
    completion case study with runtime submission proof and final audit output.
 2. Add an independently operated hosted or agent-provider adapter path.
-3. Grow RFCs, failure cases, and adapter feedback around the `v0.2.0` release.
+3. Grow RFCs, failure cases, and adapter feedback around the `v0.3.0` release.

@@ -26,18 +26,18 @@ VALP 要求任务过程留下可审计的证据：
 
 所以 VALP 更像一个 acceptance system，而不是聊天提示词集合。
 
-## v0.3 Draft：从任务验收到安装级控制平面
+## v0.3.0：从任务验收到安装级控制平面
 
-当前发布版本仍是 `0.2.0`。
-[RFC 0001](../rfcs/0001-v0.3-installation-control-plane.md) 作为稳定版本仍未完成，
-但 installation-control-plane core、schemas、claim/review、task reducer 和
-local-process adapter 已在 reference CLI 中落地。不改变当前 Runtime 支持范围
-或稳定发布状态。
+稳定协议与 reference CLI 版本是 `0.3.0`。
+[RFC 0001](../rfcs/0001-v0.3-installation-control-plane.md) 已接受，其
+installation-control-plane core、schemas、claim/review、task reducer 和
+local-process adapter 已在 reference CLI 中落地。Runtime 支持范围仍以具体
+adapter 证据为边界。
 
-可以把变化理解成：`0.2.0` 主要检查“这个任务凭什么算 Done”，v0.3 提案
+可以把变化理解成：`0.2.0` 主要检查“这个任务凭什么算 Done”，`0.3.0`
 进一步检查“管理所有任务的安装级控制平面凭什么可信”。
 
-| 层面 | 当前 `0.2.0` | v0.3 Draft 实现 |
+| 层面 | `0.2.0` 任务层基线 | `0.3.0` 实现 |
 |---|---|---|
 | 控制主体 | 每个任务根据当前能力证据选择 coordinator | 用户明确选择 Installation Leader；确定性 core 和 epoch 负责约束与 fencing |
 | 能力真值 | 当前 scan、routing、provider matrix 和 task evidence | 持久 registry 分开记录 `official_claim`、`local_presence`、`live_callable`、`task_verified` |
@@ -49,11 +49,10 @@ local-process adapter 已在 reference CLI 中落地。不改变当前 Runtime �
 Leader；发现 CLI、Skill 或 MCP 不等于已经能调用；Runtime completed 仍不等于
 VALP Done；写完 RFC 更不等于功能已经发布。
 
-稳定 `0.3.0` 只有在 RFC 被接受并写入 `SPEC.md`、相关 schemas/reference
-behavior 已实现、重启和迁移等 conformance tests 通过，并补足跨 runtime
-continuation 与生产部署证明后才能成立。当前 LangGraph 本地开发 runtime 的
-公开脱敏 E2E 只证明该 adapter/runtime pair。请同时查看
-[当前项目状态](../project-status.md)，不要把 proposed target 当成当前证明。
+`0.3.0` 的稳定称号只覆盖协议与 reference CLI，不表示跨 runtime continuation
+或生产部署已经普遍成立。当前 LangGraph 开发 runtime 的公开脱敏 E2E 只证明
+该 adapter/runtime pair。请同时查看[当前项目状态](../project-status.md)，
+不要把局部证明扩张成通用平台承诺。
 
 ## 它不是什么
 

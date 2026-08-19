@@ -241,7 +241,7 @@
       ],
       "properties": {
         "schema_version": {"const": "valp-dispatch-receipt.v3"},
-        "protocol_version": {"const": "0.3.0-draft"},
+        "protocol_version": {"const": "0.3.0"},
         "receipt_id": {"type": "string", "minLength": 1},
         "installation_id": {"type": "string", "minLength": 1},
         "leader_epoch": {"type": "integer", "minimum": 0},

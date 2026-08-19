@@ -9,7 +9,7 @@ import json
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
 
-PROTOCOL_VERSION = "0.3.0-draft"
+PROTOCOL_VERSION = "0.3.0"
 RECEIPT_SCHEMA_VERSION = "valp-dispatch-receipt.v3"
 MIGRATION_UNSUPPORTED_ERROR = "VALP-E-MIGRATION-UNSUPPORTED"
 STATE_CONFLICT_ERROR = "VALP-E-STATE-CONFLICT"

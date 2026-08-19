@@ -7,8 +7,6 @@ Agent says done. VALP asks for proof.
 ![License](https://img.shields.io/github/license/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 
-![VALP complete engineering architecture overview](docs/assets/valp-complete-engineering-overview.gif)
-
 VALP is an open protocol and reference CLI for visible, evidence-backed
 autonomous and multi-agent work. It catches false completion by checking
 automation policy, dispatch receipts, expected evidence, review/approval gates,
@@ -42,7 +40,7 @@ single project, operating system, terminal emulator, or model provider.
 
 ## Current Status
 
-VALP is a `0.2.0` open protocol release plus an MIT-licensed reference CLI. It
+VALP is a `0.3.0` open protocol release plus an MIT-licensed reference CLI. It
 is not a mature hosted platform and should not be described as production-ready
 by itself.
 
@@ -72,20 +70,20 @@ source repository, currently documented at
 depend on HERDR specifically. See [docs/project-status.md](docs/project-status.md)
 for the current evidence and gap matrix.
 
-## v0.3 Draft Implementation
+## v0.3.0 Protocol And Reference CLI
 
-The current stable release remains `0.2.0`. RFC 0001 remains incomplete for
-`0.3.0`, but its first executable installation-control-plane
-slice is now implemented in the reference CLI. Read the [implementation guide](docs/v0.3-implementation.md)
-and the [full draft](docs/rfcs/0001-v0.3-installation-control-plane.md).
+The stable protocol and reference CLI are `0.3.0`. RFC 0001 is accepted and
+its installation-control-plane semantics are incorporated into `SPEC.md`, the
+schemas, and the reference CLI. Read the [implementation guide](docs/v0.3-implementation.md)
+and the [accepted RFC](docs/rfcs/0001-v0.3-installation-control-plane.md).
 
 In Software 3.0 terms, VALP is control-plane code around work driven by prompts,
 tools, and agents. It does not make a model smarter. It makes control decisions
-and completion claims inspectable. `0.2.0` does that at the task level; the v0.3
-RFC asks how the installation-wide control plane itself can become restart-safe,
-provider-neutral, and testable.
+and completion claims inspectable. `0.2.0` established the task-level evidence
+discipline; `0.3.0` extends it to a restart-safe, provider-neutral, testable
+installation control plane.
 
-The implemented draft core adds:
+The `0.3.0` core adds:
 
 - a user-selected **Installation Leader**, constrained by a deterministic core
   and fenced leader epochs rather than a hard-coded universal coordinator;
@@ -97,12 +95,10 @@ The implemented draft core adds:
 - provider-neutral plugin manifest validation, explicit legacy migration plans,
   and a core conformance runner with negative and recovery tests.
 
-The proposal deliberately keeps the proof bar ahead of the release label.
-Before stable `0.3.0`, the RFC must be accepted and incorporated into
-`SPEC.md`; the remaining task reducer, production adapter restart proof, plugin
-execution isolation, and deterministic cross-runtime continuation still need
-stronger evidence. The draft core is shipped for evaluation, not as a stable
-platform claim.
+The stable designation applies to the protocol and reference CLI, not to every
+runtime, provider, platform, or production deployment. Adapter and platform
+claims remain limited to the concrete evidence in the project status matrix;
+unsupported production reliability is not implied by the release.
 
 Read the [full RFC](docs/rfcs/0001-v0.3-installation-control-plane.md) and the
 [current evidence matrix](docs/project-status.md) side by side: one describes
@@ -137,7 +133,7 @@ Choose the path that matches why you are here:
 | Goal | Start here | Runtime required? |
 |---|---|---|
 | Understand the protocol | Read [SPEC.md](SPEC.md) and audit `examples/minimal-task/` | No |
-| Try the v0.3 draft installation control plane | Read [the implementation guide](docs/v0.3-implementation.md) | No |
+| Try the v0.3.0 installation control plane | Read [the implementation guide](docs/v0.3-implementation.md) | No |
 | Review the v0.3 installation control plane | Read [RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md) | No |
 | Understand the automation and learning principles | Read [Compound Learning Loop](docs/compound-learning-loop.md) | No |
 | See the shortest public demo | Read [When Agent "Done" Is Not Done](docs/when-agent-done-is-not-done.md) | No |
@@ -436,7 +432,7 @@ The repository includes five self-verifying task examples:
 | `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=22 warn=0 fail=0` |
 | `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=15 warn=0 fail=0` |
 | `examples/langgraph-false-done/` | Real non-HERDR LangGraph false-done, repair, and independent review case | `PASS`, `pass=28 warn=0 fail=0` |
-| `docs/case-studies/visible-dispatch-process-proof.md` | Short public video of a real VALP/HERDR publish-and-dispatch process; not a standalone Full Mode completion case study | Process proof only |
+| `docs/case-studies/visible-dispatch-process-proof.md` | Sanitized ledger of a real VALP/HERDR publish-and-dispatch process; not a standalone Full Mode completion case study | Process proof only |
 
 Run the complete smoke check:
 
@@ -681,6 +677,5 @@ Visible-Agent-Loop-Protocol/
 
 ## Status
 
-Open protocol draft with reference CLI version `0.2.0`. The protocol draft is
-released as `v0.2.0`; HERDR remains the current reference runtime, not a
-protocol requirement.
+Open protocol release with reference CLI version `0.3.0`. HERDR remains the
+current reference runtime, not a protocol requirement.

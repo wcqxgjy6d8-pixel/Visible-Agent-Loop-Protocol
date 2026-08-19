@@ -46,18 +46,18 @@ VALP 可以拒绝一份不符合当前证据的 Leader 分工，但不能自己
 branch、push、pull request 或 merge 是用户与其 Agent 自己的后续工作，
 不是通用协议的内建步骤。
 
-## v0.3 Draft Implementation
+## v0.3.0 协议与参考 CLI
 
-当前稳定发布版本仍是 `0.2.0`。[RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)
-作为稳定 `0.3.0` 仍未完成，但可执行的 installation control plane core 已经
-落地在 reference CLI 中。请看 [v0.3 implementation guide](docs/v0.3-implementation.md)。
+稳定协议与 reference CLI 版本是 `0.3.0`。[RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)
+已经接受，其 installation control plane 语义已纳入 `SPEC.md`、schemas 与
+reference CLI。请看 [v0.3 implementation guide](docs/v0.3-implementation.md)。
 
 如果把 Prompt、Tools、Agents 看成 Software 3.0 的执行层，VALP 更像外面的
 控制与验收层：它不负责让模型突然更聪明，而是让控制决策和 done claim
-可以被检查。`0.2.0` 主要验证单个任务；v0.3 RFC 进一步追问，整个安装级
-控制平面能不能在重启、故障、Provider 变化和协议升级后仍然可追溯。
+可以被检查。`0.2.0` 建立了单个任务的证据纪律；`0.3.0` 将它扩展到整个
+安装级控制平面，使重启、故障、Provider 变化和协议升级仍然可追溯。
 
-已落地的 draft core 包括：
+`0.3.0` core 包括：
 
 - 由用户明确选择的 **Installation Leader**，并由确定性 core 和 leader
   epoch 约束，而不是把某个 Agent 永久写死为总协调者；
@@ -68,14 +68,13 @@ branch、push、pull request 或 merge 是用户与其 Agent 自己的后续工�
 - Provider-neutral plugin manifest 检查、显式 migration，以及包含负面与恢复
   场景的 conformance tests。
 
-稳定 `0.3.0` 的门槛仍在未来：RFC 需要被接受并写入 `SPEC.md`，schemas 和
-reference behavior 需要实现，重启、迁移、故障与 conformance tests 需要
-通过，还必须有一个真实的非 HERDR Full Mode adapter 完成公开、脱敏的
-端到端验证。当前仓库交付的是 draft core，不是稳定平台能力。
+`0.3.0` 的稳定称号只覆盖协议与 reference CLI，不表示所有 Runtime、Provider、
+平台或生产部署都已得到证明。相关支持声明继续以项目状态矩阵中的具体证据为
+边界，不把有限的 adapter 证明扩张成通用生产可靠性承诺。
 
 请把 [完整 RFC](docs/rfcs/0001-v0.3-installation-control-plane.md) 和
-[当前证据矩阵](docs/project-status.md) 对照阅读：前者写 proposed target，
-后者写今天已经证明的范围。
+[当前证据矩阵](docs/project-status.md) 对照阅读：前者写已接受的协议契约，
+后者写今天已经证明的实现与 Runtime 范围。
 
 ## 五分钟体验
 

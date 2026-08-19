@@ -201,6 +201,7 @@ class Dependency:
             "work_item_id": self.work_item_id.canonical(),
             "requirement": self.requirement.value,
         }
+        return value
 
 
 @dataclass(frozen=True)

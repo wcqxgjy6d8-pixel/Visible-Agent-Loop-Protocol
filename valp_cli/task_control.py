@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .control_plane import ControlPlaneError, InstallationCore, _new_id, _state_digest, append_jsonl, read_json, safe_control_ref, utc_now, write_json
+from .control_plane import PROTOCOL_VERSION, ControlPlaneError, InstallationCore, _new_id, _state_digest, append_jsonl, read_json, safe_control_ref, utc_now, write_json
 
 
 TASK_STATUSES = {
@@ -122,6 +122,7 @@ def task_state(root: Path, task_id: str) -> dict[str, Any]:
 
 def replay_task(root: Path, task_id: str, *, persisted: dict[str, Any] | None = None) -> dict[str, Any]:
     directory = _task_dir(root, task_id)
+    installation_id = InstallationCore(root)._installation().get("installation_id")
     events = []
     event_path = directory / "events.jsonl"
     if event_path.exists():
@@ -129,25 +130,102 @@ def replay_task(root: Path, task_id: str, *, persisted: dict[str, Any] | None = 
             if line.strip():
                 events.append(json.loads(line))
     previous_digest = None
+    previous_revision = 0
+    event_ids: set[str] = set()
     current = None
-    for event in events:
+    for index, event in enumerate(events):
         expected = "sha256:" + hashlib.sha256((json.dumps({key: value for key, value in event.items() if key != "event_digest"}, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")).hexdigest()
-        if event.get("prior_event_digest") != previous_digest and event.get("event_kind") != "task_initialized":
+        is_initial = index == 0
+        if (
+            event.get("task_id") != task_id
+            or event.get("installation_id") != installation_id
+            or event.get("event_id") in event_ids
+            or (is_initial and event.get("event_kind") != "task_initialized")
+            or (not is_initial and event.get("event_kind") == "task_initialized")
+        ):
+            raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Task event identity mismatch", state_effect="blocked")
+        if event.get("prior_event_digest") != previous_digest:
             raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Task event chain mismatch", state_effect="blocked")
+        if (
+            (is_initial and (event.get("prior_revision") != 0 or event.get("new_revision") != 0))
+            or (
+                not is_initial
+                and (
+                    event.get("prior_revision") != previous_revision
+                    or event.get("new_revision") != previous_revision + 1
+                )
+            )
+        ):
+            raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Task event revision chain mismatch", state_effect="blocked")
         if event.get("event_digest") != expected:
             raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Task event digest mismatch", state_effect="blocked")
         projection = (event.get("payload") or {}).get("state_projection")
         if not isinstance(projection, dict):
             raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Task event has no projection", state_effect="blocked")
+        if (
+            projection.get("task_id") != task_id
+            or projection.get("installation_id") != installation_id
+            or projection.get("revision") != event.get("new_revision")
+            or projection.get("projection_digest") != _task_digest(projection)
+        ):
+            raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Task event projection identity mismatch", state_effect="blocked")
+        target_status = projection.get("status")
+        if is_initial:
+            if (
+                target_status != "new"
+                or projection.get("last_event_id") is not None
+                or projection.get("last_event_digest") is not None
+            ):
+                raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Task genesis projection is malformed", state_effect="blocked")
+        else:
+            if (
+                event.get("event_kind") != f"task_{target_status}"
+                or target_status not in TASK_STATUSES
+                or target_status not in TASK_TRANSITIONS.get(str(current.get("status")), set())
+                or projection.get("last_event_id") != event.get("event_id")
+                or projection.get("last_event_digest") != previous_digest
+            ):
+                raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Task transition semantics are inconsistent", state_effect="blocked")
+            allowed_changes = {
+                "revision",
+                "status",
+                "gates",
+                "active_blockers",
+                "updated_at",
+                "last_event_id",
+                "last_event_digest",
+                "projection_digest",
+            }
+            changed_fields = {
+                field
+                for field in set(current) | set(projection)
+                if current.get(field) != projection.get(field)
+            }
+            if changed_fields - allowed_changes:
+                raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Task transition changes undeclared fields", state_effect="blocked")
+            expected_blockers = (
+                list(current.get("active_blockers") or [target_status])
+                if target_status == "blocked"
+                else []
+            )
+            if projection.get("active_blockers") != expected_blockers:
+                raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Task blocker projection is inconsistent", state_effect="blocked")
+            if target_status == "done" and any(
+                (projection.get("gates") or {}).get(gate) is not True
+                for gate in DONE_GATES
+            ):
+                raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Task Done gates are incomplete", state_effect="blocked")
         current = dict(projection)
         current["last_event_id"] = event.get("event_id")
         current["last_event_digest"] = event.get("event_digest")
         current["projection_digest"] = _task_digest(current)
         previous_digest = event.get("event_digest")
+        previous_revision = event.get("new_revision")
+        event_ids.add(event.get("event_id"))
     if current is None:
         raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Task has no initialization event", state_effect="blocked")
     saved = persisted or read_json(directory / "task-state.json")
-    if saved.get("revision") != current.get("revision") or saved.get("status") != current.get("status") or saved.get("projection_digest") != current.get("projection_digest"):
+    if saved != current:
         raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Task projection differs from event replay", state_effect="blocked")
     return current
 
@@ -158,6 +236,12 @@ def transition_task(root: Path, task_id: str, target_status: str, *, expected_re
     if installation_state["status"] not in {"active", "degraded"}:
         raise ControlPlaneError("VALP-E-STATE-CONFLICT", "Task transitions require an active installation")
     directory = _task_dir(root, task_id)
+    persisted = read_json(directory / "task-state.json")
+    if persisted.get("protocol_version") != PROTOCOL_VERSION:
+        raise ControlPlaneError(
+            "VALP-E-MIGRATION-UNSUPPORTED",
+            "Legacy task state is read-only until an explicit task projection migration exists",
+        )
     current = task_state(root, task_id)
     if target_status not in TASK_STATUSES or target_status not in TASK_TRANSITIONS.get(current["status"], set()):
         raise ControlPlaneError("VALP-E-STATE-TRANSITION", f"Illegal task transition {current['status']} -> {target_status}")

@@ -40,9 +40,10 @@ single project, operating system, terminal emulator, or model provider.
 
 ## Current Status
 
-VALP is a `0.3.0` open protocol release plus an MIT-licensed reference CLI. It
-is not a mature hosted platform and should not be described as production-ready
-by itself.
+VALP source defines a locally stable `0.3.0` protocol and MIT-licensed reference
+CLI. This checkout is a local publication candidate; GitHub push, review, merge,
+tag, and release remain pending. It is not a mature hosted platform and should
+not be described as production-ready by itself.
 
 What this repository proves today:
 
@@ -102,7 +103,7 @@ unsupported production reliability is not implied by the release.
 
 Read the [full RFC](docs/rfcs/0001-v0.3-installation-control-plane.md) and the
 [current evidence matrix](docs/project-status.md) side by side: one describes
-the proposed contract, and the other describes what this repository proves now.
+the accepted contract, and the other describes what this repository proves now.
 
 ## Why VALP?
 
@@ -677,5 +678,6 @@ Visible-Agent-Loop-Protocol/
 
 ## Status
 
-Open protocol release with reference CLI version `0.3.0`. HERDR remains the
-current reference runtime, not a protocol requirement.
+Locally stable protocol source and reference CLI version `0.3.0`; GitHub push,
+review, merge, tag, and release remain pending. HERDR remains the current
+reference runtime, not a protocol requirement.

@@ -26,7 +26,7 @@ from .control_plane import (
 from .conformance import run_conformance
 from .adapter_starter import AdapterStarterError, initialize_adapter
 from .plugins import load_plugin_manifest
-from .task_control import TASK_STATUSES, init_task, task_state, transition_task
+from .task_control import TASK_STATUSES, init_task, replay_task, task_state, transition_task
 from .process_adapter import run_process
 from .langgraph_adapter import LangGraphAdapterError, resume_langgraph_run, submit_langgraph_run
 from .herdr_adapter import (
@@ -269,6 +269,20 @@ notes:
     cp_status.add_argument("--root", help="Explicit control root")
     cp_status.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    state = sub.add_parser("state", help="Show or replay installation and task projections")
+    state_sub = state.add_subparsers(dest="state_command", required=True)
+    state_show = state_sub.add_parser("show", help="Show an executable projection")
+    state_show.add_argument("--task", dest="task_id", help="Show one control-plane task projection")
+    state_show.add_argument("--workspace", default=".", help="Workspace root")
+    state_show.add_argument("--root", help="Explicit control root")
+    state_show.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    state_replay = state_sub.add_parser("replay", help="Replay and compare an executable projection")
+    state_replay.add_argument("--task", dest="task_id", help="Replay one control-plane task projection")
+    state_replay.add_argument("--check", action="store_true", help="Fail if replay differs from persisted state")
+    state_replay.add_argument("--workspace", default=".", help="Workspace root")
+    state_replay.add_argument("--root", help="Explicit control root")
+    state_replay.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     hello = sub.add_parser("hello", help="Run the fixed valp-hello.v1 discovery boundary")
     hello.add_argument("--workspace", default=".", help="Workspace root")
     hello.add_argument("--root", help="Explicit control root")
@@ -281,6 +295,8 @@ notes:
     migrate_plan.add_argument("--to", default=PROTOCOL_VERSION, help="Target protocol version")
     migrate_plan.add_argument("--workspace", default=".", help="Workspace root")
     migrate_plan.add_argument("--root", help="Explicit control root")
+    migrate_plan.add_argument("--dry-run", action="store_true", help="Create a plan without activation")
+    migrate_plan.add_argument("--plan", help="Apply this exact digest-matched plan file")
     migrate_plan.add_argument("--apply", action="store_true", help="Apply the existing plan")
     migrate_plan.add_argument("--approve", action="store_true", help="Explicitly approve migration side effects")
     migrate_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON")
@@ -1229,6 +1245,22 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Leader: {(result['state'].get('active_leader') or {}).get('principal_id', 'none')} (epoch {result['state'].get('active_leader_epoch', 0)})")
         return 0
 
+    if args.command == "state":
+        root = installation_root(Path(args.workspace), Path(args.root) if args.root else None)
+        try:
+            if args.state_command == "show":
+                result = task_state(root, args.task_id) if args.task_id else InstallationCore(root).state()
+            else:
+                result = replay_task(root, args.task_id) if args.task_id else InstallationCore(root).replay()
+        except ControlPlaneError as error:
+            raise SystemExit(f"{error.code}: {error}") from error
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            scope = f"task {args.task_id}" if args.task_id else "installation"
+            print(f"VALP {scope}: {result['status']} (revision {result['revision']})")
+        return 0
+
     if args.command == "hello":
         root = installation_root(Path(args.workspace), Path(args.root) if args.root else None)
         try:
@@ -1242,6 +1274,12 @@ def main(argv: list[str] | None = None) -> int:
         root = installation_root(Path(args.workspace), Path(args.root) if args.root else None)
         core = InstallationCore(root)
         try:
+            if args.dry_run and args.apply:
+                raise ControlPlaneError("VALP-E-MESSAGE-SCHEMA", "--dry-run and --apply are mutually exclusive")
+            if args.plan and not args.apply:
+                raise ControlPlaneError("VALP-E-MESSAGE-SCHEMA", "--plan requires --apply")
+            if args.plan:
+                core.stage_migration_plan(Path(args.plan))
             result = core.migrate_apply(Path(args.workspace), approve=args.approve) if args.apply else core.migrate_plan(Path(args.workspace), target_version=args.to)
         except ControlPlaneError as error:
             raise SystemExit(f"{error.code}: {error}") from error

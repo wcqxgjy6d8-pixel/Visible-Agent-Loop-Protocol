@@ -2863,7 +2863,7 @@ The Protocol `0.3` compatibility target is:
 |---|---|---|
 | Blueprint | `Blueprint-0001/1.x` | `1.0` defines Protocol `0.3`; a Blueprint is a frozen design-source identifier, distinct from the public RFC series; editorial clarifications may increment the Blueprint minor version without changing protocol semantics |
 | Protocol | `>=0.3.0,<0.4.0` | Reference System `0.3.x` reads and writes this line |
-| Legacy protocol input | `0.2.0-draft` | Reference System `0.3.x` may read it only through a declared compatibility and migration path; it never writes new `0.2` task state |
+| Legacy protocol input | `0.2.0` | Reference System `0.3.x` may read it only through a declared compatibility and migration path; it never writes new `0.2` task state |
 | State schema | read `valp-visible-loop-state.v1`, `.v2`, and `.v3`; write `.v3` | migration creates a new projection and preserves original bytes |
 | Receipt schema | read legacy, `valp-dispatch-receipt.v2`, and `.v3`; write `.v3` | new Attempt and proof semantics require v3 or digest-bound reconciliation evidence |
 | New core schemas | `v1` | Task, State, Work Item, Attempt, Event, Result, Replay Entry, Checkpoint Root, Proof, Evidence Descriptor, Dimension Policy Evidence, Dimension Gate Result, Dependency Edge, Manual Attestation, Cancellation Event, and Claim Result begin at v1 |
@@ -3650,6 +3650,20 @@ timestamp, line number, file presence, or coordinator intent. Missing,
 ambiguous, malformed, or unsupported safety semantics fail closed. Repeating
 the same source bytes and bindings is a no-op; reusing one `migration_id`
 for different source bytes or bindings is an idempotency conflict.
+
+A Reference System promotion from `0.3.0-draft` to `0.3.0` MUST checkpoint the
+complete installation control root, excluding only lock files and migration
+journal outputs. The plan MUST bind the installation state revision, registry
+revision, active Leader epoch, every affected Task, and every checkpointed file
+digest. Draft Tasks may remain immutable read-only history when no separately
+specified Task projection migration exists; they MUST NOT accept new state
+transitions under the stable installation. Promotion is permitted only when all
+such Tasks are terminal and cooperative writers are fenced by the installation
+lock. The stable activation changes only the installation and protocol manifest
+version declarations; it preserves Leader identity, epoch, bindings, ledgers,
+and all historical Task bytes. An interrupted promotion MUST resume from the
+same digest-bound checkpoint or restore the exact source bytes before reporting
+`rolled_back`.
 
 The bounded v2 submission projection recognizes only a closed Adapter proof
 record with a concrete submission ID, literal acknowledgement, exact payload

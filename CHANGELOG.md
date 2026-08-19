@@ -6,6 +6,11 @@
   boundary, evidence contracts, and reference CLI to the stable `0.3.0`
   protocol line while keeping runtime, platform, and production claims scoped
   to concrete evidence.
+- Adds an explicit, digest-checked `0.3.0-draft -> 0.3.0` installation migration
+  that checkpoints the complete control root, preserves Leader authority,
+  fences terminal draft Tasks as legacy-read-only, resumes interrupted control
+  transitions, rolls back activation failures, and keeps legacy `0.2.0`
+  workspace import separate.
 
 - Redesigns Doctor and routing authority: Doctor commissions per-surface/session
   capability passports, the user selects the Leader, the Leader declares task

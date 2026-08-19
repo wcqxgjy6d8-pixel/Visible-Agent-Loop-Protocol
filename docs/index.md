@@ -35,8 +35,9 @@ completion requires automation policy, dispatch receipts, expected evidence,
 verification/review, approval gates when needed, final synthesis, and
 task-local learning feedback that points to proof.
 
-VALP is currently `0.3.0`. It is an open protocol release plus a reference CLI,
-not a hosted production platform.
+VALP source currently defines a locally stable `0.3.0` protocol and reference
+CLI. This checkout is a local publication candidate; GitHub push, review, merge,
+tag, and release remain pending. It is not a hosted production platform.
 
 ## Protocol 0.3 Layered Architecture
 

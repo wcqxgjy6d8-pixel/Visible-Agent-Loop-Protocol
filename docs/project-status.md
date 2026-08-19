@@ -1,8 +1,9 @@
 # Project Status And Evidence
 
-VALP is currently an early open protocol release plus a reference CLI. Treat it
-as a portable evidence standard and coordination shape, not as a finished
-multi-agent platform.
+VALP source currently defines a stable `0.3.0` protocol and reference CLI.
+External repository publication, tags, and release artifacts remain separate
+delivery gates. Treat VALP as a portable evidence standard and coordination
+shape, not as a finished multi-agent platform.
 
 ## Current Package
 
@@ -14,7 +15,7 @@ multi-agent platform.
 | Reference runtime | HERDR for the documented Full Mode path |
 | Other runtime adapters | Local-process and LangGraph API adapters are implemented; LangGraph includes approved, identity-bound cancellation effect execution, but its proof uses the local development runtime rather than production hosting |
 | Public examples | Three synthetic fixtures, two sanitized real task case studies, and one sanitized visible-dispatch process ledger |
-| Public release | Stable protocol and reference CLI release `v0.3.0`; runtime/platform claims remain evidence-scoped |
+| Public release | Local publication candidate for `v0.3.0`; push, review, merge, tag, and external release remain pending |
 
 ## v0.3.0 Protocol And Reference CLI
 

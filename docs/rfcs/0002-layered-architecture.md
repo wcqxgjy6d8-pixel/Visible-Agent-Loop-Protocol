@@ -2,7 +2,7 @@
 
 Status: Accepted for VALP `0.3.0`; based on frozen Blueprint 0001 layered-architecture semantics
 
-Target: VALP 0.3 design line
+Target: VALP `0.3.0`
 
 Created: 2026-07-29
 
@@ -453,7 +453,7 @@ The following versions evolve independently (D10):
 |---|---|---|
 | Blueprint | `RFC-0001/1.x` | `1.0` defines Protocol `0.3` |
 | Protocol | `>=0.3.0,<0.4.0` | Semantic changes require version bump |
-| Protocol 0.2 compatibility input | `0.2.0-draft` | Read-only through declared compatibility |
+| Protocol 0.2 compatibility input | `0.2.0` | Read-only through declared compatibility |
 | State schema | read v1/v2; write v3 | Migration preserves original bytes |
 | Receipt schema | read legacy/v2; write v3 | Old receipts remain historical |
 | New core schemas | `v1` | Start at v1 |

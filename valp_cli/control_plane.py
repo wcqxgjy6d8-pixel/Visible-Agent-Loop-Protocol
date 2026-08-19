@@ -15,7 +15,50 @@ from typing import Any, Iterable
 
 
 PROTOCOL_VERSION = "0.3.0"
+DRAFT_PROTOCOL_VERSION = "0.3.0-draft"
 IMPLEMENTATION_ID = "valp-reference-cli"
+SUPPORTED_MIGRATION_PATHS = [
+    "0.2.0->0.3.0",
+    "0.3.0-draft->0.3.0",
+]
+DRAFT_MIGRATION_REQUIRED_FIELDS = {
+    "source_schema_versions",
+    "target_schema_versions",
+    "ordered_transforms",
+    "legacy_fields",
+    "expected_state_revision",
+    "expected_registry_revision",
+    "expected_leader_epoch",
+    "required_capabilities",
+    "affected_plugins",
+    "affected_tasks",
+    "approval_requirements",
+    "rollback_strategy",
+    "validation_cases",
+}
+MIGRATION_PLAN_BASE_REQUIRED_FIELDS = {
+    "schema_version",
+    "migration_id",
+    "installation_id",
+    "source_protocol_version",
+    "target_protocol_version",
+    "source_root",
+    "target_root",
+    "preserve_original_bytes",
+    "task_file_count",
+    "files",
+    "preconditions",
+    "created_at",
+    "plan_digest",
+}
+MIGRATION_PLAN_ALLOWED_FIELDS = MIGRATION_PLAN_BASE_REQUIRED_FIELDS | DRAFT_MIGRATION_REQUIRED_FIELDS
+DRAFT_MIGRATION_EXCLUDED_ROOTS = {
+    ".control-plane.lock",
+    "migration-plan.json",
+    "migration-receipt.json",
+    "migration-snapshots",
+    "transition-journal.json",
+}
 _WINDOWS_REPLACE_RETRY_SECONDS = 0.01
 _WINDOWS_REPLACE_TIMEOUT_SECONDS = 1.0
 INSTALLATION_STATUS = {
@@ -74,6 +117,53 @@ BOOTSTRAP_CORE_KINDS = BOOTSTRAP_READ_ONLY_KINDS | {
     "result.leader.activation_failed",
 }
 
+TRANSITION_CONTRACTS = {
+    "installation_initialized": ("command.installation.init", "bootstrap-controller"),
+    "bootstrap_discovery_started": ("command.bootstrap.discover_candidates", "bootstrap-controller"),
+    "leader_candidate_discovery_completed": ("result.bootstrap.discovery", "bootstrap-controller"),
+    "leader_selection_approved": ("command.leader.select", "human"),
+    "leader_start_requested": ("command.leader.start", "bootstrap-controller"),
+    "leader_start_recovery_approved": ("command.leader.recover_start", "human"),
+    "leader_restart_requested": ("command.leader.restart", "human"),
+    "leader_restart_rolled_back": ("result.leader.restart_rolled_back", "runtime-adapter"),
+    "leader_activation_failed": ("result.leader.activation_failed", "runtime-adapter"),
+    "leader_activated": ("event.leader.activated", "bootstrap-controller"),
+    "leader_rotation_approved": ("command.leader.rotate", "human"),
+    "capability_reconciliation_started": ("command.capabilities.reconcile", "installation-leader"),
+    "capability_reconciliation_completed": ("result.capabilities.reconcile", "installation-leader"),
+    "migration_apply_approved": ("command.protocol.migrate", "human"),
+    "migration_activated": ("event.protocol.migration.activated", "bootstrap-controller"),
+    "migration_rolled_back": ("event.protocol.migration.rolled_back", "bootstrap-controller"),
+    "migration_unrecoverable": ("event.protocol.migration.blocked", "bootstrap-controller"),
+}
+
+TRANSITION_TARGETS = {
+    "installation_initialized": "bootstrapping",
+    "bootstrap_discovery_started": "discovering_leader_candidates",
+    "leader_candidate_discovery_completed": "awaiting_leader_selection",
+    "leader_selection_approved": "awaiting_leader_start",
+    "leader_start_requested": "activating_leader",
+    "leader_start_recovery_approved": "activating_leader",
+    "leader_restart_requested": "restarting_leader",
+    "leader_restart_rolled_back": "active",
+    "leader_activation_failed": "blocked",
+    "leader_activated": "active",
+    "leader_rotation_approved": "rotating_leader",
+    "capability_reconciliation_started": "reconciling_capabilities",
+    "capability_reconciliation_completed": "active",
+    "migration_apply_approved": "migrating",
+    "migration_activated": "active",
+    "migration_rolled_back": "active",
+    "migration_unrecoverable": "blocked",
+}
+
+TRANSITION_PAYLOAD_STATE_FIELDS = {
+    "leader_selection_approved": {"selected_leader"},
+    "leader_activated": {"active_leader", "active_leader_epoch"},
+    "leader_rotation_approved": {"selected_leader"},
+    "capability_reconciliation_completed": {"registry_revision"},
+}
+
 REQUIRED_FILES = (
     "installation.json",
     "protocol-manifest.json",
@@ -119,6 +209,269 @@ def digest_without(value: dict[str, Any], field: str) -> str:
     return digest_value(payload)
 
 
+def validate_transition_contract(
+    message: dict[str, Any],
+    event: dict[str, Any],
+    state_projection: dict[str, Any],
+    prior_state: dict[str, Any],
+    *,
+    allow_legacy_replay: bool = False,
+) -> None:
+    event_kind = str(event.get("event_kind") or "")
+    contract = TRANSITION_CONTRACTS.get(event_kind)
+    sender_kind = message.get("sender_kind")
+    if contract is None or contract != (message.get("kind"), sender_kind):
+        raise ControlPlaneError(
+            "VALP-E-REGISTRY-CONSISTENCY",
+            "Transition event, message, and principal kind are not a declared contract",
+        )
+    expected_principal = {
+        "bootstrap-controller": "bootstrap-controller",
+        "human": "user",
+        "runtime-adapter": "reference-runtime-adapter",
+    }.get(str(sender_kind))
+    if sender_kind == "installation-leader":
+        active_leader = state_projection.get("active_leader")
+        expected_principal = (
+            active_leader.get("principal_id")
+            if isinstance(active_leader, dict)
+            else None
+        )
+    if (
+        not expected_principal
+        or message.get("sender_principal_id") != expected_principal
+        or event.get("actor_principal_id") != expected_principal
+    ):
+        raise ControlPlaneError(
+            "VALP-E-REGISTRY-CONSISTENCY",
+            "Transition principal does not hold the declared authority",
+        )
+    target_status = TRANSITION_TARGETS.get(event_kind)
+    prior_status = prior_state.get("status")
+    payload = message.get("payload")
+    legal_transition = target_status in LEGAL_TRANSITIONS.get(str(prior_status), set())
+    if (
+        allow_legacy_replay
+        and event_kind == "leader_restart_requested"
+        and prior_status == "blocked"
+        and target_status == "restarting_leader"
+    ):
+        legal_transition = True
+    if (
+        not isinstance(payload, dict)
+        or state_projection.get("status") != target_status
+        or not legal_transition
+        or event.get("prior_revision") != prior_state.get("revision")
+        or state_projection.get("revision") != prior_state.get("revision", -1) + 1
+        or state_projection.get("last_event_id") != event.get("event_id")
+        or state_projection.get("last_event_digest") != event.get("prior_event_digest")
+        or state_projection.get("updated_at") != event.get("occurred_at")
+    ):
+        raise ControlPlaneError(
+            "VALP-E-REGISTRY-CONSISTENCY",
+            "Transition source, target, revision, or event binding violates its contract",
+        )
+    payload_state_fields = set(TRANSITION_PAYLOAD_STATE_FIELDS.get(event_kind, set()))
+    if (
+        allow_legacy_replay
+        and event_kind == "leader_restart_requested"
+        and "selected_leader" in payload
+    ):
+        payload_state_fields.add("selected_leader")
+    protected_state_fields = {
+        "active_leader",
+        "selected_leader",
+        "active_leader_epoch",
+        "registry_revision",
+    }
+    asserted_state_fields = (protected_state_fields & set(payload)) - payload_state_fields
+    if any(
+        payload.get(field) != prior_state.get(field)
+        or state_projection.get(field) != prior_state.get(field)
+        for field in asserted_state_fields
+    ):
+        raise ControlPlaneError(
+            "VALP-E-REGISTRY-CONSISTENCY",
+            "Transition payload attempts an undeclared authority-state mutation",
+        )
+    if any(
+        field not in payload or state_projection.get(field) != payload.get(field)
+        for field in payload_state_fields
+    ):
+        raise ControlPlaneError(
+            "VALP-E-REGISTRY-CONSISTENCY",
+            "Transition payload does not bind its declared state mutation",
+        )
+    expected_blockers = prior_state.get("active_blockers")
+    if target_status == "blocked":
+        expected_blockers = list(payload.get("active_blockers") or [event_kind])
+    elif target_status in {
+        "active",
+        "awaiting_leader_selection",
+        "awaiting_leader_start",
+        "discovering_leader_candidates",
+    }:
+        expected_blockers = []
+    if state_projection.get("active_blockers") != expected_blockers:
+        raise ControlPlaneError(
+            "VALP-E-REGISTRY-CONSISTENCY",
+            "Transition blocker projection violates its contract",
+        )
+    allowed_changes = {
+        "revision",
+        "status",
+        "updated_at",
+        "last_event_id",
+        "last_event_digest",
+        "projection_digest",
+        "active_blockers",
+    } | payload_state_fields
+    changed_fields = {
+        field
+        for field in set(prior_state) | set(state_projection)
+        if prior_state.get(field) != state_projection.get(field)
+    }
+    if changed_fields - allowed_changes:
+        raise ControlPlaneError(
+            "VALP-E-REGISTRY-CONSISTENCY",
+            "Transition projection changes undeclared state fields",
+        )
+
+
+def validate_migration_plan_contract(plan: dict[str, Any]) -> None:
+    missing = (
+        sorted(DRAFT_MIGRATION_REQUIRED_FIELDS - set(plan))
+        if plan.get("source_protocol_version") == DRAFT_PROTOCOL_VERSION
+        else []
+    )
+    if missing:
+        raise ControlPlaneError(
+            "VALP-E-MIGRATION-UNSUPPORTED",
+            "Draft migration plan is missing required fields: " + ", ".join(missing),
+        )
+    integer_fields = ("expected_state_revision", "expected_registry_revision", "expected_leader_epoch")
+    string_list_fields = (
+        "ordered_transforms",
+        "legacy_fields",
+        "required_capabilities",
+        "affected_plugins",
+        "approval_requirements",
+        "validation_cases",
+    )
+    if (
+        any(
+            not isinstance(plan.get(field), int)
+            or isinstance(plan.get(field), bool)
+            or plan.get(field) < 0
+            for field in integer_fields
+            if field in plan
+        )
+        or any(
+            not isinstance(plan.get(field), list)
+            or any(not isinstance(item, str) or not item for item in plan.get(field))
+            for field in string_list_fields
+            if field in plan
+        )
+        or any(
+            not isinstance(plan.get(field), dict)
+            or any(
+                not isinstance(key, str)
+                or not key
+                or (value is not None and not isinstance(value, str))
+                for key, value in plan.get(field, {}).items()
+            )
+            for field in ("source_schema_versions", "target_schema_versions")
+            if field in plan
+        )
+        or ("affected_tasks" in plan and not isinstance(plan.get("affected_tasks"), list))
+        or any(
+            not isinstance(item, dict)
+            or set(item) != {"task_id", "protocol_version", "status", "revision", "handling"}
+            or any(not isinstance(item.get(field), str) or not item.get(field) for field in ("task_id", "protocol_version", "status"))
+            or not isinstance(item.get("revision"), int)
+            or isinstance(item.get("revision"), bool)
+            or item.get("revision") < 0
+            or item.get("handling") != "legacy-read-only"
+            for item in plan.get("affected_tasks", [])
+        )
+        or (
+            "rollback_strategy" in plan
+            and (
+                not isinstance(plan.get("rollback_strategy"), str)
+                or not plan.get("rollback_strategy")
+            )
+        )
+    ):
+        raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Draft migration plan contract is malformed")
+
+
+def validate_migration_plan_artifact(plan: dict[str, Any]) -> None:
+    missing = sorted(MIGRATION_PLAN_BASE_REQUIRED_FIELDS - set(plan))
+    extra = sorted(set(plan) - MIGRATION_PLAN_ALLOWED_FIELDS)
+    string_fields = (
+        "migration_id",
+        "installation_id",
+        "source_protocol_version",
+        "target_protocol_version",
+        "source_root",
+        "target_root",
+        "created_at",
+    )
+    files = plan.get("files")
+    preconditions = plan.get("preconditions")
+    digest = plan.get("plan_digest")
+    migration_id = plan.get("migration_id")
+    if (
+        missing
+        or extra
+        or plan.get("schema_version") != "valp-migration-plan.v1"
+        or any(not isinstance(plan.get(field), str) or not plan.get(field) for field in string_fields)
+        or not isinstance(migration_id, str)
+        or migration_id[0] not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+        or any(
+            character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+            for character in migration_id
+        )
+        or plan.get("preserve_original_bytes") is not True
+        or not isinstance(plan.get("task_file_count"), int)
+        or isinstance(plan.get("task_file_count"), bool)
+        or plan.get("task_file_count", -1) < 0
+        or not isinstance(files, list)
+        or plan.get("task_file_count") != len(files or [])
+        or any(
+            not isinstance(item, dict)
+            or set(item) != {"source_ref", "digest", "bytes"}
+            or not isinstance(item.get("source_ref"), str)
+            or not item.get("source_ref")
+            or not isinstance(item.get("digest"), str)
+            or len(item.get("digest")) != 71
+            or not item.get("digest").startswith("sha256:")
+            or any(character not in "0123456789abcdef" for character in item.get("digest")[7:])
+            or not isinstance(item.get("bytes"), int)
+            or isinstance(item.get("bytes"), bool)
+            or item.get("bytes") < 0
+            for item in (files or [])
+        )
+        or not isinstance(preconditions, list)
+        or not preconditions
+        or any(not isinstance(item, str) or not item for item in (preconditions or []))
+        or not isinstance(digest, str)
+        or len(digest) != 71
+        or not digest.startswith("sha256:")
+        or any(character not in "0123456789abcdef" for character in digest[7:])
+    ):
+        detail = ""
+        if missing:
+            detail = "; missing: " + ", ".join(missing)
+        if extra:
+            detail += "; unsupported: " + ", ".join(extra)
+        raise ControlPlaneError(
+            "VALP-E-MIGRATION-UNSUPPORTED",
+            "Migration plan artifact is malformed" + detail,
+        )
+    validate_migration_plan_contract(plan)
+
+
 def write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
@@ -134,11 +487,38 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
             os.unlink(temporary)
 
 
+def write_bytes_atomic(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _replace_file(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _sync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        descriptor = os.open(str(path), flags)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _replace_file(source: str, target: Path) -> None:
     deadline = time.monotonic() + _WINDOWS_REPLACE_TIMEOUT_SECONDS
     while True:
         try:
             os.replace(source, target)
+            _sync_directory(target.parent)
             return
         except PermissionError as exc:
             if getattr(exc, "winerror", None) not in {5, 32} or time.monotonic() >= deadline:
@@ -162,6 +542,20 @@ def append_jsonl(path: Path, value: dict[str, Any]) -> None:
         handle.write(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n")
         handle.flush()
         os.fsync(handle.fileno())
+
+
+def append_jsonl_atomic(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = path.read_bytes() if path.exists() else b""
+    if existing and not existing.endswith(b"\n"):
+        raise ControlPlaneError(
+            "VALP-E-REGISTRY-CONSISTENCY",
+            f"Cannot append to truncated {path.name}",
+        )
+    payload = existing + (
+        json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    write_bytes_atomic(path, payload)
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -365,7 +759,7 @@ class InstallationCore:
             "required_core_message_kinds": sorted(BOOTSTRAP_READ_ONLY_KINDS | {"command.leader.select", "command.leader.start", "command.leader.recover_start", "command.leader.restart", "command.leader.rotate", "command.capabilities.reconcile"}),
             "enabled_extension_namespaces": [],
             "digest_algorithms": ["sha256"],
-            "migration_paths": ["0.2.0->0.3.0"],
+            "migration_paths": SUPPORTED_MIGRATION_PATHS,
             "implementation_id": implementation_id,
             "manifest_digest": "",
         }
@@ -473,6 +867,7 @@ class InstallationCore:
         task_id: str | None = None,
     ) -> dict[str, Any]:
         self._require_initialized()
+        self._recover_transition_unlocked()
         existing = self._find_message(idempotency_key)
         if existing is not None:
             if existing.get("content_digest") != digest_value({
@@ -557,23 +952,166 @@ class InstallationCore:
             "occurred_at": next_state["updated_at"],
             "actor_principal_id": principal_id,
             "payload_schema": "valp-control-payload.v1",
-            "payload": dict(payload, state_projection=next_state),
+            "payload": dict(payload, state_projection=dict(next_state)),
             "prior_event_digest": state.get("last_event_digest"),
         }
         event["event_digest"] = digest_without(event, "event_digest")
         message["result"] = {"message_id": message_id, "event_id": event_id, "revision": next_state["revision"], "status": target_status}
         message["result_revision"] = next_state["revision"]
         message["message_digest"] = digest_without(message, "message_digest")
-        append_jsonl(self._path("messages.jsonl"), message)
-        append_jsonl(self._path("events.jsonl"), event)
         next_state["last_event_digest"] = event["event_digest"]
         next_state["projection_digest"] = _state_digest(next_state)
-        write_json(self.state_path, next_state)
         installation = self._installation()
         installation["installation_status"] = next_state["status"]
         installation["active_leader_epoch"] = next_state["active_leader_epoch"]
-        write_json(self.installation_path, installation)
+        journal = {
+            "schema_version": "valp-transition-journal.v1",
+            "message": message,
+            "event": event,
+            "next_state": next_state,
+            "installation": installation,
+        }
+        journal["journal_digest"] = digest_without(journal, "journal_digest")
+        write_json(self._path("transition-journal.json"), journal)
+        self._commit_transition_journal_unlocked(journal)
         return message["result"]
+
+    def _recover_transition_unlocked(self) -> None:
+        path = self._path("transition-journal.json")
+        if path.is_file():
+            self._commit_transition_journal_unlocked(read_json(path))
+
+    def _commit_transition_journal_unlocked(self, journal: dict[str, Any]) -> None:
+        if (
+            journal.get("schema_version") != "valp-transition-journal.v1"
+            or journal.get("journal_digest") != digest_without(journal, "journal_digest")
+        ):
+            raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Transition journal digest mismatch")
+        message = journal.get("message")
+        event = journal.get("event")
+        next_state = journal.get("next_state")
+        installation = journal.get("installation")
+        if not all(isinstance(item, dict) for item in (message, event, next_state, installation)):
+            raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Transition journal payload is malformed")
+        prior_revision = event.get("prior_revision")
+        new_revision = event.get("new_revision")
+        result = message.get("result")
+        event_payload = event.get("payload")
+        embedded_projection = event_payload.get("state_projection") if isinstance(event_payload, dict) else None
+        expected_embedded_projection = dict(next_state)
+        expected_embedded_projection["last_event_digest"] = event.get("prior_event_digest")
+        expected_embedded_projection["projection_digest"] = _state_digest(expected_embedded_projection)
+        message_payload = message.get("payload")
+        expected_event_payload = (
+            dict(message_payload, state_projection=expected_embedded_projection)
+            if isinstance(message_payload, dict)
+            else None
+        )
+        expected_content_digest = digest_value({
+            "kind": message.get("kind"),
+            "principal_id": message.get("sender_principal_id"),
+            "epoch": message.get("leader_epoch"),
+            "expected_revision": message.get("expected_state_revision"),
+            "payload": message_payload,
+        })
+        if (
+            message.get("message_digest") != digest_without(message, "message_digest")
+            or message.get("content_digest") != expected_content_digest
+            or event.get("event_digest") != digest_without(event, "event_digest")
+            or next_state.get("projection_digest") != _state_digest(next_state)
+            or message.get("event_id") != event.get("event_id")
+            or event.get("accepted_message_id") != message.get("message_id")
+            or event.get("new_revision") != next_state.get("revision")
+            or message.get("sender_principal_id") != event.get("actor_principal_id")
+            or message.get("leader_epoch") != event.get("leader_epoch")
+            or not isinstance(result, dict)
+            or result.get("message_id") != message.get("message_id")
+            or result.get("event_id") != event.get("event_id")
+            or message.get("result_revision") != next_state.get("revision")
+            or result.get("revision") != next_state.get("revision")
+            or result.get("status") != next_state.get("status")
+            or not isinstance(prior_revision, int)
+            or isinstance(prior_revision, bool)
+            or not isinstance(new_revision, int)
+            or isinstance(new_revision, bool)
+            or new_revision != prior_revision + 1
+            or message.get("expected_state_revision") != prior_revision
+            or message.get("installation_id") != event.get("installation_id")
+            or next_state.get("installation_id") != event.get("installation_id")
+            or installation.get("installation_id") != event.get("installation_id")
+            or installation.get("installation_status") != next_state.get("status")
+            or installation.get("active_leader_epoch") != next_state.get("active_leader_epoch")
+            or event.get("occurred_at") != next_state.get("updated_at")
+            or event_payload != expected_event_payload
+        ):
+            raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Transition journal records are inconsistent")
+
+        messages = read_jsonl(self._path("messages.jsonl"))
+        matching_messages = [item for item in messages if item.get("message_id") == message["message_id"]]
+        if matching_messages and matching_messages != [message]:
+            raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Transition message conflicts with journal")
+        if matching_messages and messages[-1] != message:
+            raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Transition journal message is not the ledger tail")
+        expected_message_sequence = len(messages) if matching_messages else len(messages) + 1
+        if message.get("installation_sequence") != expected_message_sequence:
+            raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Transition message sequence conflicts with ledger")
+
+        events = read_jsonl(self._path("events.jsonl"))
+        matching_events = [item for item in events if item.get("event_id") == event["event_id"]]
+        if matching_events and matching_events != [event]:
+            raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Transition event conflicts with journal")
+        if matching_events and events[-1] != event:
+            raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Transition journal event is not the ledger tail")
+        expected_event_sequence = len(events) if matching_events else len(events) + 1
+        if matching_events:
+            expected_prior_event_digest = events[-2].get("event_digest") if len(events) > 1 else None
+        else:
+            expected_prior_event_digest = events[-1].get("event_digest") if events else None
+        if (
+            event.get("installation_sequence") != expected_event_sequence
+            or event.get("prior_event_digest") != expected_prior_event_digest
+        ):
+            raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Transition event chain conflicts with ledger")
+
+        persisted_state = read_json(self.state_path)
+        if persisted_state.get("revision") == event.get("prior_revision"):
+            prior_state = persisted_state
+        elif persisted_state == next_state and matching_events:
+            if len(events) > 1:
+                prior_event = events[-2]
+                prior_payload = prior_event.get("payload")
+                prior_projection = (
+                    prior_payload.get("state_projection")
+                    if isinstance(prior_payload, dict)
+                    else None
+                )
+                if not isinstance(prior_projection, dict):
+                    raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Prior transition projection is missing")
+                prior_state = dict(prior_projection)
+                prior_state["last_event_digest"] = prior_event.get("event_digest")
+                prior_state["projection_digest"] = _state_digest(prior_state)
+            else:
+                prior_state = _empty_state(str(event.get("installation_id") or ""))
+        else:
+            raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Transition state conflicts with journal")
+        validate_transition_contract(message, event, expected_embedded_projection, prior_state)
+        if not matching_messages:
+            append_jsonl_atomic(self._path("messages.jsonl"), message)
+        if not matching_events:
+            append_jsonl_atomic(self._path("events.jsonl"), event)
+
+        if persisted_state != next_state:
+            write_json(self.state_path, next_state)
+
+        persisted_installation = self._installation()
+        if persisted_installation != installation:
+            if persisted_installation.get("installation_id") != installation.get("installation_id"):
+                raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Transition installation conflicts with journal")
+            write_json(self.installation_path, installation)
+
+        journal_path = self._path("transition-journal.json")
+        journal_path.unlink(missing_ok=True)
+        _sync_directory(journal_path.parent)
 
     def discover_candidates(self, passports: Iterable[dict[str, Any]] | None = None) -> dict[str, Any]:
         state = self.state()
@@ -1665,6 +2203,12 @@ class InstallationCore:
 
     def replay(self) -> dict[str, Any]:
         self._require_initialized()
+        if self._path("transition-journal.json").is_file():
+            raise ControlPlaneError(
+                "VALP-E-REGISTRY-CONSISTENCY",
+                "Pending transition journal requires recovery before replay",
+                state_effect="blocked",
+            )
         messages = read_jsonl(self._path("messages.jsonl"))
         message_by_id = {}
         for sequence, message in enumerate(messages, 1):
@@ -1672,35 +2216,96 @@ class InstallationCore:
                 raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Accepted message sequence has a gap", state_effect="blocked")
             if message.get("message_digest") != digest_without(message, "message_digest"):
                 raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Message digest mismatch", state_effect="blocked")
+            if message.get("message_id") in message_by_id:
+                raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Duplicate accepted message id", state_effect="blocked")
             message_by_id[message.get("message_id")] = message
         events = read_jsonl(self._path("events.jsonl"))
+        referenced_messages: set[str] = set()
+        event_ids: set[str] = set()
         previous_digest: str | None = None
-        current: dict[str, Any] | None = None
+        previous_revision = 0
+        current = _empty_state(self._installation()["installation_id"])
         for sequence, event in enumerate(events, 1):
             if event.get("installation_sequence") != sequence:
                 raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Event sequence has a gap", state_effect="blocked")
             accepted_message = message_by_id.get(event.get("accepted_message_id"))
             if not accepted_message or accepted_message.get("event_id") != event.get("event_id"):
                 raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Event is missing its accepted message", state_effect="blocked")
+            if event.get("event_id") in event_ids or event.get("accepted_message_id") in referenced_messages:
+                raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Message and event identity is not one-to-one", state_effect="blocked")
+            event_ids.add(event.get("event_id"))
+            referenced_messages.add(event.get("accepted_message_id"))
             if event.get("prior_event_digest") != previous_digest:
                 raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Event chain digest mismatch", state_effect="blocked")
             if event.get("event_digest") != digest_without(event, "event_digest"):
                 raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Event digest mismatch", state_effect="blocked")
-            projection = (event.get("payload") or {}).get("state_projection")
+            event_payload = event.get("payload")
+            projection = event_payload.get("state_projection") if isinstance(event_payload, dict) else None
             if not isinstance(projection, dict):
                 raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Event has no state projection", state_effect="blocked")
-            current = projection
-            previous_digest = event["event_digest"]
-        if current is None:
-            current = _empty_state(self._installation()["installation_id"])
+            validate_transition_contract(
+                accepted_message,
+                event,
+                projection,
+                current,
+                allow_legacy_replay=True,
+            )
+            message_payload = accepted_message.get("payload")
+            expected_event_payload = (
+                dict(message_payload, state_projection=projection)
+                if isinstance(message_payload, dict)
+                else None
+            )
+            expected_content_digest = digest_value({
+                "kind": accepted_message.get("kind"),
+                "principal_id": accepted_message.get("sender_principal_id"),
+                "epoch": accepted_message.get("leader_epoch"),
+                "expected_revision": accepted_message.get("expected_state_revision"),
+                "payload": message_payload,
+            })
+            result = accepted_message.get("result")
+            if (
+                projection.get("projection_digest") != _state_digest(projection)
+                or event.get("prior_revision") != previous_revision
+                or event.get("new_revision") != previous_revision + 1
+                or projection.get("revision") != event.get("new_revision")
+                or projection.get("last_event_id") != event.get("event_id")
+                or projection.get("last_event_digest") != event.get("prior_event_digest")
+                or projection.get("updated_at") != event.get("occurred_at")
+                or projection.get("installation_id") != event.get("installation_id")
+                or accepted_message.get("expected_state_revision") != event.get("prior_revision")
+                or accepted_message.get("sender_principal_id") != event.get("actor_principal_id")
+                or accepted_message.get("leader_epoch") != event.get("leader_epoch")
+                or accepted_message.get("content_digest") != expected_content_digest
+                or event.get("payload") != expected_event_payload
+                or not isinstance(result, dict)
+                or result.get("message_id") != accepted_message.get("message_id")
+                or result.get("event_id") != event.get("event_id")
+                or result.get("revision") != event.get("new_revision")
+                or result.get("status") != projection.get("status")
+            ):
+                raise ControlPlaneError(
+                    "VALP-E-REGISTRY-CONSISTENCY",
+                    "Event projection or accepted message conflicts with replay",
+                    state_effect="blocked",
+                )
+            current = dict(projection)
+            current["last_event_digest"] = event["event_digest"]
             current["projection_digest"] = _state_digest(current)
-        elif current.get("last_event_digest") != previous_digest:
-            current["last_event_digest"] = previous_digest
+            previous_digest = event["event_digest"]
+            previous_revision = event["new_revision"]
+        if referenced_messages != set(message_by_id):
+            raise ControlPlaneError(
+                "VALP-E-REGISTRY-CONSISTENCY",
+                "Accepted message ledger contains an orphan record",
+                state_effect="blocked",
+            )
+        if not events:
             current["projection_digest"] = _state_digest(current)
         persisted = read_json(self.state_path)
         if persisted.get("projection_digest") != _state_digest(persisted):
             raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "Persisted state digest mismatch", state_effect="blocked")
-        if persisted.get("revision") != current.get("revision") or persisted.get("status") != current.get("status"):
+        if persisted != current:
             raise ControlPlaneError("VALP-E-REGISTRY-CONSISTENCY", "State projection differs from event replay", state_effect="blocked")
         return current
 
@@ -1738,13 +2343,183 @@ class InstallationCore:
         }
 
     def migrate_plan(self, workspace: Path, target_version: str = PROTOCOL_VERSION) -> dict[str, Any]:
+        with self._lock():
+            self._recover_transition_unlocked()
+            return self._migrate_plan_unlocked(workspace, target_version=target_version)
+
+    def _draft_control_files(self) -> list[tuple[str, Path]]:
+        files: list[tuple[str, Path]] = []
+        for path in sorted(self.root.rglob("*")):
+            source_ref = str(path.relative_to(self.root))
+            if not source_ref or source_ref.split("/", 1)[0] in DRAFT_MIGRATION_EXCLUDED_ROOTS:
+                continue
+            if path.is_symlink():
+                raise ControlPlaneError(
+                    "VALP-E-MIGRATION-UNSUPPORTED",
+                    f"Draft migration does not follow symlinks: {source_ref}",
+                )
+            if path.is_file():
+                files.append((source_ref, path))
+        return files
+
+    def _draft_migration_bindings(self) -> tuple[list[dict[str, Any]], list[str]]:
+        affected_tasks = []
+        task_root = self.root / "tasks"
+        if task_root.is_dir():
+            from .task_control import task_state as load_task_state
+
+            for state_path in sorted(task_root.glob("*/task-state.json")):
+                task_state = load_task_state(self.root, state_path.parent.name)
+                if task_state.get("protocol_version") != DRAFT_PROTOCOL_VERSION:
+                    continue
+                if task_state.get("status") not in {"done", "failed", "cancelled"}:
+                    raise ControlPlaneError(
+                        "VALP-E-MIGRATION-UNSUPPORTED",
+                        f"Draft task is not quiescent: {task_state.get('task_id')}",
+                    )
+                affected_tasks.append({
+                    "task_id": task_state.get("task_id"),
+                    "protocol_version": task_state.get("protocol_version"),
+                    "status": task_state.get("status"),
+                    "revision": task_state.get("revision"),
+                    "handling": "legacy-read-only",
+                })
+        plugins_root = self.root / "plugins"
+        affected_plugins = (
+            sorted(path.name for path in plugins_root.iterdir())
+            if plugins_root.is_dir()
+            else []
+        )
+        return affected_tasks, affected_plugins
+
+    def _pending_migration_activation(self, plan: dict[str, Any]) -> bool:
+        journal_path = self._path("transition-journal.json")
+        if not journal_path.is_file():
+            return False
+        journal = read_json(journal_path)
+        event = journal.get("event")
+        payload = event.get("payload") if isinstance(event, dict) else None
+        if (
+            journal.get("journal_digest") != digest_without(journal, "journal_digest")
+            or not isinstance(event, dict)
+            or event.get("event_kind") != "migration_activated"
+            or not isinstance(payload, dict)
+            or payload.get("migration_id") != plan.get("migration_id")
+        ):
+            raise ControlPlaneError(
+                "VALP-E-REGISTRY-CONSISTENCY",
+                "Pending transition journal does not match migration activation",
+            )
+        return True
+
+    def stage_migration_plan(self, plan_path: Path) -> dict[str, Any]:
+        with self._lock():
+            self._recover_transition_unlocked()
+            if self.state()["status"] == "migrating":
+                raise ControlPlaneError(
+                    "VALP-E-STATE-TRANSITION",
+                    "Cannot replace the plan for an interrupted migration",
+                )
+            plan = read_json(plan_path.expanduser().resolve())
+            validate_migration_plan_artifact(plan)
+            if (
+                plan.get("plan_digest") != digest_without(plan, "plan_digest")
+                or plan.get("installation_id") != self._installation().get("installation_id")
+                or plan.get("target_protocol_version") != PROTOCOL_VERSION
+                or plan.get("source_protocol_version") not in {"0.2.0", DRAFT_PROTOCOL_VERSION}
+            ):
+                raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "External migration plan is unsupported")
+            write_json(self._path("migration-plan.json"), plan)
+            return plan
+
+    def _migrate_plan_unlocked(self, workspace: Path, target_version: str = PROTOCOL_VERSION) -> dict[str, Any]:
         if target_version != PROTOCOL_VERSION:
             raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", f"Unsupported target version {target_version}")
         self._require_initialized()
+        installation = self._installation()
+        source_version = str(installation.get("active_protocol_version") or "")
+        if source_version == DRAFT_PROTOCOL_VERSION:
+            migration_id = _new_id("migration")
+            source_root = self.root
+            target_root = self.root / "migration-snapshots" / migration_id
+            files = []
+            for source_ref, path in self._draft_control_files():
+                files.append({
+                    "source_ref": source_ref,
+                    "digest": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "bytes": path.stat().st_size,
+                })
+            affected_tasks, affected_plugins = self._draft_migration_bindings()
+            state = self.state()
+            plan = {
+                "schema_version": "valp-migration-plan.v1",
+                "migration_id": migration_id,
+                "installation_id": installation["installation_id"],
+                "source_protocol_version": source_version,
+                "target_protocol_version": target_version,
+                "source_root": str(source_root),
+                "target_root": str(target_root),
+                "preserve_original_bytes": True,
+                "task_file_count": len(files),
+                "files": files,
+                "source_schema_versions": {
+                    "installation": installation.get("schema_version"),
+                    "protocol_manifest": self._manifest().get("schema_version"),
+                },
+                "target_schema_versions": {
+                    "installation": installation.get("schema_version"),
+                    "protocol_manifest": self._manifest().get("schema_version"),
+                },
+                "ordered_transforms": [
+                    "checkpoint complete control root",
+                    "promote installation protocol declaration",
+                    "promote manifest read and write declarations",
+                    "validate manifest digest and control replay",
+                    "activate stable installation",
+                ],
+                "legacy_fields": ["terminal draft tasks remain immutable legacy-read-only"],
+                "expected_state_revision": state["revision"],
+                "expected_registry_revision": state["registry_revision"],
+                "expected_leader_epoch": state["active_leader_epoch"],
+                "required_capabilities": ["exclusive_control_lock", "atomic_file_replace", "sha256"],
+                "affected_plugins": affected_plugins,
+                "affected_tasks": affected_tasks,
+                "approval_requirements": ["explicit_user_approval"],
+                "rollback_strategy": "restore exact installation and manifest bytes from the complete checkpoint",
+                "validation_cases": [
+                    "manifest digest",
+                    "installation replay",
+                    "Leader identity and epoch preservation",
+                    "terminal draft tasks remain read-only",
+                ],
+                "preconditions": [
+                    "checkpointed control-root files remain unchanged",
+                    "all affected draft tasks are terminal",
+                    "cooperative writers are fenced by the installation lock",
+                    "migration snapshot target is absent or is the exact interrupted checkpoint",
+                    "explicit approval is present",
+                ],
+                "created_at": utc_now(),
+            }
+            validate_migration_plan_contract(plan)
+            plan["plan_digest"] = digest_without(plan, "plan_digest")
+            write_json(self._path("migration-plan.json"), plan)
+            return plan
+
         legacy_root = workspace.resolve() / ".herdr-loop"
         task_files: list[dict[str, Any]] = []
+        if legacy_root.is_symlink():
+            raise ControlPlaneError(
+                "VALP-E-MIGRATION-UNSUPPORTED",
+                "Legacy migration source root must not be a symlink",
+            )
         if legacy_root.exists():
             for path in sorted(legacy_root.rglob("*")):
+                if path.is_symlink():
+                    raise ControlPlaneError(
+                        "VALP-E-MIGRATION-UNSUPPORTED",
+                        f"Legacy migration does not follow symlinks: {path.relative_to(legacy_root)}",
+                    )
                 if path.is_file():
                     task_files.append({"source_ref": str(path.relative_to(workspace.resolve())), "digest": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(), "bytes": path.stat().st_size})
         plan = {
@@ -1771,32 +2546,169 @@ class InstallationCore:
         plan = read_json(self._path("migration-plan.json"))
         if plan.get("plan_digest") != digest_without(plan, "plan_digest"):
             raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration plan digest mismatch")
-        state = self.state()
-        if state["status"] not in {"active", "degraded"}:
-            raise ControlPlaneError("VALP-E-STATE-TRANSITION", "Migration requires an active or degraded installation")
-        self._transition(
-            event_kind="migration_apply_approved",
-            message_kind="command.protocol.migrate",
-            principal_id="user",
-            principal_kind="human",
-            epoch=state["active_leader_epoch"],
-            expected_revision=state["revision"],
-            payload={"migration_id": plan["migration_id"], "plan_digest": plan["plan_digest"]},
-            target_status="migrating",
-            idempotency_key="migration-apply-" + plan["migration_id"],
-        )
+        if (
+            plan.get("installation_id") != self._installation().get("installation_id")
+            or plan.get("target_protocol_version") != PROTOCOL_VERSION
+            or plan.get("source_protocol_version") not in {"0.2.0", DRAFT_PROTOCOL_VERSION}
+        ):
+            raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration plan identity or version is unsupported")
+        validate_migration_plan_artifact(plan)
+        if plan.get("source_protocol_version") == DRAFT_PROTOCOL_VERSION:
+            with self._lock():
+                return self._migrate_draft_apply_unlocked(plan)
+        with self._lock():
+            return self._migrate_legacy_apply_unlocked(workspace, plan)
+
+    def _migrate_legacy_apply_unlocked(self, workspace: Path, plan: dict[str, Any]) -> dict[str, Any]:
+        self._recover_transition_unlocked()
         source = workspace.resolve() / ".herdr-loop"
         target = self.root / "legacy"
+        if source.is_symlink():
+            raise ControlPlaneError(
+                "VALP-E-MIGRATION-UNSUPPORTED",
+                "Legacy migration source root must not be a symlink",
+            )
+        if Path(str(plan.get("source_root") or "")).resolve() != source.resolve():
+            raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration source root mismatch")
+        if Path(str(plan.get("target_root") or "")).resolve() != target.resolve():
+            raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration target root mismatch")
+        files = plan.get("files") or []
+        prefix = str(source.relative_to(workspace.resolve())) + "/"
+        target_inventory: dict[str, dict[str, Any]] = {}
+        for item in files:
+            source_ref = safe_control_ref(str(item.get("source_ref") or ""))
+            if not source_ref.startswith(prefix):
+                raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Legacy source ref is outside its root")
+            target_ref = source_ref[len(prefix):]
+            if not target_ref or target_ref in target_inventory:
+                raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Legacy migration inventory is inconsistent")
+            target_inventory[target_ref] = item
+            source_path = workspace.resolve() / source_ref
+            expected_digest = str(item.get("digest") or "")
+            if (
+                not source_path.is_file()
+                or source_path.stat().st_size != item.get("bytes")
+                or "sha256:" + hashlib.sha256(source_path.read_bytes()).hexdigest() != expected_digest
+            ):
+                raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", f"Migration source changed: {source_ref}")
+
+        actual_source_refs = set()
+        if source.is_dir():
+            for path in source.rglob("*"):
+                source_ref = str(path.relative_to(source))
+                if path.is_symlink():
+                    raise ControlPlaneError(
+                        "VALP-E-MIGRATION-UNSUPPORTED",
+                        f"Legacy migration does not follow symlinks: {source_ref}",
+                    )
+                if path.is_file():
+                    actual_source_refs.add(source_ref)
+        if actual_source_refs != set(target_inventory):
+            raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Legacy migration source inventory changed")
+
+        def validate_target(base: Path) -> None:
+            if not base.is_dir() or base.is_symlink():
+                raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Legacy migration target is missing")
+            actual_refs = set()
+            for path in base.rglob("*"):
+                target_ref = str(path.relative_to(base))
+                if path.is_symlink():
+                    raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", f"Legacy target contains a symlink: {target_ref}")
+                if path.is_file():
+                    actual_refs.add(target_ref)
+            if actual_refs != set(target_inventory):
+                raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Legacy migration target inventory conflicts with plan")
+            for target_ref, item in target_inventory.items():
+                payload = (base / target_ref).read_bytes()
+                if (
+                    len(payload) != item.get("bytes")
+                    or "sha256:" + hashlib.sha256(payload).hexdigest() != item.get("digest")
+                ):
+                    raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", f"Legacy migration target changed: {target_ref}")
+
+        receipt_path = self._path("migration-receipt.json")
+        existing_receipt = read_json(receipt_path) if receipt_path.is_file() else None
+        if (
+            existing_receipt
+            and existing_receipt.get("migration_id") == plan.get("migration_id")
+            and existing_receipt.get("plan_digest") == plan.get("plan_digest")
+            and existing_receipt.get("status") == "applied"
+        ):
+            if existing_receipt.get("receipt_digest") != digest_without(existing_receipt, "receipt_digest"):
+                raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration receipt digest mismatch")
+            if (
+                existing_receipt.get("installation_id") != plan.get("installation_id")
+                or existing_receipt.get("source_protocol_version") != plan.get("source_protocol_version")
+                or existing_receipt.get("target_protocol_version") != plan.get("target_protocol_version")
+                or Path(str(existing_receipt.get("source_root") or "")).resolve()
+                != Path(str(plan.get("source_root") or "")).resolve()
+                or Path(str(existing_receipt.get("target_root") or "")).resolve() != target.resolve()
+                or existing_receipt.get("preserved_file_count") != plan.get("task_file_count")
+            ):
+                raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration receipt conflicts with plan")
+            validate_target(target)
+            state = self.state()
+            if state["status"] == "migrating":
+                self._transition_unlocked(
+                    event_kind="migration_activated",
+                    message_kind="event.protocol.migration.activated",
+                    principal_id="bootstrap-controller",
+                    principal_kind="bootstrap-controller",
+                    epoch=state["active_leader_epoch"],
+                    expected_revision=state["revision"],
+                    payload={"migration_id": plan["migration_id"], "receipt_digest": existing_receipt["receipt_digest"]},
+                    target_status="active",
+                    idempotency_key="migration-complete-" + plan["migration_id"],
+                )
+            elif state["status"] != "active":
+                raise ControlPlaneError("VALP-E-STATE-TRANSITION", "Applied migration receipt conflicts with installation state")
+            return existing_receipt
+
+        staging_parent = self.root / "migration-snapshots"
+        if staging_parent.is_symlink():
+            raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Legacy migration staging root is unsafe")
+        staging_parent.mkdir(parents=True, exist_ok=True)
+        staged = staging_parent / f"legacy-{plan['migration_id']}.staging"
+        if staged.parent.resolve() != staging_parent.resolve():
+            raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Legacy migration staging path escapes its root")
+
+        state = self.state()
+        resuming = state["status"] == "migrating"
+        if state["status"] in {"active", "degraded"}:
+            if target.exists() or staged.exists() or staged.is_symlink():
+                raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration target already exists; refusing overwrite")
+            self._transition_unlocked(
+                event_kind="migration_apply_approved",
+                message_kind="command.protocol.migrate",
+                principal_id="user",
+                principal_kind="human",
+                epoch=state["active_leader_epoch"],
+                expected_revision=state["revision"],
+                payload={"migration_id": plan["migration_id"], "plan_digest": plan["plan_digest"]},
+                target_status="migrating",
+                idempotency_key="migration-apply-" + plan["migration_id"],
+            )
+        elif state["status"] != "migrating":
+            raise ControlPlaneError("VALP-E-STATE-TRANSITION", "Migration requires an active or matching interrupted installation")
+
         try:
-            if source.exists():
-                if target.exists():
-                    raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration target already exists; refusing overwrite")
-                expected_files = {item["source_ref"]: item["digest"] for item in plan.get("files") or []}
-                for source_ref, expected_digest in expected_files.items():
-                    source_path = workspace.resolve() / source_ref
-                    if not source_path.is_file() or "sha256:" + hashlib.sha256(source_path.read_bytes()).hexdigest() != expected_digest:
-                        raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", f"Legacy source changed: {source_ref}")
-                shutil.copytree(source, target)
+            if target.exists():
+                validate_target(target)
+            else:
+                if staged.is_symlink():
+                    raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Legacy migration staging path is unsafe")
+                if staged.exists():
+                    if not resuming:
+                        raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Legacy migration staging target already exists")
+                    shutil.rmtree(staged)
+                if source.is_dir():
+                    shutil.copytree(source, staged)
+                else:
+                    staged.mkdir(parents=True)
+                validate_target(staged)
+                os.replace(staged, target)
+                _sync_directory(target.parent)
+            validate_target(target)
             receipt = {
                 "schema_version": "valp-migration-receipt.v1",
                 "migration_id": plan["migration_id"],
@@ -1811,9 +2723,9 @@ class InstallationCore:
                 "created_at": utc_now(),
             }
             receipt["receipt_digest"] = digest_without(receipt, "receipt_digest")
-            write_json(self._path("migration-receipt.json"), receipt)
+            write_json(receipt_path, receipt)
             state = self.state()
-            self._transition(
+            self._transition_unlocked(
                 event_kind="migration_activated",
                 message_kind="event.protocol.migration.activated",
                 principal_id="bootstrap-controller",
@@ -1826,6 +2738,8 @@ class InstallationCore:
             )
             return receipt
         except Exception as exc:
+            if self._pending_migration_activation(plan):
+                raise
             receipt = {
                 "schema_version": "valp-migration-receipt.v1",
                 "migration_id": plan["migration_id"],
@@ -1838,10 +2752,10 @@ class InstallationCore:
                 "created_at": utc_now(),
             }
             receipt["receipt_digest"] = digest_without(receipt, "receipt_digest")
-            write_json(self._path("migration-receipt.json"), receipt)
+            write_json(receipt_path, receipt)
             try:
                 blocked_state = self.state()
-                self._transition(
+                self._transition_unlocked(
                     event_kind="migration_unrecoverable",
                     message_kind="event.protocol.migration.blocked",
                     principal_id="bootstrap-controller",
@@ -1854,6 +2768,334 @@ class InstallationCore:
                 )
             except ControlPlaneError:
                 pass
+            raise
+
+    def _migrate_draft_apply_unlocked(self, plan: dict[str, Any]) -> dict[str, Any]:
+        self._recover_transition_unlocked()
+        current_plan = read_json(self._path("migration-plan.json"))
+        if current_plan != plan or plan.get("plan_digest") != digest_without(plan, "plan_digest"):
+            raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration plan changed before apply")
+
+        snapshot_root = self.root / "migration-snapshots"
+        target = snapshot_root / str(plan["migration_id"])
+        if snapshot_root.is_symlink() or target.is_symlink():
+            raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration snapshot path is unsafe")
+        if (
+            snapshot_root.parent.resolve() != self.root.resolve()
+            or target.parent.resolve() != snapshot_root.resolve()
+        ):
+            raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration snapshot target escapes its root")
+        if Path(str(plan.get("source_root") or "")).resolve() != self.root.resolve():
+            raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration source root mismatch")
+        if Path(str(plan.get("target_root") or "")).resolve() != target.resolve():
+            raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration target root mismatch")
+
+        files = plan.get("files") or []
+        if not isinstance(files, list) or plan.get("task_file_count") != len(files):
+            raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration file inventory is inconsistent")
+        inventory = {safe_control_ref(str(item.get("source_ref") or "")): item for item in files}
+        required_refs = {"installation.json", "protocol-manifest.json", "state.json"}
+        if not required_refs.issubset(inventory) or len(inventory) != len(files):
+            raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Draft migration inventory is unsupported")
+        current_refs = {source_ref for source_ref, _ in self._draft_control_files()}
+        if current_refs != set(inventory):
+            raise ControlPlaneError(
+                "VALP-E-MIGRATION-UNSUPPORTED",
+                "Draft migration control-root inventory changed",
+            )
+        affected_tasks, affected_plugins = self._draft_migration_bindings()
+        if (
+            plan.get("affected_tasks") != affected_tasks
+            or plan.get("affected_plugins") != affected_plugins
+        ):
+            raise ControlPlaneError(
+                "VALP-E-MIGRATION-UNSUPPORTED",
+                "Draft migration task or plugin bindings changed",
+            )
+
+        def checked_bytes(base: Path, *, exact_inventory: bool = False) -> dict[str, bytes]:
+            if base.is_symlink():
+                raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration checkpoint root is a symlink")
+            if exact_inventory:
+                actual_refs = set()
+                for path in sorted(base.rglob("*")):
+                    source_ref = str(path.relative_to(base))
+                    if path.is_symlink():
+                        raise ControlPlaneError(
+                            "VALP-E-MIGRATION-UNSUPPORTED",
+                            f"Migration snapshot contains a symlink: {source_ref}",
+                        )
+                    if path.is_file():
+                        actual_refs.add(source_ref)
+                if actual_refs != set(inventory):
+                    raise ControlPlaneError(
+                        "VALP-E-MIGRATION-UNSUPPORTED",
+                        "Migration snapshot inventory conflicts with plan",
+                    )
+            result: dict[str, bytes] = {}
+            for source_ref, item in inventory.items():
+                path = base / source_ref
+                if not path.is_file():
+                    raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", f"Migration source changed: {source_ref}")
+                payload = path.read_bytes()
+                expected_digest = str(item.get("digest") or "")
+                if len(payload) != item.get("bytes") or "sha256:" + hashlib.sha256(payload).hexdigest() != expected_digest:
+                    raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", f"Migration source changed: {source_ref}")
+                result[source_ref] = payload
+            return result
+
+        def validate_checkpoint(state: dict[str, Any]) -> dict[str, bytes]:
+            snapshot_bytes = checked_bytes(target, exact_inventory=True)
+            mutable_refs = {
+                "installation.json",
+                "protocol-manifest.json",
+                "state.json",
+                "messages.jsonl",
+                "events.jsonl",
+            }
+            for source_ref, payload in snapshot_bytes.items():
+                if source_ref in mutable_refs:
+                    continue
+                current_path = self.root / source_ref
+                if current_path.is_symlink() or not current_path.is_file() or current_path.read_bytes() != payload:
+                    raise ControlPlaneError(
+                        "VALP-E-MIGRATION-UNSUPPORTED",
+                        f"Checkpointed migration source changed: {source_ref}",
+                    )
+            try:
+                checkpoint_state = json.loads(snapshot_bytes["state.json"])
+            except (KeyError, json.JSONDecodeError) as exc:
+                raise ControlPlaneError(
+                    "VALP-E-MIGRATION-UNSUPPORTED",
+                    "Migration checkpoint state is malformed",
+                ) from exc
+            for field in (
+                "installation_id",
+                "registry_revision",
+                "active_leader_epoch",
+                "selected_leader",
+                "active_leader",
+            ):
+                if state.get(field) != checkpoint_state.get(field):
+                    raise ControlPlaneError(
+                        "VALP-E-MIGRATION-UNSUPPORTED",
+                        f"Migration changed checkpointed authority field: {field}",
+                    )
+            if (
+                state.get("active_leader_epoch") != plan.get("expected_leader_epoch")
+                or state.get("registry_revision") != plan.get("expected_registry_revision")
+            ):
+                raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration authority checkpoint changed")
+            self.replay()
+            return snapshot_bytes
+
+        def validate_stable_files(snapshot_bytes: dict[str, bytes]) -> None:
+            try:
+                original_installation = json.loads(snapshot_bytes["installation.json"])
+                original_manifest = json.loads(snapshot_bytes["protocol-manifest.json"])
+                installation = self._installation()
+                manifest = self._manifest()
+            except (ControlPlaneError, KeyError, json.JSONDecodeError) as exc:
+                raise ControlPlaneError(
+                    "VALP-E-MIGRATION-UNSUPPORTED",
+                    "Stable migration documents are malformed",
+                ) from exc
+            expected_installation = dict(original_installation)
+            expected_installation["active_protocol_version"] = PROTOCOL_VERSION
+            expected_manifest = dict(original_manifest)
+            expected_manifest["active_protocol_version"] = PROTOCOL_VERSION
+            expected_manifest["supported_protocol_read_versions"] = [PROTOCOL_VERSION, "0.2.0"]
+            expected_manifest["supported_protocol_write_versions"] = [PROTOCOL_VERSION]
+            expected_manifest["migration_paths"] = SUPPORTED_MIGRATION_PATHS
+            expected_manifest["manifest_digest"] = digest_without(expected_manifest, "manifest_digest")
+            if installation != expected_installation or manifest != expected_manifest:
+                raise ControlPlaneError(
+                    "VALP-E-MIGRATION-UNSUPPORTED",
+                    "Stable migration documents differ from the checkpointed transform",
+                )
+
+        state = self.state()
+        if state["status"] not in {"active", "migrating"}:
+            raise ControlPlaneError(
+                "VALP-E-STATE-TRANSITION",
+                "Draft migration requires an active installation or a matching interrupted migration",
+            )
+        receipt_path = self._path("migration-receipt.json")
+        existing_receipt = read_json(receipt_path) if receipt_path.is_file() else None
+        matching_applied_receipt = bool(
+            existing_receipt
+            and existing_receipt.get("migration_id") == plan.get("migration_id")
+            and existing_receipt.get("plan_digest") == plan.get("plan_digest")
+            and existing_receipt.get("status") == "applied"
+        )
+        if matching_applied_receipt:
+            if existing_receipt.get("receipt_digest") != digest_without(existing_receipt, "receipt_digest"):
+                raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration receipt digest mismatch")
+            if (
+                existing_receipt.get("installation_id") != plan.get("installation_id")
+                or existing_receipt.get("source_protocol_version") != plan.get("source_protocol_version")
+                or existing_receipt.get("target_protocol_version") != plan.get("target_protocol_version")
+                or Path(str(existing_receipt.get("source_root") or "")).resolve()
+                != Path(str(plan.get("source_root") or "")).resolve()
+                or Path(str(existing_receipt.get("target_root") or "")).resolve()
+                != target.resolve()
+                or existing_receipt.get("preserved_file_count") != plan.get("task_file_count")
+            ):
+                raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration receipt conflicts with plan")
+            snapshot_bytes = validate_checkpoint(state)
+            validate_stable_files(snapshot_bytes)
+            if state["status"] == "migrating":
+                self._transition_unlocked(
+                    event_kind="migration_activated",
+                    message_kind="event.protocol.migration.activated",
+                    principal_id="bootstrap-controller",
+                    principal_kind="bootstrap-controller",
+                    epoch=state["active_leader_epoch"],
+                    expected_revision=state["revision"],
+                    payload={"migration_id": plan["migration_id"], "receipt_digest": existing_receipt["receipt_digest"]},
+                    target_status="active",
+                    idempotency_key="migration-complete-" + plan["migration_id"],
+                )
+            return existing_receipt
+
+        if state["status"] == "active" and (
+            state["revision"] != plan.get("expected_state_revision")
+            or state["registry_revision"] != plan.get("expected_registry_revision")
+            or state["active_leader_epoch"] != plan.get("expected_leader_epoch")
+        ):
+            raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration checkpoint revision changed")
+
+        if state["status"] == "active":
+            original_bytes = checked_bytes(self.root)
+            if target.exists():
+                if checked_bytes(target, exact_inventory=True) != original_bytes:
+                    raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration snapshot conflicts with source")
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                staged_target = Path(tempfile.mkdtemp(prefix=f".{plan['migration_id']}.", dir=target.parent))
+                for source_ref, payload in original_bytes.items():
+                    write_bytes_atomic(staged_target / source_ref, payload)
+                checked_bytes(staged_target, exact_inventory=True)
+                os.replace(staged_target, target)
+                _sync_directory(target.parent)
+            self._transition_unlocked(
+                event_kind="migration_apply_approved",
+                message_kind="command.protocol.migrate",
+                principal_id="user",
+                principal_kind="human",
+                epoch=state["active_leader_epoch"],
+                expected_revision=state["revision"],
+                payload={"migration_id": plan["migration_id"], "plan_digest": plan["plan_digest"]},
+                target_status="migrating",
+                idempotency_key="migration-apply-" + plan["migration_id"],
+            )
+        else:
+            original_bytes = validate_checkpoint(state)
+
+        try:
+            original_installation = json.loads(original_bytes["installation.json"])
+            original_manifest = json.loads(original_bytes["protocol-manifest.json"])
+            if (
+                not isinstance(original_installation, dict)
+                or not isinstance(original_manifest, dict)
+                or original_installation.get("installation_id") != plan["installation_id"]
+                or original_installation.get("active_protocol_version") != DRAFT_PROTOCOL_VERSION
+                or original_manifest.get("active_protocol_version") != DRAFT_PROTOCOL_VERSION
+                or original_manifest.get("manifest_digest") != digest_without(original_manifest, "manifest_digest")
+            ):
+                raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Draft migration snapshot is inconsistent")
+
+            installation = dict(original_installation)
+            installation["active_protocol_version"] = PROTOCOL_VERSION
+            write_json(self.installation_path, installation)
+            manifest = dict(original_manifest)
+            manifest["active_protocol_version"] = PROTOCOL_VERSION
+            manifest["supported_protocol_read_versions"] = [PROTOCOL_VERSION, "0.2.0"]
+            manifest["supported_protocol_write_versions"] = [PROTOCOL_VERSION]
+            manifest["migration_paths"] = SUPPORTED_MIGRATION_PATHS
+            manifest["manifest_digest"] = digest_without(manifest, "manifest_digest")
+            write_json(self._path("protocol-manifest.json"), manifest)
+
+            receipt = {
+                "schema_version": "valp-migration-receipt.v1",
+                "migration_id": plan["migration_id"],
+                "installation_id": plan["installation_id"],
+                "status": "applied",
+                "plan_digest": plan["plan_digest"],
+                "source_protocol_version": plan["source_protocol_version"],
+                "target_protocol_version": plan["target_protocol_version"],
+                "source_root": plan["source_root"],
+                "target_root": str(target),
+                "preserved_file_count": plan["task_file_count"],
+                "created_at": utc_now(),
+            }
+            receipt["receipt_digest"] = digest_without(receipt, "receipt_digest")
+            write_json(receipt_path, receipt)
+            active_state = self.state()
+            self._transition_unlocked(
+                event_kind="migration_activated",
+                message_kind="event.protocol.migration.activated",
+                principal_id="bootstrap-controller",
+                principal_kind="bootstrap-controller",
+                epoch=active_state["active_leader_epoch"],
+                expected_revision=active_state["revision"],
+                payload={"migration_id": plan["migration_id"], "receipt_digest": receipt["receipt_digest"]},
+                target_status="active",
+                idempotency_key="migration-complete-" + plan["migration_id"],
+            )
+            return receipt
+        except Exception as exc:
+            if self._pending_migration_activation(plan):
+                raise
+            rolled_back = False
+            try:
+                write_bytes_atomic(self.installation_path, original_bytes["installation.json"])
+                write_bytes_atomic(self._path("protocol-manifest.json"), original_bytes["protocol-manifest.json"])
+                rollback_state = self.state()
+                if rollback_state["status"] == "migrating":
+                    self._transition_unlocked(
+                        event_kind="migration_rolled_back",
+                        message_kind="event.protocol.migration.rolled_back",
+                        principal_id="bootstrap-controller",
+                        principal_kind="bootstrap-controller",
+                        epoch=rollback_state["active_leader_epoch"],
+                        expected_revision=rollback_state["revision"],
+                        payload={"migration_id": plan["migration_id"], "error": str(exc)},
+                        target_status="active",
+                        idempotency_key="migration-rollback-" + plan["migration_id"],
+                    )
+                rolled_back = True
+            except Exception:
+                rolled_back = False
+            rollback_receipt = {
+                "schema_version": "valp-migration-receipt.v1",
+                "migration_id": plan["migration_id"],
+                "installation_id": plan["installation_id"],
+                "status": "rolled_back" if rolled_back else "blocked",
+                "plan_digest": plan["plan_digest"],
+                "source_protocol_version": plan["source_protocol_version"],
+                "target_protocol_version": plan["target_protocol_version"],
+                "error": str(exc),
+                "created_at": utc_now(),
+            }
+            rollback_receipt["receipt_digest"] = digest_without(rollback_receipt, "receipt_digest")
+            write_json(receipt_path, rollback_receipt)
+            if not rolled_back:
+                try:
+                    blocked_state = self.state()
+                    self._transition_unlocked(
+                        event_kind="migration_unrecoverable",
+                        message_kind="event.protocol.migration.blocked",
+                        principal_id="bootstrap-controller",
+                        principal_kind="bootstrap-controller",
+                        epoch=blocked_state["active_leader_epoch"],
+                        expected_revision=blocked_state["revision"],
+                        payload={"migration_id": plan["migration_id"], "error": str(exc), "active_blockers": ["migration_unrecoverable"]},
+                        target_status="blocked",
+                        idempotency_key="migration-blocked-" + plan["migration_id"],
+                    )
+                except ControlPlaneError:
+                    pass
             raise
 
 

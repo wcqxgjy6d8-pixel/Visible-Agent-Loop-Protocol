@@ -1,7 +1,8 @@
 # Support
 
-VALP is an open protocol draft. Use GitHub Discussions for questions, workflow
-feedback, and runtime adapter exploration.
+VALP is an open protocol with a stable `0.3.0` specification and reference CLI.
+Use GitHub Discussions for questions, workflow feedback, and runtime adapter
+exploration.
 
 ## Where To Ask
 

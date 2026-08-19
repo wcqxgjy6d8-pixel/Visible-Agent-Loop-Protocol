@@ -1,10 +1,10 @@
 # Visible Agent Loop Protocol Specification
 
-Version: 0.3.0-draft
+Version: 0.3.0
 
-Status: normative documentation target. The stable public release remains
-`0.2.0`; the layered architecture in Section 21 is not an implementation or
-runtime-conformance claim.
+Status: normative stable specification. Public repository promotion and release
+distribution are separate delivery gates; this document is the source of truth
+for the `0.3.0` protocol contract.
 
 ## 1. Purpose
 

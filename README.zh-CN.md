@@ -48,10 +48,10 @@ branch、push、pull request 或 merge 是用户与其 Agent 自己的后续工�
 
 ## 版本入口与兼容性
 
-当前 GitHub 最新正式版本仍是 `v0.2.0`。`v0.3` 候选分支已经公开供审查，
-但还没有完成 merge、tag 和 release。`v0.3.0` 正式发布前，新用户应使用
-`v0.2.0` 的 release 安装说明，不要直接 clone 候选分支。旧 tag 和 release
-会保留为不可变的历史记录；升级与兼容规则见
+当前使用版本线是 `v0.3.0`，可以直接从已经公开的候选分支和精确 SHA 使用。
+`v0.3` 的 merge、不可变 tag 和 GitHub release metadata 仍是发布流程 gate，
+不是要求新用户退回旧版的理由。`v0.2.0` 只保留为旧运行复现与迁移来源；旧 tag
+和 release 会保留为不可变的历史记录。升级与兼容规则见
 [版本与兼容性](docs/versioning-and-compatibility.md)。
 
 ## v0.3.0 协议与参考 CLI

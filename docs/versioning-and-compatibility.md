@@ -12,10 +12,14 @@ branches for different purposes. They must not be treated as interchangeable.
 | `vX.Y.Z-draft` | Historical or testing pre-release | No, unless explicitly testing that draft |
 | `codex/*`, feature branches | Review or development candidates | No |
 
-While `v0.3.0` is awaiting review and merge, the latest public stable release
-is `v0.2.0`. New users should follow the release installation instructions,
-not clone the `v0.3` candidate branch. After the `v0.3.0` release gate closes,
-the README and this page will name `v0.3.0` as the current stable entry point.
+`v0.3.0` is the current intended usage line. It can be used directly from the
+published candidate branch at the exact candidate SHA while GitHub merge, tag,
+and release metadata are completed. Those are publication and reproducibility
+gates, not a reason to send new users back to `v0.2.0`.
+
+The `v0.2.0` release remains available for legacy reproduction and migration
+only. Once the release gate closes, the immutable `v0.3.0` tag becomes the
+preferred reproducible install reference.
 
 ## Legacy versions
 

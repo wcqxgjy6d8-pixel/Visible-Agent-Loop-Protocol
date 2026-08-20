@@ -41,12 +41,13 @@ single project, operating system, terminal emulator, or model provider.
 ## Current Status
 
 VALP source defines a locally stable `0.3.0` protocol and MIT-licensed reference
-CLI. The `v0.3` candidate branch has been pushed for review, but merge, tag, and
-release remain pending. Until `v0.3.0` is released, the latest public stable
-installation is `v0.2.0`; new users should not install the candidate branch.
-See [versioning and compatibility](docs/versioning-and-compatibility.md). It is
-not a mature hosted platform and should not be described as production-ready by
-itself.
+CLI. `v0.3.0` is the current intended usage line and can be used directly from
+the published candidate branch at its exact SHA. GitHub merge, immutable tag,
+and release metadata are still publication gates, not a reason to route new
+users back to `v0.2.0`. The `v0.2.0` release remains available only as a legacy
+reproduction and migration source. See [versioning and compatibility](docs/versioning-and-compatibility.md).
+It is not a mature hosted platform and should not be described as
+production-ready by itself.
 
 What this repository proves today:
 

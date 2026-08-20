@@ -24,6 +24,7 @@ Start here:
 - [Correction cycle evidence](correction-cycle.md)
 - [Cost governance](cost-governance.md)
 - [Open core and commercial boundary](open-source-commercial-boundary.md)
+- [Skill discovery, routing, and Worker use](skill-recommendation.md)
 - [Runtime adapter checklist](adapter-checklist.md)
 - [Runtime adapters](runtime-adapters.md)
 - [Layered runtime promotion readiness](layered-runtime-promotion-readiness.md)

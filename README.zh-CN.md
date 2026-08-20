@@ -80,6 +80,17 @@ reference CLI。请看 [v0.3 implementation guide](docs/v0.3-implementation.md)�
 本机控制根目录或部署密钥带进来。详细边界见
 [Open core and commercial boundary](docs/open-source-commercial-boundary.md)。
 
+这里真正可推广的不是“VALP 内置 223 个 skill”。Skill 来自企业已经安装或接入的
+Agent / Runtime 环境：Doctor 先扫描每个 Agent 实际可达的 skill；用户选择的
+Leader 再拆解任务并分配 Worker；VALP 按工作项推荐 skill、过滤成每个 Worker
+自己的 skill slice；Worker 先加载 control contract，再调用或明确跳过可达的
+skill，并返回证据。完整流程见
+[Skill 的发现、路由与 Worker 调用](docs/skill-recommendation.md)。
+
+对企业可以这样说：**VALP 不要求你重新买一套 Agent 或 skill；它先盘点你已经
+有的能力，再由 Leader 把任务分给合适的 Worker，让 Worker 调用自己确实可达的
+skill，并把 dispatch、验证、审查和最终证据串起来。**
+
 请把 [完整 RFC](docs/rfcs/0001-v0.3-installation-control-plane.md) 和
 [当前证据矩阵](docs/project-status.md) 对照阅读：前者写已接受的协议契约，
 后者写今天已经证明的实现与 Runtime 范围。

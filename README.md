@@ -76,6 +76,14 @@ customer data, credentials, local control roots, or deployment secrets belong
 here. See the [open-core and commercial boundary](docs/open-source-commercial-boundary.md)
 for the exact boundary.
 
+The practical value is not a claim that VALP bundles 223 skills. Skills come
+from the connected Agent/runtime environment. Doctor inventories which skills
+each Agent can actually reach; the user-selected Leader assigns work; VALP
+matches relevant skills to each work item and gives each Worker a filtered
+dispatch slice; the Worker then loads, uses, or explicitly declines the skill
+and returns evidence. Read [how skill discovery and Worker use work](docs/skill-recommendation.md)
+for the complete chain.
+
 HERDR is the current reference runtime for the automated path. It has a public
 source repository, currently documented at
 <https://github.com/ogulcancelik/herdr>, but VALP completion semantics do not

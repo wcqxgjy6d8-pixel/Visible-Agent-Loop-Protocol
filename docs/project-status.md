@@ -15,7 +15,7 @@ shape, not as a finished multi-agent platform.
 | Reference runtime | HERDR for the documented Full Mode path |
 | Other runtime adapters | Local-process and LangGraph API adapters are implemented; LangGraph includes approved, identity-bound cancellation effect execution, but its proof uses the local development runtime rather than production hosting |
 | Public examples | Three synthetic fixtures, two sanitized real task case studies, and one sanitized visible-dispatch process ledger |
-| Public release | Local publication candidate for `v0.3.0`; push, review, merge, tag, and external release remain pending |
+| Public release | `v0.2.0` remains the latest public stable release; the `v0.3` candidate is pushed for review, while merge, tag, and external release remain pending |
 
 ## v0.3.0 Protocol And Reference CLI
 

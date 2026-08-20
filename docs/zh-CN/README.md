@@ -26,6 +26,13 @@ VALP 要求任务过程留下可审计的证据：
 
 所以 VALP 更像一个 acceptance system，而不是聊天提示词集合。
 
+## 版本入口与兼容性
+
+当前 GitHub 最新正式版本是 `v0.2.0`。`v0.3` 候选分支已经公开供审查，
+但尚未完成 merge、tag 和 release。`v0.3.0` 正式发布前，新用户应使用
+`v0.2.0` release，不要直接安装候选分支。旧 tag 和 release 会保留为不可变的
+历史记录；详细规则见[版本与兼容性](../versioning-and-compatibility.md)。
+
 ## v0.3.0：从任务验收到安装级控制平面
 
 稳定协议与 reference CLI 版本是 `0.3.0`。

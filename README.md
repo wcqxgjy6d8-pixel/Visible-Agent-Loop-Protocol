@@ -41,9 +41,12 @@ single project, operating system, terminal emulator, or model provider.
 ## Current Status
 
 VALP source defines a locally stable `0.3.0` protocol and MIT-licensed reference
-CLI. This checkout is a local publication candidate; GitHub push, review, merge,
-tag, and release remain pending. It is not a mature hosted platform and should
-not be described as production-ready by itself.
+CLI. The `v0.3` candidate branch has been pushed for review, but merge, tag, and
+release remain pending. Until `v0.3.0` is released, the latest public stable
+installation is `v0.2.0`; new users should not install the candidate branch.
+See [versioning and compatibility](docs/versioning-and-compatibility.md). It is
+not a mature hosted platform and should not be described as production-ready by
+itself.
 
 What this repository proves today:
 

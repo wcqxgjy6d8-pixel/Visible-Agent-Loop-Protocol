@@ -14,6 +14,7 @@ Start here:
 - [Protocol specification](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/blob/main/SPEC.md)
 - [RFC 0002: layered architecture and D01-D19 traceability](rfcs/0002-layered-architecture.md)
 - [v0.3.0 installation control plane](v0.3-implementation.md) and RFC
+- [Versioning and compatibility](versioning-and-compatibility.md)
 - [Twelve-layer N/I/P audit matrix](twelve-layer-nip-matrix.md)
 - [Quickstart](quickstart.md)
 - [Compound learning loop](compound-learning-loop.md)

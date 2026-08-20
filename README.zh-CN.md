@@ -46,6 +46,14 @@ VALP 可以拒绝一份不符合当前证据的 Leader 分工，但不能自己
 branch、push、pull request 或 merge 是用户与其 Agent 自己的后续工作，
 不是通用协议的内建步骤。
 
+## 版本入口与兼容性
+
+当前 GitHub 最新正式版本仍是 `v0.2.0`。`v0.3` 候选分支已经公开供审查，
+但还没有完成 merge、tag 和 release。`v0.3.0` 正式发布前，新用户应使用
+`v0.2.0` 的 release 安装说明，不要直接 clone 候选分支。旧 tag 和 release
+会保留为不可变的历史记录；升级与兼容规则见
+[版本与兼容性](docs/versioning-and-compatibility.md)。
+
 ## v0.3.0 协议与参考 CLI
 
 稳定协议与 reference CLI 版本是 `0.3.0`。[RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)

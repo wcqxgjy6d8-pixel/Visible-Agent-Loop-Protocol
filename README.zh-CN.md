@@ -72,6 +72,14 @@ reference CLI。请看 [v0.3 implementation guide](docs/v0.3-implementation.md)�
 平台或生产部署都已得到证明。相关支持声明继续以项目状态矩阵中的具体证据为
 边界，不把有限的 adapter 证明扩张成通用生产可靠性承诺。
 
+## 开源核心与商业交付边界
+
+这个仓库公开的是 MIT 许可的开源核心：协议、reference CLI、schemas、adapter
+契约、示例和测试。企业安装迁移、私有系统集成、托管运行、监控、合规审查、
+培训和支持服务属于独立的商业交付层，不随本仓库打包，也不把客户数据、凭证、
+本机控制根目录或部署密钥带进来。详细边界见
+[Open core and commercial boundary](docs/open-source-commercial-boundary.md)。
+
 请把 [完整 RFC](docs/rfcs/0001-v0.3-installation-control-plane.md) 和
 [当前证据矩阵](docs/project-status.md) 对照阅读：前者写已接受的协议契约，
 后者写今天已经证明的实现与 Runtime 范围。
@@ -121,6 +129,7 @@ evidence、state mapping 和 audit 数据，也可以实现 VALP。
 6. [失败案例图鉴](docs/failure-gallery.md)
 7. [Runtime adapter checklist](docs/adapter-checklist.md)
 8. [社区参与说明](docs/community.md)
+9. [开源核心与商业交付边界](docs/open-source-commercial-boundary.md)
 
 当前讨论入口：
 

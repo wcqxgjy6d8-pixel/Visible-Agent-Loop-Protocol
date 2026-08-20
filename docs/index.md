@@ -23,6 +23,7 @@ Start here:
 - [Failure gallery](failure-gallery.md)
 - [Correction cycle evidence](correction-cycle.md)
 - [Cost governance](cost-governance.md)
+- [Open core and commercial boundary](open-source-commercial-boundary.md)
 - [Runtime adapter checklist](adapter-checklist.md)
 - [Runtime adapters](runtime-adapters.md)
 - [Layered runtime promotion readiness](layered-runtime-promotion-readiness.md)

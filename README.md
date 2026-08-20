@@ -65,6 +65,17 @@ What it does not prove yet:
 - native Full Mode guarantees on every local operating system;
 - production deployment reliability for a third-party runtime.
 
+## Open Core And Commercial Delivery
+
+This repository is the MIT-licensed open core: the protocol, reference CLI,
+schemas, adapter contracts, examples, and tests are public for inspection and
+self-hosted use. Enterprise installation and migration, private integrations,
+hosted operation, monitoring, compliance work, and support are separate
+commercial delivery layers and are not bundled with this repository. No
+customer data, credentials, local control roots, or deployment secrets belong
+here. See the [open-core and commercial boundary](docs/open-source-commercial-boundary.md)
+for the exact boundary.
+
 HERDR is the current reference runtime for the automated path. It has a public
 source repository, currently documented at
 <https://github.com/ogulcancelik/herdr>, but VALP completion semantics do not

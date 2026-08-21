@@ -11,12 +11,15 @@ import hashlib
 import json
 import os
 import re
+import socket
 import subprocess
 import tempfile
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator
+import uuid
 
 try:
     import fcntl
@@ -66,6 +69,73 @@ RECEIPT_FIELDS = {
 
 class ContinuationError(RuntimeError):
     """A fail-closed continuation rejection."""
+
+
+class HerdrUnixSocketRpcClient:
+    """Small synchronous JSON-RPC client for HERDR's local Unix socket."""
+
+    max_response_bytes = 1024 * 1024
+
+    def __init__(self, socket_path: Path | str, *, timeout: float = 30.0):
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
+            raise ContinuationError("HERDR RPC timeout must be a positive number")
+        self.socket_path = str(socket_path)
+        self.timeout = float(timeout)
+
+    def call(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(method, str) or not method or not isinstance(params, dict):
+            raise ContinuationError("HERDR RPC method and params are invalid")
+        request_id = f"valp:{uuid.uuid4().hex}"
+        request = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params,
+        }
+        try:
+            encoded = (
+                json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                + b"\n"
+            )
+        except (TypeError, ValueError) as exc:
+            raise ContinuationError("HERDR RPC params are not JSON serializable") from exc
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+                connection.settimeout(self.timeout)
+                connection.connect(self.socket_path)
+                connection.sendall(encoded)
+                response_bytes = bytearray()
+                while b"\n" not in response_bytes:
+                    chunk = connection.recv(
+                        min(65536, self.max_response_bytes - len(response_bytes))
+                    )
+                    if not chunk:
+                        raise ContinuationError("HERDR RPC closed before a response")
+                    response_bytes.extend(chunk)
+                    if len(response_bytes) >= self.max_response_bytes:
+                        raise ContinuationError("HERDR RPC response exceeds size limit")
+        except socket.timeout as exc:
+            raise ContinuationError("HERDR RPC timed out") from exc
+        except OSError as exc:
+            raise ContinuationError(f"HERDR RPC transport failed: {exc}") from exc
+        line = bytes(response_bytes).split(b"\n", 1)[0]
+        try:
+            response = json.loads(line)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ContinuationError("HERDR RPC response is not valid JSON") from exc
+        if not isinstance(response, dict) or response.get("jsonrpc") not in {None, "2.0"}:
+            raise ContinuationError("HERDR RPC response is malformed")
+        if response.get("id") != request_id:
+            raise ContinuationError("HERDR RPC response id does not match request")
+        if "result" in response and "error" in response:
+            raise ContinuationError("HERDR RPC response has both result and error")
+        if "error" in response:
+            error = response["error"]
+            if not isinstance(error, dict) or not isinstance(error.get("message"), str):
+                raise ContinuationError("HERDR RPC error is malformed")
+        elif "result" not in response:
+            raise ContinuationError("HERDR RPC response has no result or error")
+        return response
 
 
 def canonical_bytes(value: Any) -> bytes:
@@ -899,6 +969,139 @@ class HermesRuntimeControlAdapter:
                 )
             time.sleep(self.poll_interval)
         raise ContinuationError("Hermes runtime-control receipt wait timed out")
+
+
+class HerdrCoordinatorContinueAdapter:
+    """Translate HERDR 0.8 coordinator.continue receipts into VALP receipts."""
+
+    adapter_id = "herdr-coordinator-continue"
+    adapter_version = "0.8"
+
+    def __init__(
+        self,
+        *,
+        coordinator_target: str,
+        runtime_coordinator_id: str,
+        runtime_session_id: str,
+        provider_id: str,
+        rpc_call: Callable[[str, dict[str, Any]], dict[str, Any]],
+        identity_evidence_ref: str,
+        duplicate_suppression_evidence_ref: str,
+        timeout_ms: int | None = None,
+        approval_granted: bool = False,
+    ):
+        if timeout_ms is not None and (type(timeout_ms) is not int or timeout_ms < 0):
+            raise ContinuationError("HERDR coordinator timeout must be a non-negative integer")
+        if type(approval_granted) is not bool:
+            raise ContinuationError("HERDR continuation approval must be a boolean")
+        self.coordinator_target = str(coordinator_target)
+        self.runtime_coordinator_id = str(runtime_coordinator_id)
+        self.runtime_session_id = str(runtime_session_id)
+        self.provider_id = str(provider_id)
+        self.rpc_call = rpc_call
+        self.identity_evidence_ref = str(identity_evidence_ref)
+        self.duplicate_suppression_evidence_ref = str(duplicate_suppression_evidence_ref)
+        self.timeout_ms = timeout_ms
+        self.approval_granted = approval_granted
+
+    def capability(self) -> dict[str, Any]:
+        return capability_declaration(
+            self.adapter_id,
+            self.adapter_version,
+            self.provider_id,
+            "codex",
+            automatic_full=True,
+            invocation_proof=True,
+            duplicate_suppression=True,
+            identity_evidence_ref=self.identity_evidence_ref,
+            duplicate_suppression_evidence_ref=self.duplicate_suppression_evidence_ref,
+        )
+
+    def _runtime_receipt(self, response: Any) -> dict[str, Any]:
+        if not isinstance(response, dict):
+            raise ContinuationError("HERDR coordinator.continue response is malformed")
+        if response.get("error"):
+            error = response["error"]
+            if isinstance(error, dict):
+                code = str(error.get("code") or "unknown_error")
+                message = str(error.get("message") or "unspecified rejection")
+            else:
+                code = "malformed_error"
+                message = str(error)
+            raise ContinuationError(
+                f"HERDR coordinator.continue rejected [{code}]: {message}"
+            )
+        result = response.get("result")
+        if not isinstance(result, dict) or result.get("type") != "coordinator_continued":
+            raise ContinuationError("HERDR coordinator.continue did not return coordinator_continued")
+        receipt = result.get("receipt")
+        required = {
+            "invocation_id", "task_id", "resume_id", "coordinator_id", "provider",
+            "session_id", "state_change_seq", "prompt_digest", "revision", "event_chain",
+        }
+        if not isinstance(receipt, dict) or not required.issubset(receipt):
+            raise ContinuationError("HERDR coordinator.continue receipt is incomplete")
+        return receipt
+
+    def invoke(self, envelope: dict[str, Any], payload: Any) -> dict[str, Any]:
+        target = envelope.get("target") if isinstance(envelope, dict) else None
+        if (
+            not isinstance(target, dict)
+            or target.get("adapter_id") != self.adapter_id
+            or target.get("provider_id") != self.provider_id
+            or target.get("coordinator_agent") != "codex"
+            or target.get("durable_boundary_ref") != self.coordinator_target
+        ):
+            raise ContinuationError("HERDR coordinator.continue target tuple mismatch")
+        params: dict[str, Any] = {
+            "target": self.coordinator_target,
+            "task_id": envelope.get("task_id"),
+            "resume_id": envelope.get("wake_id"),
+            "text": json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            "idempotency_key": idempotency_key(envelope),
+            "approval_granted": self.approval_granted,
+        }
+        if self.timeout_ms is not None:
+            params["timeout_ms"] = self.timeout_ms
+        runtime = self._runtime_receipt(self.rpc_call("coordinator.continue", params))
+        if (
+            runtime.get("task_id") != envelope.get("task_id")
+            or runtime.get("resume_id") != envelope.get("wake_id")
+            or runtime.get("coordinator_id") != self.runtime_coordinator_id
+            or runtime.get("provider") != self.provider_id
+            or runtime.get("session_id") != self.runtime_session_id
+            or runtime.get("event_chain") != list(SUCCESS_EVENTS)
+            or not str(runtime.get("invocation_id") or "").strip()
+            or not _is_digest_id(runtime.get("prompt_digest"))
+            or type(runtime.get("state_change_seq")) is not int
+            or type(runtime.get("revision")) is not int
+            or runtime["state_change_seq"] < 0
+            or runtime["revision"] < 0
+        ):
+            raise ContinuationError("HERDR coordinator.continue receipt correlation mismatch")
+        observed_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        return {
+            "schema_version": "valp-continuation-invocation-receipt.v1",
+            "task_id": envelope["task_id"],
+            "suspension_id": envelope["suspension_id"],
+            "suspension_epoch": envelope["suspension_epoch"],
+            "wake_id": envelope["wake_id"],
+            "continuation_generation": envelope["continuation_generation"],
+            "idempotency_key": idempotency_key(envelope),
+            "payload_digest": envelope["payload_digest"],
+            "adapter": {"id": self.adapter_id, "version": self.adapter_version},
+            "provider": {
+                "id": self.provider_id,
+                "invocation_id": runtime["invocation_id"],
+                "turn_id": f"{self.runtime_session_id}:state-change:{runtime['state_change_seq']}",
+            },
+            "durable_boundary_ref": self.coordinator_target,
+            "identity_evidence_ref": self.identity_evidence_ref,
+            "duplicate_suppression_ref": self.duplicate_suppression_evidence_ref,
+            "started_at": observed_at,
+            "consumed_at": observed_at,
+            "result": "consumed",
+        }
 
 
 class SubprocessRuntimeControlAdapter:

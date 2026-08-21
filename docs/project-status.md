@@ -83,8 +83,13 @@ an identity-bound `resume_pending` bridge only when a provider has registered
 real invocation and duplicate-suppression proof. A local external subprocess
 provider now proves approved invocation, provider-owned status reconciliation,
 post-consumption crash recovery, and exactly one `resume_consumed`. Production
-provider hosting, HERDR runtime-control, native runtime E2E on every platform,
-release support, and production reliability remain separate evidence gates.
+provider hosting, native runtime E2E on every platform, release support, and
+production reliability remain separate evidence gates. On the current macOS
+development host, HERDR 0.8.0 / protocol 19 also produced a live
+`coordinator.continue` invocation receipt for
+`VALP-HERDR-AUTO-CONTINUATION-20260821`; the strict continuation ledger
+validated all six events through exactly one `resume_consumed`, and identical
+replay did not issue a second HERDR continuation request.
 
 ## Verified In This Repository
 

@@ -731,21 +731,28 @@ resume, and `hermes chat -q --resume` uses the user-message channel. Neither is
 a typed `runtime_control` continuation API, so neither may produce the two
 provider-consumption events.
 
-The reference source also exposes `HerdrCoordinatorContinuationAdapter`. It
-submits one `valp-herdr-coordinator-continuation-request.v1` request through the
-runtime-owned `coordinator.continue` API, requires a consumed response carrying
-a complete invocation receipt, and delegates ledger persistence and replay
-suppression to `ContinuationStore`. The request channel forbids user input and
-raw worker output. An identical replay returns the committed receipt without a
-second runtime call.
+The reference source also exposes HERDR coordinator continuation adapters. The
+provider-neutral `HerdrCoordinatorContinuationAdapter` accepts an already-bound
+runtime callback, while `HerdrCoordinatorContinueAdapter` calls HERDR 0.8's
+local socket `coordinator.continue` API directly. Both require a consumed
+response carrying a complete invocation receipt and delegate ledger persistence
+and replay suppression to `ContinuationStore`. The request channel forbids user
+input and raw worker output. An identical replay returns the committed receipt
+without a second runtime call.
 
 This source contract does not make pane insertion, Enter, notifications, or
 `leader_resume_sent` into continuation proof. A HERDR installation may claim
 `automatic_full` only after it binds the adapter to a real runtime-owned API and
-exports the required identity and duplicate-suppression evidence. HERDR 0.8.0
-on the current development host does not expose that endpoint, so live
-activation remains Manual/degraded until a separately approved runtime update
-and fresh E2E prove it.
+exports the required identity and duplicate-suppression evidence. On the current
+macOS development host, HERDR 0.8.0 / protocol 19 exposed `coordinator.continue`
+and produced a live provider invocation receipt for
+`VALP-HERDR-AUTO-CONTINUATION-20260821`: the ledger reached
+`resume_pending -> resume_received -> digest_verified -> resume_accepted ->
+continuation_started -> resume_consumed`, strict continuation validation passed,
+and identical replay returned the committed receipt without a second HERDR
+`coordinator.continue` call. This proves the local HERDR continuation path on
+that host; production hosting, cross-platform runtime proof, and repeated soak
+remain separate evidence gates.
 
 The store revalidates the exact persisted envelope, payload, control
 contract, full invocation key, target tuple, capability proof, and immutable

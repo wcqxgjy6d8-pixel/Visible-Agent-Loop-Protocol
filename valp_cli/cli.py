@@ -36,7 +36,7 @@ from .herdr_adapter import (
     provision_herdr_leader_session,
     recover_herdr_leader_session,
 )
-from .workflow import RUNTIME_CHOICES, collect_runtime_preflight, dispatch_task, publish_task, read_json, resume_suspended_task, route_task, run_command, scan_workspace, wait_for_task
+from .workflow import RUNTIME_CHOICES, collect_runtime_preflight, continue_accepted_dependency_ready_wake, dispatch_task, publish_task, read_json, resume_suspended_task, route_task, run_command, scan_workspace, wait_for_task
 
 
 def split_worker_command(command: str) -> list[str]:
@@ -167,6 +167,14 @@ notes:
         help="Protocol execution deadline in seconds; required only when creating a new suspension",
     )
     wait.add_argument("--poll-interval", type=float, default=0.25, help="Runtime polling interval in seconds")
+    wait.add_argument("--herdr-continuation-socket", help="Unix socket for an active HERDR Leader continuation")
+    wait.add_argument("--herdr-continuation-provider", help="Observed provider identity required by HERDR continuation receipts")
+    wait.add_argument("--herdr-continuation-timeout", type=float, default=30.0, help="HERDR continuation RPC timeout in seconds")
+    wait.add_argument(
+        "--herdr-continuation-approval-granted",
+        action="store_true",
+        help="Explicitly grant approval to the HERDR continuation; defaults to false",
+    )
     wait.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     resume = sub.add_parser(
@@ -188,6 +196,14 @@ notes:
         help="Task-local valp-exception-wake.v1 evidence ref",
     )
     resume.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    resume.add_argument("--herdr-continuation-socket", help="Unix socket for an active HERDR Leader continuation")
+    resume.add_argument("--herdr-continuation-provider", help="Observed provider identity required by HERDR continuation receipts")
+    resume.add_argument("--herdr-continuation-timeout", type=float, default=30.0, help="HERDR continuation RPC timeout in seconds")
+    resume.add_argument(
+        "--herdr-continuation-approval-granted",
+        action="store_true",
+        help="Explicitly grant approval to the HERDR continuation; defaults to false",
+    )
 
     install = sub.add_parser("install", help="Manage the v0.3 installation control plane")
     install_sub = install.add_subparsers(dest="install_command", required=True)
@@ -850,6 +866,18 @@ def main(argv: list[str] | None = None) -> int:
             poll_interval_seconds=args.poll_interval,
             execution_timeout_seconds=args.execution_timeout,
         )
+        if args.herdr_continuation_socket or args.herdr_continuation_provider:
+            if not args.herdr_continuation_socket or not args.herdr_continuation_provider:
+                raise SystemExit("HERDR continuation requires both --herdr-continuation-socket and --herdr-continuation-provider")
+            if (result.get("accepted_wake") or {}).get("wake_reason") == "dependency_ready":
+                result["continuation"] = continue_accepted_dependency_ready_wake(
+                    Path(args.workspace),
+                    args.task_id,
+                    socket_path=args.herdr_continuation_socket,
+                    provider_id=args.herdr_continuation_provider,
+                    timeout_seconds=args.herdr_continuation_timeout,
+                    approval_granted=args.herdr_continuation_approval_granted,
+                )
         if args.json:
             print(json.dumps(result, indent=2, ensure_ascii=False))
         elif result.get("status") == "waiting":
@@ -865,6 +893,18 @@ def main(argv: list[str] | None = None) -> int:
             args.event,
             resume_ref=args.resume_ref,
         )
+        if args.herdr_continuation_socket or args.herdr_continuation_provider:
+            if not args.herdr_continuation_socket or not args.herdr_continuation_provider:
+                raise SystemExit("HERDR continuation requires both --herdr-continuation-socket and --herdr-continuation-provider")
+            if (result.get("accepted_wake") or {}).get("wake_reason") == "dependency_ready":
+                result["continuation"] = continue_accepted_dependency_ready_wake(
+                    Path(args.workspace),
+                    args.task_id,
+                    socket_path=args.herdr_continuation_socket,
+                    provider_id=args.herdr_continuation_provider,
+                    timeout_seconds=args.herdr_continuation_timeout,
+                    approval_granted=args.herdr_continuation_approval_granted,
+                )
         if args.json:
             print(json.dumps(result, indent=2, ensure_ascii=False))
         else:

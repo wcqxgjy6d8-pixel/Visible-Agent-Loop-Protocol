@@ -25,6 +25,15 @@ from .control_contract import (
     validate_control_contract,
     validate_control_slice,
 )
+from .continuation import (
+    ContinuationError,
+    ContinuationStore,
+    HerdrCoordinatorContinueAdapter,
+    HerdrUnixSocketRpcClient,
+    build_envelope,
+    file_digest,
+)
+from .control_plane import InstallationCore, leader_installation_root
 from .cost_governance import enforce_cost_budget
 from .delegation import build_delegation_policy, validate_delegation_policy
 from .herdr_adapter import (
@@ -8439,6 +8448,124 @@ def resume_suspended_task(
             **event_details,
         )
         return suspension
+
+
+def continue_accepted_dependency_ready_wake(
+    root: Path,
+    task_id: str,
+    *,
+    socket_path: Path | str,
+    provider_id: str,
+    timeout_seconds: float = 30.0,
+    approval_granted: bool = False,
+) -> dict[str, Any]:
+    """Invoke the active HERDR Leader only for a committed dependency-ready wake."""
+    if not provider_id.strip():
+        raise SystemExit("HERDR continuation requires an explicit provider identity")
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise SystemExit("HERDR continuation timeout must be a finite positive number")
+    if type(approval_granted) is not bool:
+        raise SystemExit("HERDR continuation approval must be a boolean")
+    root = workspace_root(root)
+    directory = task_dir(root, task_id)
+    state = read_json_strict(directory / "state.json")
+    suspension = state.get("suspension") if isinstance(state.get("suspension"), dict) else {}
+    accepted = suspension.get("accepted_wake") if isinstance(suspension.get("accepted_wake"), dict) else {}
+    if (
+        state.get("status") != "executing"
+        or suspension.get("status") != "resumed"
+        or accepted.get("wake_reason") != "dependency_ready"
+    ):
+        raise SystemExit("HERDR continuation requires an accepted dependency-ready wake")
+
+    control_root = leader_installation_root(root)
+    try:
+        leader = InstallationCore(control_root).status()
+    except Exception as exc:
+        raise SystemExit(f"HERDR continuation cannot load the active Leader: {exc}") from exc
+    binding = leader.get("leader_session") if isinstance(leader.get("leader_session"), dict) else {}
+    runtime_identity = binding.get("runtime_identity") if isinstance(binding.get("runtime_identity"), dict) else {}
+    target = str(runtime_identity.get("session_id") or runtime_identity.get("pane_id") or "")
+    if leader.get("state", {}).get("status") != "active" or not target:
+        raise SystemExit("HERDR continuation requires an active Leader session binding")
+
+    rpc_client = HerdrUnixSocketRpcClient(socket_path, timeout=timeout_seconds + 5.0)
+    try:
+        agent_response = rpc_client.call("agent.get", {"target": target})
+    except Exception as exc:
+        raise SystemExit(f"HERDR continuation cannot resolve the active Leader identity: {exc}") from exc
+    agent_result = agent_response.get("result") if isinstance(agent_response, dict) else None
+    runtime_agent = agent_result.get("agent") if isinstance(agent_result, dict) else None
+    agent_session = runtime_agent.get("agent_session") if isinstance(runtime_agent, dict) else None
+    coordinator_id = str(runtime_agent.get("name") or "") if isinstance(runtime_agent, dict) else ""
+    runtime_session_id = str(agent_session.get("value") or "") if isinstance(agent_session, dict) else ""
+    expected_terminal_id = str(runtime_identity.get("terminal_id") or "")
+    if (
+        not isinstance(agent_result, dict)
+        or agent_result.get("type") != "agent_info"
+        or not isinstance(runtime_agent, dict)
+        or runtime_agent.get("pane_id") != target
+        or runtime_agent.get("agent") != "codex"
+        or not coordinator_id
+        or not runtime_session_id
+        or (expected_terminal_id and runtime_agent.get("terminal_id") != expected_terminal_id)
+    ):
+        raise SystemExit("HERDR continuation active Leader identity is incomplete or mismatched")
+
+    identity_ref = "evidence/continuation-herdr-identity.json"
+    dedup_ref = "evidence/continuation-herdr-dedup.json"
+    identity = {
+        "schema_version": "valp-herdr-continuation-identity.v1",
+        "leader_binding_digest": binding.get("binding_digest"),
+        "leader_epoch": binding.get("leader_epoch"),
+        "durable_boundary_ref": target,
+        "coordinator_id": coordinator_id,
+        "session_id": runtime_session_id,
+        "terminal_id": runtime_agent.get("terminal_id"),
+        "provider_id": provider_id,
+    }
+    dedup = {
+        "schema_version": "valp-herdr-continuation-dedup.v1",
+        "mechanism": "wake-bound VALP invocation key plus HERDR idempotency_key",
+    }
+    write_json(directory / identity_ref, identity)
+    write_json(directory / dedup_ref, dedup)
+    adapter = HerdrCoordinatorContinueAdapter(
+        coordinator_target=target,
+        runtime_coordinator_id=coordinator_id,
+        runtime_session_id=runtime_session_id,
+        provider_id=provider_id,
+        rpc_call=rpc_client.call,
+        identity_evidence_ref=identity_ref,
+        duplicate_suppression_evidence_ref=dedup_ref,
+        timeout_ms=max(1, int(timeout_seconds * 1000)),
+        approval_granted=approval_granted,
+    )
+    payload = {"accepted_wake": accepted}
+    try:
+        envelope = build_envelope(
+            task_id=task_id,
+            suspension_id=str(suspension.get("suspension_id") or ""),
+            suspension_epoch=int(suspension.get("suspension_epoch") or 0),
+            wake_id=str(accepted.get("wake_id") or ""),
+            wake_event_id=str(accepted.get("wake_event_id") or ""),
+            wake_reason="dependency_ready",
+            accepted_state_revision=int(accepted.get("resulting_state_revision") or 0),
+            control_contract_ref=CONTROL_CONTRACT_REF,
+            control_contract_digest=file_digest(directory / CONTROL_CONTRACT_REF),
+            payload=payload,
+            coordinator_agent="codex",
+            adapter_id=adapter.adapter_id,
+            provider_id=provider_id,
+            durable_boundary_ref=target,
+        )
+        store = ContinuationStore(directory, task_id)
+        store.register_capability(adapter.capability())
+        store.pending(envelope, payload)
+        store.receive(envelope, payload)
+        return store.consume(envelope, lambda: adapter.invoke(envelope, payload))
+    except ContinuationError as exc:
+        raise SystemExit(f"HERDR continuation failed closed: {exc}") from exc
 
 
 def wait_for_task(

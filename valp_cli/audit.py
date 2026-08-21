@@ -429,8 +429,22 @@ class TaskAudit:
                 errors.append(f"{wake_id}: capability, target, and provider receipt do not correlate")
             for ref in (receipt.get("identity_evidence_ref"), receipt.get("duplicate_suppression_ref")):
                 ref = str(ref or "")
-                if not self._is_safe_task_ref(ref) or not (self.task_dir / ref).is_file():
+                evidence_path = self.task_dir / ref
+                if not self._is_safe_task_ref(ref) or not evidence_path.is_file():
                     errors.append(f"{wake_id}: provider evidence ref is missing or unsafe")
+                    continue
+                addressed = re.fullmatch(
+                    r"evidence/[a-z0-9]+(?:-[a-z0-9]+)*/([0-9a-f]{64})\.json",
+                    ref,
+                )
+                if addressed is not None:
+                    try:
+                        evidence_value = json.loads(evidence_path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        errors.append(f"{wake_id}: content-addressed provider evidence is malformed")
+                        continue
+                    if continuation_digest(evidence_value) != f"sha256:{addressed.group(1)}":
+                        errors.append(f"{wake_id}: content-addressed provider evidence digest mismatches its ref")
 
         known_pending_keys = {event.get("idempotency_key") for event in pending_events}
         for event in success_events:

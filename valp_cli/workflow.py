@@ -32,6 +32,7 @@ from .continuation import (
     HerdrUnixSocketRpcClient,
     build_envelope,
     file_digest,
+    persist_content_addressed_evidence,
 )
 from .control_plane import InstallationCore, leader_installation_root
 from .cost_governance import enforce_cost_budget
@@ -8512,8 +8513,6 @@ def continue_accepted_dependency_ready_wake(
     ):
         raise SystemExit("HERDR continuation active Leader identity is incomplete or mismatched")
 
-    identity_ref = "evidence/continuation-herdr-identity.json"
-    dedup_ref = "evidence/continuation-herdr-dedup.json"
     identity = {
         "schema_version": "valp-herdr-continuation-identity.v1",
         "leader_binding_digest": binding.get("binding_digest"),
@@ -8528,8 +8527,16 @@ def continue_accepted_dependency_ready_wake(
         "schema_version": "valp-herdr-continuation-dedup.v1",
         "mechanism": "wake-bound VALP invocation key plus HERDR idempotency_key",
     }
-    write_json(directory / identity_ref, identity)
-    write_json(directory / dedup_ref, dedup)
+    identity_ref = persist_content_addressed_evidence(
+        directory,
+        "continuation-herdr-identity",
+        identity,
+    )
+    dedup_ref = persist_content_addressed_evidence(
+        directory,
+        "continuation-herdr-dedup",
+        dedup,
+    )
     adapter = HerdrCoordinatorContinueAdapter(
         coordinator_target=target,
         runtime_coordinator_id=coordinator_id,
@@ -8563,7 +8570,7 @@ def continue_accepted_dependency_ready_wake(
         store.register_capability(adapter.capability())
         store.pending(envelope, payload)
         store.receive(envelope, payload)
-        return store.consume(envelope, lambda: adapter.invoke(envelope, payload))
+        return store.consume_with_adapter(envelope, payload, adapter)
     except ContinuationError as exc:
         raise SystemExit(f"HERDR continuation failed closed: {exc}") from exc
 

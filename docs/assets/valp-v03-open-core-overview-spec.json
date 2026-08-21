@@ -1,0 +1,141 @@
+{
+  "canvas": {
+    "width": 1210,
+    "height": 1138,
+    "fps": 20,
+    "frames": 41
+  },
+  "signature": "VALP / 0.3",
+  "title": {
+    "prefix": "VALP 的核心",
+    "highlight": "0.3 开源协议",
+    "subtitle": "让 Agent 的完成声明变成可审计证据"
+  },
+  "input_title": "任务 / 输入",
+  "read_label": "读取",
+  "context_label": "上下文",
+  "inputs": [
+    {
+      "label": "需求",
+      "icon": "file",
+      "color": "#7ee3d6"
+    },
+    {
+      "label": "Agent",
+      "icon": "folder",
+      "color": "#38bdf8"
+    },
+    {
+      "label": "运行时",
+      "icon": "package",
+      "color": "#f4b64e"
+    },
+    {
+      "label": "规则",
+      "icon": "shield",
+      "color": "#ff7ab6"
+    }
+  ],
+  "core": {
+    "title": "证据控制层",
+    "subtitle": "（不绑定 Provider）",
+    "cards": [
+      {
+        "title": "分工",
+        "body": "声明角色、能力\n和运行时边界",
+        "icon": "scan"
+      },
+      {
+        "title": "执行留证",
+        "body": "回执、证据、\n审查、审批",
+        "icon": "shield"
+      },
+      {
+        "title": "审计",
+        "body": "重放状态，\n关闭 Done 闸门",
+        "icon": "hash"
+      }
+    ]
+  },
+  "decision": {
+    "title": "完成？",
+    "body": "看证据，\n不看口号",
+    "yes_label": "是"
+  },
+  "output": {
+    "label": "审计结果",
+    "icon": "file"
+  },
+  "loop_label": "直到预期证据、审查和闸门全部满足",
+  "retry_label": "否 / 缺证据或运行时证明冲突",
+  "left_panel": {
+    "title": "公开输入",
+    "badge": "可移植",
+    "cards": [
+      {
+        "title": "任务",
+        "body": "需求、角色、\n预期证据",
+        "icon": "file"
+      },
+      {
+        "title": "Agent",
+        "body": "能力分层、\n模型与会话事实",
+        "icon": "folder"
+      },
+      {
+        "title": "规则",
+        "body": "权限、预算、\n审批边界",
+        "icon": "shield"
+      }
+    ]
+  },
+  "center_panel": {
+    "title": "可持久账本",
+    "subtitle": "（可重放、绑定摘要）",
+    "footer": "CAS + 重放 + 失败即关闭",
+    "cards": [
+      {
+        "title": "回执",
+        "body": "派送与提交\n证明",
+        "icon": "file"
+      },
+      {
+        "title": "证据",
+        "body": "声明、审查、\n验证记录",
+        "icon": "folder"
+      },
+      {
+        "title": "状态",
+        "body": "事件、检查点、\n恢复历史",
+        "icon": "hash"
+      },
+      {
+        "title": "审计",
+        "body": "通过、阻挡、\n或明确缺口",
+        "icon": "db"
+      }
+    ]
+  },
+  "right_panel": {
+    "title": "可移植输出",
+    "incoming_label": "打包",
+    "return_label": "可复核",
+    "cards": [
+      {
+        "title": "CLI",
+        "body": "安装、Leader、\n路由、审计",
+        "icon": "package"
+      },
+      {
+        "title": "适配器",
+        "body": "HERDR、LangGraph、\n本地进程、手动模式",
+        "icon": "folder"
+      },
+      {
+        "title": "Schema",
+        "body": "可移植契约、\n示例、测试",
+        "icon": "file"
+      }
+    ]
+  }
+}

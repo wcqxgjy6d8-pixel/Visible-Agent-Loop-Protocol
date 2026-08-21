@@ -146,6 +146,22 @@ def digest(value: Any) -> str:
     return "sha256:" + hashlib.sha256(canonical_bytes(value)).hexdigest()
 
 
+def content_addressed_evidence_ref(namespace: str, value: Any) -> str:
+    if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", namespace) is None:
+        raise ContinuationError("content-addressed evidence namespace is invalid")
+    return f"evidence/{namespace}/{digest(value).removeprefix('sha256:')}.json"
+
+
+def persist_content_addressed_evidence(
+    directory: Path,
+    namespace: str,
+    value: Any,
+) -> str:
+    ref = content_addressed_evidence_ref(namespace, value)
+    _write_once(directory / ref, value)
+    return ref
+
+
 def file_digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -1043,7 +1059,11 @@ class HerdrCoordinatorContinueAdapter:
             raise ContinuationError("HERDR coordinator.continue receipt is incomplete")
         return receipt
 
-    def invoke(self, envelope: dict[str, Any], payload: Any) -> dict[str, Any]:
+    def _request_params(
+        self,
+        envelope: dict[str, Any],
+        payload: Any,
+    ) -> dict[str, Any]:
         target = envelope.get("target") if isinstance(envelope, dict) else None
         if (
             not isinstance(target, dict)
@@ -1063,6 +1083,10 @@ class HerdrCoordinatorContinueAdapter:
         }
         if self.timeout_ms is not None:
             params["timeout_ms"] = self.timeout_ms
+        return params
+
+    def invoke(self, envelope: dict[str, Any], payload: Any) -> dict[str, Any]:
+        params = self._request_params(envelope, payload)
         runtime = self._runtime_receipt(self.rpc_call("coordinator.continue", params))
         if (
             runtime.get("task_id") != envelope.get("task_id")
@@ -1102,6 +1126,12 @@ class HerdrCoordinatorContinueAdapter:
             "consumed_at": observed_at,
             "result": "consumed",
         }
+
+    def reconcile(self, envelope: dict[str, Any], payload: Any) -> dict[str, Any]:
+        # HERDR 0.8 exposes idempotent coordinator.continue rather than a
+        # separate status method. Replaying the exact key returns the durable
+        # receipt or fails closed on conflicting content.
+        return self.invoke(envelope, payload)
 
 
 class SubprocessRuntimeControlAdapter:

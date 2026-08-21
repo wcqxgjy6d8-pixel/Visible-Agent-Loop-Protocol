@@ -12,10 +12,11 @@ branches for different purposes. They must not be treated as interchangeable.
 | `vX.Y.Z-draft` | Historical or testing pre-release | No, unless explicitly testing that draft |
 | `codex/*`, feature branches | Review or development candidates | No |
 
-`v0.3.0` is the current intended usage line. It can be used directly from the
-published candidate branch at the exact candidate SHA while GitHub merge, tag,
-and release metadata are completed. Those are publication and reproducibility
-gates, not a reason to send new users back to `v0.2.0`.
+`v0.3.0` is the current intended version line. It can be evaluated directly
+from a candidate branch at its exact SHA while GitHub merge, tag, and release
+metadata are completed. Those are publication and reproducibility gates: before
+they close, the candidate is not the default public installation, and `v0.2.0`
+remains only a legacy reproduction and migration source.
 
 The `v0.2.0` release remains available for legacy reproduction and migration
 only. Once the release gate closes, the immutable `v0.3.0` tag becomes the
@@ -53,3 +54,16 @@ candidate branch -> required checks -> external review -> merge to main
 
 Until that sequence completes, a candidate is reviewable source, not the
 recommended public installation.
+
+The release claim is scoped to the evidence package that ships with the
+release. Protocol and reference-CLI stability can be released independently
+from hosted runtime, platform, or production reliability claims. Any claim that
+mentions Full Mode, cross-restart continuation, hosted operation, or platform
+support must cite the matching task evidence and post-release smoke result.
+
+The release-preparation path is:
+
+```text
+PR -> required checks -> external review -> merge -> tag -> Release
+  -> post-release smoke tests
+```

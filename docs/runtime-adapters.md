@@ -740,6 +740,12 @@ and replay suppression to `ContinuationStore`. The request channel forbids user
 input and raw worker output. An identical replay returns the committed receipt
 without a second runtime call.
 
+If restart finds an HERDR invocation intent without a committed receipt, the
+adapter reconciles by replaying the exact `coordinator.continue` parameters and
+idempotency key. HERDR 0.8 exposes no separate continuation-status method, so a
+matching durable receipt closes the ledger while a conflict or malformed result
+fails closed. Source tests cover this recovery branch.
+
 This source contract does not make pane insertion, Enter, notifications, or
 `leader_resume_sent` into continuation proof. A HERDR installation may claim
 `automatic_full` only after it binds the adapter to a real runtime-owned API and
@@ -750,9 +756,10 @@ and produced a live provider invocation receipt for
 `resume_pending -> resume_received -> digest_verified -> resume_accepted ->
 continuation_started -> resume_consumed`, strict continuation validation passed,
 and identical replay returned the committed receipt without a second HERDR
-`coordinator.continue` call. This proves the local HERDR continuation path on
-that host; production hosting, cross-platform runtime proof, and repeated soak
-remain separate evidence gates.
+`coordinator.continue` call. This proves the local HERDR normal continuation
+path on that host. The run did not inject a post-consumption/pre-receipt crash;
+live HERDR crash recovery, production hosting, cross-platform runtime proof,
+and repeated soak remain separate evidence gates.
 
 The store revalidates the exact persisted envelope, payload, control
 contract, full invocation key, target tuple, capability proof, and immutable

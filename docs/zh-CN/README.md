@@ -28,9 +28,9 @@ VALP 要求任务过程留下可审计的证据：
 
 ## 版本入口与兼容性
 
-当前使用版本线是 `v0.3.0`，可以直接从已经公开的候选分支和精确 SHA 使用。
-`v0.3` 的 merge、不可变 tag 和 release 仍是发布流程 gate，不是要求新用户退回
-旧版的理由。`v0.2.0` 只保留为旧运行复现与迁移来源；详细规则见
+当前使用版本线是 `v0.3.0`，可以从候选分支和精确 SHA 做明确评估。`v0.3` 的
+required checks、external review、merge、不可变 tag 和 release 仍是发布流程 gate；
+完成前，候选版本不是默认的公开安装入口。`v0.2.0` 只保留为旧运行复现与迁移来源；详细规则见
 [版本与兼容性](../versioning-and-compatibility.md)。
 
 ## v0.3.0：从任务验收到安装级控制平面
@@ -60,6 +60,12 @@ VALP Done；写完 RFC 更不等于功能已经发布。
 或生产部署已经普遍成立。当前 LangGraph 开发 runtime 的公开脱敏 E2E 只证明
 该 adapter/runtime pair。请同时查看[当前项目状态](../project-status.md)，
 不要把局部证明扩张成通用平台承诺。
+
+对外完整性按证据包判断，不按愿景判断：协议、reference CLI、runtime adapter、
+Full Mode、跨重启 continuation、生产托管和平台支持分别需要自己的证据链。跨重启
+continuation 不仅需要完整到 `resume_consumed` 的 ledger，还需要在 provider 已消费、
+VALP 未落盘 receipt 之间注入崩溃后的重启对账与去重证据。缺少这些或独立生产运行证据时，
+公开文案只能声明已有的协议与审计能力，不能声明对应 runtime 或生产能力已经完成。
 
 ## 它不是什么
 

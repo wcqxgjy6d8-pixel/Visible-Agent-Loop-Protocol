@@ -48,10 +48,10 @@ branch、push、pull request 或 merge 是用户与其 Agent 自己的后续工�
 
 ## 版本入口与兼容性
 
-当前使用版本线是 `v0.3.0`，可以直接从已经公开的候选分支和精确 SHA 使用。
-`v0.3` 的 merge、不可变 tag 和 GitHub release metadata 仍是发布流程 gate，
-不是要求新用户退回旧版的理由。`v0.2.0` 只保留为旧运行复现与迁移来源；旧 tag
-和 release 会保留为不可变的历史记录。升级与兼容规则见
+当前使用版本线是 `v0.3.0`，可以从候选分支和精确 SHA 做明确评估。`v0.3` 的
+required checks、external review、merge、不可变 tag 和 GitHub release metadata
+仍是发布流程 gate；完成前，候选版本不是默认的公开安装入口。`v0.2.0` 只保留为
+旧运行复现与迁移来源；旧 tag 和 release 会保留为不可变的历史记录。升级与兼容规则见
 [版本与兼容性](docs/versioning-and-compatibility.md)。
 
 ## v0.3.0 协议与参考 CLI
@@ -79,6 +79,13 @@ reference CLI。请看 [v0.3 implementation guide](docs/v0.3-implementation.md)�
 `0.3.0` 的稳定称号只覆盖协议与 reference CLI，不表示所有 Runtime、Provider、
 平台或生产部署都已得到证明。相关支持声明继续以项目状态矩阵中的具体证据为
 边界，不把有限的 adapter 证明扩张成通用生产可靠性承诺。
+
+对外声明按证据包分层：协议与 reference CLI 由 schemas、测试和 bundled audits
+证明；自动 Full Mode 由具体 runtime adapter 的 dispatch/session/evidence/review
+链证明；跨重启自动 continuation 需要完整到 `resume_consumed` 的
+provider-consumed ledger，以及在 provider 已消费、VALP 未落盘 receipt 之间
+注入崩溃后的重启对账与去重证据；生产托管与平台支持必须有独立运行环境证明。没有这些
+证据时，不把它写成默认能力。
 
 ## 开源核心与商业交付边界
 

@@ -29,6 +29,7 @@ from valp_cli.continuation import (
     SubprocessRuntimeControlAdapter,
     build_envelope,
     capability_declaration,
+    content_addressed_evidence_ref,
     file_digest,
     idempotency_key,
 )
@@ -711,6 +712,96 @@ print(json.dumps({"result": {"status": "consumed", "receipt": receipt}}))
             self.assertEqual(calls[0][1]["idempotency_key"], idempotency_key(envelope))
             self.assertFalse(calls[0][1]["approval_granted"])
             self.assertEqual(store.events()[-1]["event"], "resume_consumed")
+
+    def test_herdr_coordinator_continue_recovers_inflight_with_idempotent_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.setup_store(root)
+            payload = {"wake": "dependency_ready"}
+            envelope = self.envelope(
+                root,
+                payload,
+                adapter="herdr-coordinator-continue",
+                provider="CodexPlusPlus",
+                coordinator="codex",
+            )
+            envelope["target"]["durable_boundary_ref"] = "wBF:p1"
+            calls: list[tuple[str, dict]] = []
+
+            def rpc_call(method: str, params: dict) -> dict:
+                calls.append((method, dict(params)))
+                return {"result": {"type": "coordinator_continued", "receipt": {
+                    "invocation_id": "herdr:continue:state-change:82",
+                    "task_id": "TASK-1",
+                    "resume_id": envelope["wake_id"],
+                    "coordinator_id": "valp-leader-codex-g1",
+                    "provider": "CodexPlusPlus",
+                    "session_id": "session-codex-1",
+                    "state_change_seq": 82,
+                    "prompt_digest": "sha256:" + "d" * 64,
+                    "revision": 4,
+                    "event_chain": list(SUCCESS_EVENTS),
+                }}}
+
+            adapter = HerdrCoordinatorContinueAdapter(
+                coordinator_target="wBF:p1",
+                runtime_coordinator_id="valp-leader-codex-g1",
+                runtime_session_id="session-codex-1",
+                provider_id="CodexPlusPlus",
+                rpc_call=rpc_call,
+                identity_evidence_ref="evidence/provider-identity.json",
+                duplicate_suppression_evidence_ref="evidence/provider-dedup.json",
+            )
+            store.register_capability(adapter.capability())
+            store.pending(envelope, payload)
+            store.receive(envelope, payload)
+
+            def consumed_then_crash() -> dict:
+                adapter.invoke(envelope, payload)
+                raise OSError("crash after HERDR consumption")
+
+            with self.assertRaisesRegex(OSError, "crash after HERDR consumption"):
+                store.consume(
+                    envelope,
+                    consumed_then_crash,
+                    reconcile=lambda: adapter.reconcile(envelope, payload),
+                )
+
+            recovered = ContinuationStore(root, "TASK-1").consume_with_adapter(
+                envelope, payload, adapter
+            )
+
+            self.assertEqual(
+                recovered["provider"]["invocation_id"],
+                "herdr:continue:state-change:82",
+            )
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[0], calls[1])
+            self.assertEqual(
+                [event["event"] for event in ContinuationStore(root, "TASK-1").events()],
+                list(SUCCESS_EVENTS),
+            )
+
+    def test_content_addressed_evidence_refs_change_with_identity(self) -> None:
+        first = content_addressed_evidence_ref(
+            "continuation-herdr-identity",
+            {"session_id": "session-a"},
+        )
+        replay = content_addressed_evidence_ref(
+            "continuation-herdr-identity",
+            {"session_id": "session-a"},
+        )
+        rotated = content_addressed_evidence_ref(
+            "continuation-herdr-identity",
+            {"session_id": "session-b"},
+        )
+
+        self.assertEqual(first, replay)
+        self.assertNotEqual(first, rotated)
+        self.assertRegex(
+            first,
+            r"^evidence/continuation-herdr-identity/[0-9a-f]{64}\.json$",
+        )
 
     def test_herdr_coordinator_continue_passes_explicit_approval_and_timeout(self) -> None:
         envelope = {

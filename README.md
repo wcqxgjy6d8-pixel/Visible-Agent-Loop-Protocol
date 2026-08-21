@@ -7,6 +7,8 @@ Agent says done. VALP asks for proof.
 ![License](https://img.shields.io/github/license/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 
+![VALP 0.3 open core gif](docs/assets/valp-v03-open-core-overview.gif)
+
 VALP is an open protocol and reference CLI for visible, evidence-backed
 autonomous and multi-agent work. It catches false completion by checking
 automation policy, dispatch receipts, expected evidence, review/approval gates,
@@ -22,6 +24,10 @@ bin/valp audit examples/minimal-task
 ```
 
 ![VALP audit demo: PASS to FAIL to PASS](docs/assets/valp-audit-demo.svg)
+
+The Chinese animated GIF is an explanatory asset. See the
+[public evidence proof](docs/case-studies/visible-dispatch-process-proof.md)
+for the machine-checkable audit excerpts behind it.
 
 For automated Full Mode, [HERDR](https://github.com/ogulcancelik/herdr) is the
 current reference runtime. HERDR is not required by the protocol; any runtime
@@ -41,11 +47,11 @@ single project, operating system, terminal emulator, or model provider.
 ## Current Status
 
 VALP source defines a locally stable `0.3.0` protocol and MIT-licensed reference
-CLI. `v0.3.0` is the current intended usage line and can be used directly from
-the published candidate branch at its exact SHA. GitHub merge, immutable tag,
-and release metadata are still publication gates, not a reason to route new
-users back to `v0.2.0`. The `v0.2.0` release remains available only as a legacy
-reproduction and migration source. See [versioning and compatibility](docs/versioning-and-compatibility.md).
+CLI. `v0.3.0` is the current intended version line and may be evaluated from a
+candidate branch at its exact SHA. Until required checks, external review,
+merge, immutable tag, and release metadata are complete, that candidate is not
+the default public installation. The `v0.2.0` release remains available only as
+a legacy reproduction and migration source. See [versioning and compatibility](docs/versioning-and-compatibility.md).
 It is not a mature hosted platform and should not be described as
 production-ready by itself.
 
@@ -62,12 +68,18 @@ What this repository proves today:
   preserves runtime success with missing evidence, repair, independent review,
   and a final `fail_count=0` audit.
 
-What it does not prove yet:
+Evidence boundary for public claims:
 
-- a production-hosted LangGraph or agent-provider deployment;
-- deterministic coordinator auto-continuation across runtime restart;
-- native Full Mode guarantees on every local operating system;
-- production deployment reliability for a third-party runtime.
+- hosted LangGraph, hosted agent-provider operation, and third-party production
+  reliability require their own runtime evidence package;
+- deterministic coordinator auto-continuation across runtime restart requires a
+  provider-consumed continuation ledger through `resume_consumed` plus injected
+  post-consumption/pre-receipt crash evidence showing restart reconciliation and
+  duplicate suppression;
+- native Full Mode support on each operating system is claimed only when that
+  platform has its own adapter evidence and post-merge smoke result;
+- evidence outside the repository examples and linked case studies is not
+  implied by the protocol version number.
 
 ## Open Core And Commercial Delivery
 

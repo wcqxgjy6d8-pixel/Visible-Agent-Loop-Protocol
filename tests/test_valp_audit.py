@@ -10,6 +10,14 @@ from jsonschema import Draft202012Validator
 from tests.schema_helpers import schema_validator
 
 from valp_cli.audit import FAIL, PASS, SKIP, WARN, TaskAudit
+from valp_cli.continuation import (
+    ContinuationStore,
+    build_envelope,
+    capability_declaration,
+    file_digest,
+    idempotency_key,
+    persist_content_addressed_evidence,
+)
 from valp_cli.submission import build_submission_dependencies
 from valp_cli.workflow import (
     resume_suspended_task,
@@ -25,6 +33,119 @@ REAL_DOC_EXAMPLE = ROOT / "examples" / "real-doc-calibration-task"
 
 
 class ValpAuditTests(unittest.TestCase):
+    def _continuation_fixture(self, task: Path, *, content_addressed: bool) -> tuple[Path, Path]:
+        task_id = "TASK-CONTINUATION-AUDIT"
+        suspension_id = "sha256:" + "a" * 64
+        wake_id = "sha256:" + "b" * 64
+        (task / "control-contract.json").write_text(
+            json.dumps({"task_id": task_id}) + "\n",
+            encoding="utf-8",
+        )
+        (task / "state.json").write_text(
+            json.dumps({
+                "task_id": task_id,
+                "suspension": {
+                    "suspension_id": suspension_id,
+                    "suspension_epoch": 1,
+                },
+            }) + "\n",
+            encoding="utf-8",
+        )
+        identity = {"schema_version": "identity.v1", "session_id": "session-a"}
+        dedup = {"schema_version": "dedup.v1", "mechanism": "idempotent replay"}
+        if content_addressed:
+            identity_ref = persist_content_addressed_evidence(
+                task, "continuation-herdr-identity", identity
+            )
+            dedup_ref = persist_content_addressed_evidence(
+                task, "continuation-herdr-dedup", dedup
+            )
+        else:
+            identity_ref = "evidence/provider-identity.json"
+            dedup_ref = "evidence/provider-dedup.json"
+            (task / identity_ref).parent.mkdir(parents=True, exist_ok=True)
+            (task / identity_ref).write_text(json.dumps(identity) + "\n", encoding="utf-8")
+            (task / dedup_ref).write_text(json.dumps(dedup) + "\n", encoding="utf-8")
+
+        payload = {"wake": "dependency_ready"}
+        envelope = build_envelope(
+            task_id=task_id,
+            suspension_id=suspension_id,
+            suspension_epoch=1,
+            wake_id=wake_id,
+            wake_event_id="sha256:" + "c" * 64,
+            wake_reason="dependency_ready",
+            accepted_state_revision=2,
+            control_contract_ref="control-contract.json",
+            control_contract_digest=file_digest(task / "control-contract.json"),
+            payload=payload,
+            coordinator_agent="codex",
+            adapter_id="test-adapter",
+            provider_id="fake-provider",
+            durable_boundary_ref="provider-session:session-1",
+            continuation_generation=1,
+        )
+        store = ContinuationStore(task, task_id)
+        store.register_capability(capability_declaration(
+            "test-adapter",
+            "1.0",
+            "fake-provider",
+            "codex",
+            automatic_full=True,
+            invocation_proof=True,
+            duplicate_suppression=True,
+            identity_evidence_ref=identity_ref,
+            duplicate_suppression_evidence_ref=dedup_ref,
+        ))
+        store.pending(envelope, payload)
+        store.receive(envelope, payload)
+        store.consume(envelope, lambda: {
+            "schema_version": "valp-continuation-invocation-receipt.v1",
+            "task_id": task_id,
+            "suspension_id": suspension_id,
+            "suspension_epoch": 1,
+            "wake_id": wake_id,
+            "continuation_generation": 1,
+            "idempotency_key": idempotency_key(envelope),
+            "payload_digest": envelope["payload_digest"],
+            "adapter": {"id": "test-adapter", "version": "1.0"},
+            "provider": {
+                "id": "fake-provider",
+                "invocation_id": "provider-turn-1",
+                "turn_id": "turn-1",
+            },
+            "durable_boundary_ref": envelope["target"]["durable_boundary_ref"],
+            "identity_evidence_ref": identity_ref,
+            "duplicate_suppression_ref": dedup_ref,
+            "started_at": "2026-08-21T00:00:00Z",
+            "consumed_at": "2026-08-21T00:00:01Z",
+            "result": "consumed",
+        })
+        return task / identity_ref, task / dedup_ref
+
+    def test_continuation_audit_rejects_tampered_content_addressed_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            identity_path, _ = self._continuation_fixture(task, content_addressed=True)
+            self.assertEqual(TaskAudit(task).check_continuation_ledger().status, PASS)
+
+            identity_path.write_text(
+                json.dumps({"schema_version": "identity.v1", "session_id": "session-b"}) + "\n",
+                encoding="utf-8",
+            )
+
+            result = TaskAudit(task).check_continuation_ledger()
+            self.assertEqual(result.status, FAIL)
+            self.assertIn("digest mismatches its ref", result.message)
+
+    def test_continuation_audit_preserves_legacy_fixed_evidence_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            self._continuation_fixture(task, content_addressed=False)
+            self.assertEqual(TaskAudit(task).check_continuation_ledger().status, PASS)
+
     def _owned_session_supersession_fixture(self, task: Path) -> tuple[dict, dict, dict]:
         task_id = "TASK-OWNED-SESSION-SUPERSESSION"
         marker = {

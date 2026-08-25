@@ -22,13 +22,16 @@ adapter for an approved addressable worker.
 HERDR should be described as the current reference runtime, not as a protocol
 dependency and not as a closed-source black box.
 
-Externally checked on 2026-07-06:
+Externally checked on 2026-07-28:
 
 - `https://github.com/ogulcancelik/herdr` is a public repository.
 - The repository contains source and project files, including Rust sources,
   `Cargo.toml`, tests, docs, website files, and workers.
-- Its license text says AGPL-3.0-or-later for open-source use plus a commercial
-  license option.
+- The immutable `v0.7.5` tag and Homebrew stable artifact are
+  `AGPL-3.0-or-later` with a commercial license option.
+- Upstream `master` was relicensed to `Apache-2.0` by commit `cd5ea1be0e69` on
+  2026-07-22, after `v0.7.5`. That change does not retroactively relicense the
+  tagged or Homebrew artifact.
 
 The existence of a public HERDR repository does not remove the adapter gap:
 VALP still needs an independently operated hosted or agent-provider adapter
@@ -40,32 +43,110 @@ The reference CLI packages its HERDR submission bridge in `valp_cli`; it does
 not shell out to a repository-external `herdr-loop` helper. Capability probing
 selects one of three explicit modes:
 
-| Mode | Required HERDR commands | Submission proof |
+| Mode | Required HERDR commands | Result |
 |---|---|---|
-| `agent_prompt` | `herdr agent prompt` | successful atomic runtime response, bound to the routed agent/session |
-| `pane_send_text_enter` | `herdr pane send-text`, `herdr pane send-keys`, `herdr agent wait` | successful insertion and Enter followed by observed `working` state |
-| `unavailable` | neither complete path | preflight and submitted dispatch fail closed with remediation |
+| `agent_prompt` | `herdr agent get`; `herdr agent prompt` with `--wait --until working --timeout` | Full Mode only after identity-bound `state_change_seq` advancement |
+| `pane_send_text_enter` | `herdr pane send-text`, `herdr pane send-keys`, `herdr agent wait` | transport-only `dispatch_inserted`; `Manual-degraded`; never `dispatch_submitted` |
+| `unavailable` | neither path | preflight and dispatch fail closed with remediation |
 
-The compatibility path permits one bounded Enter retry inside the configured
-proof timeout. This handles a runtime where a large paste is still being
-processed when the first Enter arrives. The adapter still requires an observed
-`working` state after the retry; successful insertion or Enter alone is not
-submission proof.
+The atomic path first reads a structured Agent baseline, then invokes `herdr
+agent prompt <target> <payload> --wait --until working --timeout <ms>`. A valid
+`agent_prompted` response repeats the same terminal, name, Agent, and pane
+identity and reports an integer `state_change_seq` strictly greater than the
+baseline. A generic response `id`, fabricated `submission_id`, observed status,
+visible label, counter, or task text is not independent invocation proof.
+
+The compatibility path may perform one bounded Enter retry, but that does not
+promote it. Successful insertion, Enter, status observation, or visible output
+remains transport evidence and the operation stops as `Manual-degraded`.
 
 The probe reads command help instead of inferring features from a version
-string. A successful transport writes a native identity-bound
+string. A successful atomic invocation writes a native identity-bound
 `valp-dispatch-receipt.v2` submission receipt. Evidence waiting can append a
 completion receipt only after every declared expected ref is nonempty and the
 completion cites the exact submission receipt. Text insertion alone is never a
 submitted or completed receipt.
 
-If the packaged bridge fails before it can write concrete submission proof, it
-blocks the iteration budget with `runtime dispatch failure`. The same public
-dispatch command may reopen that exact blocker once, and only after a fresh
-HERDR preflight passes for the same dependency-ready work item. A second
-failure records `runtime dispatch retry exhausted` and remains blocked; it is
-not an automatic retry loop. Approval, dependency, model-identity, evidence,
-and other budget blockers are never reopened by this path.
+A dispatch dry run renders the adapter command only. It does not provision an
+owned session, require a live model/session identity, create a runtime blocker,
+or consume the one bounded runtime retry. Actual `--submit` still provisions
+and rechecks every owned-session and model gate before delivery.
+
+Before a submitted dispatch, the packaged adapter creates a non-focused
+task-owned HERDR workspace, uses `herdr agent start` at the project root inside
+that workspace, and moves the Agent to an isolated task tab before recording
+the binding. It reuses only that exact recorded session. It writes the current
+projection to `agent-sessions.json` and appends each provision/reuse decision
+to `agent-session-receipts.jsonl`. The binding and receipt include the owned
+workspace scope and `focused_at_provisioning: false` from the post-isolation
+runtime response. A missing or focused result blocks delivery. A same-label
+user pane is never adopted. A missing bound pane
+may produce the next generation; a present pane with changed runtime identity
+fails closed.
+
+The packaged bridge resolves a bare worker command such as `agent-cli`
+through the coordinator's `PATH` before calling `herdr agent start`, then stores
+that absolute entrypoint in the binding and receipt. HERDR's daemon process may
+have a narrower `PATH`; relying on it would make provisioning environment-
+dependent. An unresolved entrypoint blocks before a session is recorded.
+
+The installation-Leader recovery path is deliberately narrower than ordinary
+session provisioning. After an explicitly approved failed first start, the
+HERDR adapter may address only the exact named session with `pane get`, its
+exact workspace with `workspace get`, and the same pane with `pane
+process-info`. It must re-prove the deterministic installation workspace and
+pane labels, Agent, cwd, non-focus, complete foreground argv, process
+generation, and bounded health. It must not call runtime create, start, move,
+focus, close, delete, send, or broad list operations. Any identity or launch
+mismatch leaves the installation blocked.
+
+Reuse and post-provision preflight query `herdr pane list --workspace` with the
+task-owned workspace id from the accepted binding. This avoids an unbounded
+global pane scan and still requires the exact pane, terminal, tab, Agent, and
+cwd match.
+
+If that exact live pane still matches, its recorded binding and launch argv are
+the reuse authority. A later capability scan may suggest a different launcher,
+but it cannot mutate the live binding or force a new generation. The adapter
+reuses the accepted launch contract unless the operator explicitly requests a
+replacement; an explicit replacement remains blocked while the old pane is
+present. Metadata conflicts name only the mismatched fields.
+
+An operator-approved launch integration change uses
+`valp dispatch --agent <agent> --role <role> --replace-owned-session-launch
+--submit`. This is accepted only for one explicitly targeted task-owned
+binding after its old pane is absent and before any delivery receipt exists.
+The next generation records the new launch argv while preserving all earlier
+bindings, receipts, and failed-attempt evidence. A present old pane or an
+implicit capability change still fails closed.
+
+Freshly launched workers may publish structured active-model metadata after the
+session itself is addressable. The bridge performs a bounded read-only
+readiness observation before the dispatch-time model gate. Unstructured pane or
+footer text is not model evidence. A timeout may be rechecked once for the same
+owned binding; an observed wrong or ineligible model remains fail-closed.
+
+If that readiness recheck exhausts before structured metadata arrives, the same
+public dispatch command may reconcile late metadata without spending another
+reroute. This narrow path requires the exact task-owned binding and matching
+provisioning receipt, a recorded `owned_session_model_readiness_timeout`, and no
+`dispatch_submitted` receipt for the work item. It reuses the bound session and
+continues only when fresh preflight reports an `observed` model, a `known`
+session identity, and eligible role. It never creates a replacement session or
+reopens another exhausted runtime failure.
+
+If session provisioning, preflight, or delivery fails before the bridge can
+write concrete submission proof, it blocks the iteration budget with `runtime
+dispatch failure`. The same public dispatch command may reopen that exact
+blocker once for the same dependency-ready work item. Provisioning and
+preflight are repeated before delivery. A second failure records `runtime
+dispatch retry exhausted` and remains blocked; it is not an automatic retry
+loop. Approval, dependency, observed model mismatch, evidence, and other budget
+blockers are never reopened by this path. An unknown model from a fresh owned
+session is a bounded readiness blocker, not an observed mismatch. Tasks written
+by the earlier reference build may carry `runtime session provisioning failure`
+or `runtime preflight failure`; the adapter treats those values as the same
+one-time retry state.
 
 After concrete submission proof exists, a missing worker result is a different
 failure class. Automatic frontier routing must not silently submit that work
@@ -112,6 +193,69 @@ Examples:
 
 A terminal pane is only one session type. Non-pane runtimes should export
 equivalent job/session identifiers instead of fake pane fields.
+
+The public `agent-sessions` schemas therefore keep context, launch, runtime
+scope, and runtime identity adapter-neutral. Pane, terminal, workspace, and tab
+fields belong to the HERDR reference-adapter record; queue, hosted, remote, and
+future adapters use their own native identifiers. The coordinator reads an
+Agent launch entrypoint from current capability evidence or explicit adapter
+configuration. It does not maintain a preferred list of Agent commands.
+
+A task may bind runtime-only launch evidence through matching
+`task_runtime_capabilities` markers in routing and state. Both markers name the
+same task-relative record and SHA-256 digest. Only `launch_argv` and
+`version_command` are overlaid onto current capability evidence; task role,
+permission, approval, and routing fields do not come from this runtime record.
+The file alone is not authority. A missing, mismatched, or stale marker fails
+closed, and the overlay cannot replace an accepted live session binding.
+For an explicit replacement, an adapter-native structured `not found` result
+for the exact recorded scope counts as absence. Generic command failure,
+timeout, permission denial, or unstructured output does not.
+
+Every receipt repeats the projection's exact adapter id, and that id must match
+the routed runtime adapter record in routing and state. The common audit checks
+the provider-neutral binding chain; pane, absolute executable, workspace, and
+non-focused provisioning checks run only for the explicitly selected HERDR
+reference adapter.
+
+Session ownership is separate from session addressability. A pane id proves
+where input can be sent; the task-local binding plus adapter provisioning
+receipt proves why VALP is allowed to use it for this project/task. Full Mode
+submission proof cites the binding generation and non-secret identity token.
+
+Task-owned launch wrappers are part of the runtime adapter boundary. A wrapper
+that runs an identity probe or reports model metadata must not replace a TUI
+with a pipe or a canonical input proxy. It must preserve a child PTY, resize and
+signal behavior, and raw key bytes. Startup transcripts are written only after
+task-scoped redaction; raw credential-bearing output is never the durable
+artifact.
+
+For HERDR replacements, the adapter passes the binding generation to the
+wrapper as `VALP_AGENT_BINDING_GENERATION`. The wrapper uses it instead of a
+static generation-1 config value and publishes the resulting generation in both
+model and lifecycle metadata.
+
+Model metadata and Agent state are separate signals. For HERDR, an interposed
+launcher reports the declared Agent id plus `idle` after the child PTY is ready,
+then `working` only after dispatch input reaches that child. A task-owned
+binding with observed provider/model/session metadata but `agent_status:
+unknown` fails dispatch preflight. The adapter does not reinterpret pane text,
+Enter insertion, or a live wrapper PID as working proof.
+
+The task-owned state report repeats its state, source, session id, monotonic
+sequence, and binding generation as structured pane metadata. When all fields
+match the accepted binding, this report takes precedence over generic HERDR
+screen/title inference such as a transient startup `done`. A partial report or
+generation mismatch is a binding conflict and fails preflight; it does not
+silently fall back to the generic state. The session id must identify the same
+task and Agent as the binding, so an arbitrary nonempty or cross-task id cannot
+claim this precedence.
+
+During bounded post-provision readiness, the packaged adapter waits until both
+the model/session probe is observed and the same task-owned Agent reports
+`idle` or `working`. This closes the startup race where metadata is visible one
+snapshot before the child TUI lifecycle report. The later delivery preflight
+does not accept a terminal, missing, or unknown Agent state.
 
 ## Auto Visible Trigger Adapters
 
@@ -162,6 +306,7 @@ user-selected Leader evidence
 Leader assignment declaration
 VALP assignment validation
 dispatch submission proof
+project/task-owned session bindings and provisioning receipts
 runtime task state mapping
 expected evidence refs
 receipt ledger
@@ -378,6 +523,43 @@ approval state
 If the platform cannot export submission proof or expected evidence refs, it is
 not a Full Mode adapter.
 
+### Reference LangGraph v3 receipt path
+
+The Reference System LangGraph Adapter is the first bounded Adapter path that
+uses canonical v3 receipts end to end. Its authoritative task ledger is:
+
+```text
+runtime/langgraph/receipts.v3.jsonl
+```
+
+The Adapter obtains installation ID and the active non-zero Leader epoch from
+the initialized Reference System control plane, uses the adapter-issued run ID
+as the Attempt ID, digests the exact submitted request, persists typed process-
+and content-bound proof records, and sends every accepted receipt write through
+`ReceiptStore`. Resume and audit strictly load that same ledger and verify proof
+and approval-policy digests before accepting the receipt chain.
+
+`runtime/langgraph/adoption.json` marks a task as adopted. Adopted audit never
+falls back to v2 when the v3 ledger is absent or invalid. Before run submission,
+the Adapter persists a stable intent and sends its ID in provider metadata. A
+prepared intent with no persisted provider outcome blocks redispatch until
+explicit reconciliation; an accepted intent reuses the recorded run. Process
+and content proof use distinct records: one binds the provider response, while
+the other binds the exact request digest, provider-response digest, and explicit
+acknowledgement.
+
+This is an atomic per-task cutover. A non-empty legacy/v2
+`dispatch-receipts.jsonl` cannot coexist with a non-empty LangGraph v3 ledger,
+and a compatibility ledger blocks a new LangGraph v3 submission before runtime
+invocation. Post-commit `unknown_or_committed` outcomes are reconciled by strict
+reread; uncertainty never causes another LangGraph run submission. Dependency
+prerequisites are checked from the v3 ledger before runtime invocation.
+
+HERDR, Queue, Manual Mode, and workflow observation/recovery writers remain on
+their existing legacy/v2 compatibility paths. No in-place migration is executed
+and this adoption does not prove production hosting, sudden-power-loss
+durability, hostile-writer safety, or Windows parity.
+
 ## Remote Adapter
 
 Remote Mode is valid when the runtime runs on another machine and exports the
@@ -439,8 +621,9 @@ provisionally by `valp_cli.continuation.ContinuationStore`; it separates wake pe
 Only a receipt carrying a real provider/session invocation ID plus durable
 duplicate-suppression evidence can emit
 `continuation_started` and `resume_consumed`. Hermes CLI is an adapter example;
-pane insertion remains transport-only, Codex App remains Manual, and no
-synthetic wake/output digest may be promoted to `automatic_full`.
+pane insertion remains transport-only, an unbound CLI or App bootstrap surface
+remains Manual, and no synthetic wake/output digest may be promoted to
+`automatic_full`.
 
 Hermes is currently Manual/degraded: `-z` is a oneshot path that bypasses
 resume, and `hermes chat -q --resume` uses the user-message channel. Neither is

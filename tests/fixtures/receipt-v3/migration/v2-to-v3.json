@@ -1,0 +1,21 @@
+{
+  "source_ref": "valid/v2.json",
+  "source_schema_version": "valp-dispatch-receipt.v2",
+  "migration_id": "migration-v2-1",
+  "draft": {
+    "receipt_id": "receipt-v2-source",
+    "event": "dispatch_submitted"
+  },
+  "preserved_fields": [
+    "receipt_id",
+    "task_id",
+    "agent",
+    "role",
+    "work_item_id",
+    "dispatch_id",
+    "dispatch_generation",
+    "event",
+    "dispatch_ref",
+    "expected_refs"
+  ]
+}

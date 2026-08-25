@@ -54,8 +54,15 @@ def deterministic_receipt_ledger_errors(
     errors: list[str] = []
     seen_receipts: dict[str, dict[str, Any]] = {}
     previous_sequence = 0
+    deterministic_versions = {
+        str(receipt.get("schema_version"))
+        for receipt in receipts
+        if receipt.get("schema_version") in {"valp-dispatch-receipt.v2", "valp-dispatch-receipt.v3"}
+    }
+    if len(deterministic_versions) > 1:
+        errors.append("deterministic receipt ledger mixes v2 and v3 schemas")
     for line_number, receipt in enumerate(receipts, 1):
-        if receipt.get("schema_version") != "valp-dispatch-receipt.v2":
+        if receipt.get("schema_version") not in {"valp-dispatch-receipt.v2", "valp-dispatch-receipt.v3"}:
             continue
         receipt_id = receipt.get("receipt_id")
         if not isinstance(receipt_id, str) or not receipt_id:
@@ -75,6 +82,10 @@ def deterministic_receipt_ledger_errors(
             errors.append(f"line {line_number} event_sequence is not strictly increasing")
         else:
             previous_sequence = sequence
+        if receipt.get("schema_version") == "valp-dispatch-receipt.v3":
+            revision = receipt.get("ledger_revision")
+            if type(revision) is not int or revision != sequence:
+                errors.append(f"line {line_number} has an invalid v3 ledger_revision")
         generation = receipt.get("dispatch_generation")
         if type(generation) is not int or generation < 1:
             errors.append(f"line {line_number} has an invalid dispatch_generation")
@@ -96,6 +107,13 @@ def deterministic_receipt_ledger_errors(
 def has_concrete_runtime_submission_proof(receipt: dict[str, Any]) -> bool:
     if receipt.get("event") != "dispatch_submitted":
         return False
+    if receipt.get("schema_version") == "valp-dispatch-receipt.v3":
+        kinds = {
+            binding.get("proof_kind")
+            for binding in receipt.get("proof_bindings") or []
+            if isinstance(binding, dict)
+        }
+        return {"process_bound", "content_bound"}.issubset(kinds) and "transport_only" not in kinds
     proof = receipt.get("proof")
     if not isinstance(proof, dict) or not proof:
         return False
@@ -350,7 +368,10 @@ def dependency_order_errors(
             # Legacy HERDR records remain in the append-only ledger for
             # history. Full Mode v2 ordering is evaluated against the
             # identity-bound records produced by the translation layer.
-            if strict_identity and receipt.get("schema_version") != "valp-dispatch-receipt.v2":
+            if strict_identity and receipt.get("schema_version") not in {
+                "valp-dispatch-receipt.v2",
+                "valp-dispatch-receipt.v3",
+            }:
                 continue
             if receipt.get("agent") != dependency.get("dependent_agent"):
                 continue
@@ -566,7 +587,7 @@ def _receipt_matches(
                 and receipt.get("role") == identity.get("role")
             )
         return True
-    if receipt.get("schema_version") != "valp-dispatch-receipt.v2" or not identity:
+    if receipt.get("schema_version") not in {"valp-dispatch-receipt.v2", "valp-dispatch-receipt.v3"} or not identity:
         return False
     expected = {
         "task_id": task_id,

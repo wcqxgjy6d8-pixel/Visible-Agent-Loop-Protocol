@@ -10,7 +10,7 @@
     "control_root": {"type": "string", "minLength": 1},
     "active_protocol_version": {"type": "string", "minLength": 1},
     "active_leader_epoch": {"type": "integer", "minimum": 0},
-    "installation_status": {"enum": ["uninitialized", "bootstrapping", "discovering_leader_candidates", "awaiting_leader_selection", "activating_leader", "active", "reconciling_capabilities", "rotating_leader", "migrating", "rollback_required", "degraded", "blocked", "retired"]},
+    "installation_status": {"enum": ["uninitialized", "bootstrapping", "discovering_leader_candidates", "awaiting_leader_selection", "awaiting_leader_start", "activating_leader", "active", "restarting_leader", "reconciling_capabilities", "rotating_leader", "migrating", "rollback_required", "degraded", "blocked", "retired"]},
     "created_at": {"type": "string", "minLength": 1},
     "implementation_id": {"type": "string", "minLength": 1}
   }

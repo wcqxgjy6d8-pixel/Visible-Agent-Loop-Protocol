@@ -29,6 +29,8 @@ ExampleProject/
         evidence-board.json
         visible-routing.md
         runtime-preflight.json
+        agent-sessions.json
+        agent-session-receipts.jsonl
         evidence-status.json
         correction-cycle.json
         timeline.jsonl

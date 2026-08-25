@@ -10,16 +10,19 @@ from referencing import Registry, Resource
 ROOT = Path(__file__).resolve().parents[1]
 SUSPENSION_SCHEMA_PATH = ROOT / "schemas" / "suspension.schema.json"
 CONTINUATION_CAPABILITY_SCHEMA_PATH = ROOT / "schemas" / "continuation-capability.schema.json"
+SOURCE_PROVENANCE_SCHEMA_PATH = ROOT / "schemas" / "source-provenance.schema.json"
 
 
 def schema_validator(schema_path: Path) -> Draft202012Validator:
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     suspension_schema = json.loads(SUSPENSION_SCHEMA_PATH.read_text(encoding="utf-8"))
     continuation_capability_schema = json.loads(CONTINUATION_CAPABILITY_SCHEMA_PATH.read_text(encoding="utf-8"))
+    source_provenance_schema = json.loads(SOURCE_PROVENANCE_SCHEMA_PATH.read_text(encoding="utf-8"))
     registry = Registry().with_resources(
         [
             (suspension_schema["$id"], Resource.from_contents(suspension_schema)),
             (continuation_capability_schema["$id"], Resource.from_contents(continuation_capability_schema)),
+            (source_provenance_schema["$id"], Resource.from_contents(source_provenance_schema)),
         ]
     )
     return Draft202012Validator(schema, registry=registry)

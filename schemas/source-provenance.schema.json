@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:valp:schema:source-provenance:v1",
+  "title": "VALP Source Provenance",
+  "type": "object",
+  "required": ["schema_version", "task_start", "last_observed"],
+  "properties": {
+    "schema_version": {"const": "valp-source-provenance.v1"},
+    "task_start": {
+      "oneOf": [
+        {"$ref": "#/$defs/sourceObservation"},
+        {"type": "null"}
+      ]
+    },
+    "last_observed": {"$ref": "#/$defs/sourceObservation"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sourceObservation": {
+      "type": "object",
+      "required": [
+        "status",
+        "implementation_id",
+        "invoked_entrypoint",
+        "resolved_entrypoint",
+        "source_root",
+        "observed_at",
+        "vcs"
+      ],
+      "properties": {
+        "status": {"enum": ["resolved_clean", "resolved_dirty", "unavailable"]},
+        "implementation_id": {"type": "string", "minLength": 1},
+        "invoked_entrypoint": {"type": "string", "minLength": 1},
+        "resolved_entrypoint": {"type": "string", "minLength": 1},
+        "source_root": {"type": "string", "minLength": 1},
+        "observed_at": {"type": "string", "minLength": 1},
+        "vcs": {
+          "type": "object",
+          "required": ["kind", "commit", "tree", "worktree_status"],
+          "properties": {
+            "kind": {"enum": ["git", "none"]},
+            "commit": {
+              "oneOf": [
+                {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+                {"type": "null"}
+              ]
+            },
+            "tree": {
+              "oneOf": [
+                {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+                {"type": "null"}
+              ]
+            },
+            "worktree_status": {"enum": ["clean", "dirty", "unavailable"]}
+          },
+          "additionalProperties": false
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "status": {"const": "resolved_clean"},
+            "vcs": {
+              "properties": {
+                "kind": {"const": "git"},
+                "commit": {"type": "string"},
+                "tree": {"type": "string"},
+                "worktree_status": {"const": "clean"}
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "status": {"const": "resolved_dirty"},
+            "vcs": {
+              "properties": {
+                "kind": {"const": "git"},
+                "commit": {"type": "string"},
+                "tree": {"type": "string"},
+                "worktree_status": {"const": "dirty"}
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "status": {"const": "unavailable"},
+            "vcs": {
+              "properties": {
+                "kind": {"const": "none"},
+                "commit": {"type": "null"},
+                "tree": {"type": "null"},
+                "worktree_status": {"const": "unavailable"}
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
+  }
+}

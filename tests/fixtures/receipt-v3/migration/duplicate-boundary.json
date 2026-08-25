@@ -1,0 +1,6 @@
+{
+  "same_migration_id_same_source_and_bindings": "no_op",
+  "same_migration_id_changed_source_or_bindings": "VALP-E-IDEMPOTENCY-CONFLICT",
+  "source_bytes": "preserved",
+  "runtime_adoption": "not_claimed"
+}

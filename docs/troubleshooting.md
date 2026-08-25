@@ -8,12 +8,33 @@ For HERDR/pane-controller runtimes:
 
 1. Run `herdr status`.
 2. Run `herdr pane list`.
-3. Start or attach the agent session.
-4. Rerun `bin/valp preflight --agent <agent>`.
+3. Confirm the installed HERDR exposes `herdr workspace create`, `herdr agent
+   start`, and `herdr pane move`.
+4. Rerun the submitted dispatch so VALP can provision the task-owned worker.
 
 For non-pane runtimes, do not fake pane fields. Implement an adapter record with
 the equivalent queue id, worker id, hosted run id, output ref, and expected
 evidence refs.
+
+## `agent_start_failed` says no viable command was found in `PATH`
+
+The HERDR daemon may have a narrower `PATH` than the coordinator. Current VALP
+resolves bare launch commands to absolute executable paths before provisioning.
+If this error persists, inspect the selected Agent's `runtime.launch_argv` and
+confirm its first item is executable from the coordinator. Do not reuse an
+unbound user pane as a workaround. VALP intentionally has no built-in table of
+preferred Agent commands; first-install discovery or explicit adapter
+configuration must supply the entrypoint.
+
+## `task-owned session ... conflicts`
+
+Inspect `agent-sessions.json`, `agent-session-receipts.jsonl`,
+`runtime-preflight.json`, and `herdr pane list`. This error means a recorded pane
+or worker identity is still present but no longer matches the accepted terminal,
+workspace/tab, Agent, launch, or project context. Do not rename or reuse an
+unrelated user pane to satisfy the check. Preserve the evidence and repair the
+runtime/session state explicitly; VALP will not overwrite a live identity
+conflict.
 
 ## `runtime dispatch failure` blocks a retry
 
@@ -21,9 +42,18 @@ Rerun the same `valp dispatch ... --submit` command after repairing the HERDR
 session. The packaged adapter runs a fresh preflight and may retry the same
 dependency-ready work item once. It does not reopen other blocked states.
 
+An older in-progress task may show `runtime session provisioning failure`.
+That is the same bounded retry state; current VALP records new provisioning
+failures under `runtime dispatch failure`.
+
 If that retry also fails, the budget records `runtime dispatch retry exhausted`.
 Stop and inspect `runtime-preflight.json`, `timeline.jsonl`, and the target pane;
 another automatic dispatch is intentionally blocked.
+
+If a runtime keeps the outer Agent idle while child work runs, inspect the
+runtime manually and request an adapter update that exports a structured,
+dispatch-bound child-job identity. Do not convert visible counters, labels, or
+pane text into submission proof.
 
 ## `dispatch` says `no ready phase` after a proven submission
 

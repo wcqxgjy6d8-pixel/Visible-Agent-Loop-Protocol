@@ -89,6 +89,31 @@ Full Mode requires a compatible runtime. HERDR is the current reference runtime
 documented by this repository. Other runtimes can implement VALP by exporting
 the adapter evidence in [runtime-adapters.md](runtime-adapters.md).
 
+Before installing, note the version boundary: the immutable HERDR `v0.7.5` tag
+and Homebrew stable artifact are `AGPL-3.0-or-later` with a commercial license
+option. Upstream `master` was relicensed to `Apache-2.0` by commit
+`cd5ea1be0e69` on 2026-07-22, after that release. Verify the license of the
+exact artifact you install.
+
+The complete first-time path is:
+
+```text
+1. Run `valp doctor --workspace <install-root> --json`.
+2. Explicitly choose the Leader; run `valp leader select <principal>`, `valp
+   leader start`, `valp leader show`, and `valp leader open`.
+3. Run `valp publish TASK-001 --workspace <workspace> --prompt "..."`.
+4. Run `valp route TASK-001 --workspace <workspace> --assignments <declaration>`.
+5. Inspect `valp dispatch TASK-001 --workspace <workspace>` as a dry run.
+6. After explicit user approval, run `valp dispatch TASK-001 --workspace
+   <workspace> --submit`.
+7. Confirm the terminal shows the installation-owned Leader pane and a fresh
+   task-owned Worker pane.
+8. Require identity-bound `dispatch_submitted`, then expected evidence and
+   `dispatch_completed`.
+9. Run independent review and resolve recommendations.
+10. Run `valp audit <workspace> --task TASK-001`; `fail_count` must be 0.
+```
+
 ### 0. Run The First-Install Health Gate
 
 Do this before real dispatch, especially when VALP is installed through an App
@@ -107,6 +132,12 @@ The App or installer should resolve the actual install root instead of assuming
 a fixed Desktop checkout path. A broken symlink, stale wrapper, missing Python
 dependency, or missing runtime should be shown as a doctor/preflight result, not
 as an agent task failure.
+
+On publish, inspect `state.json.source_provenance`: `task_start` records the
+actual invoked entrypoint, resolved source root, and Git commit/tree when
+available. A later `valp scan --task ...` refreshes `last_observed` without
+rewriting `task_start`. `resolved_dirty` is a warning that the recorded commit
+and tree describe only the base revision, not the uncommitted source bytes.
 
 A dry-run task is only an environment check. `publish` itself writes no routing
 or dispatch files. After the Leader declaration passes validation, the dry run
@@ -179,7 +210,36 @@ receipt ledger
 If any required proof is missing, record the gap and either use Manual Mode or
 fix the adapter.
 
-### 4. Publish A Task
+For HERDR, Full Mode proof means a structured `herdr agent get` baseline
+followed by `herdr agent prompt <target> <payload> --wait --until working
+--timeout <ms>`. The `agent_prompted` response must preserve the routed Agent
+identity and advance integer `state_change_seq`. Older pane insertion, Enter,
+and status observation is transport only: record `dispatch_inserted`, stop as
+`Manual-degraded`, and do not record `dispatch_submitted`.
+
+### 4. Doctor, Select, And Start The Leader
+
+Commission capability passports before assignment:
+
+```bash
+bin/valp doctor --workspace /path/to/install-root --json
+bin/valp leader select <observed-principal-id> --workspace /path/to/install-root
+bin/valp leader start --workspace /path/to/install-root
+bin/valp leader show --workspace /path/to/install-root
+bin/valp leader open --workspace /path/to/workspace
+```
+
+Doctor records one passport per addressable Agent surface/session. Inspect the
+observed model and provider, session freshness, Skills, MCP, permissions,
+context, limitations, and role eligibility. A product name is not model
+evidence.
+
+The user explicitly chooses the Leader. `leader start` creates the exact
+installation-owned session; `show` verifies its binding and health; `open`
+opens that Leader from the caller workspace. None of these commands adopts an
+arbitrary existing pane.
+
+### 5. Publish And Route A Task
 
 With the reference CLI:
 
@@ -197,21 +257,7 @@ bin/valp publish TASK-001 --workspace /path/to/workspace --prompt "Fix the bug a
 The CLI prints `routed: false`. This is intentional: VALP does not select the
 Leader or any Agent.
 
-### 5. Doctor, Select The Leader, And Declare Assignments
-
-Commission capability passports before assignment:
-
-```bash
-bin/valp doctor --workspace /path/to/workspace --json
-```
-
-Doctor records one passport per addressable Agent surface/session. Inspect the
-observed model and provider, session freshness, Skills, MCP, permissions,
-context, limitations, and role eligibility. A product name is not model
-evidence.
-
-The user explicitly chooses the Leader. That Leader decomposes the task and
-writes a declaration like
+The Leader decomposes the task and writes a declaration like
 [examples/assignment-declaration.json](../examples/assignment-declaration.json).
 Validate it with:
 
@@ -342,8 +388,9 @@ bin/valp dispatch TASK-001 --workspace /path/to/workspace
 
 For Manual Mode tasks, the same command prints manual copy instructions instead
 of a HERDR adapter plan. For HERDR tasks, the plan names the detected
-`agent_prompt` or `pane_send_text_enter` transport. It fails closed if neither
-path is available.
+`agent_prompt` or `pane_send_text_enter` transport. Only `agent_prompt` with the
+identity-bound sequence proof above is Full Mode; `pane_send_text_enter` remains
+`Manual-degraded` transport evidence.
 
 To actually submit through the local HERDR adapter:
 

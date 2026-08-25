@@ -1,0 +1,16 @@
+{
+  "schema_version": "valp-dispatch-receipt.v2",
+  "receipt_id": "receipt-v2-bool-generation",
+  "task_id": "TASK-RECEIPT-V3",
+  "event_sequence": 1,
+  "ts": "2026-08-03T08:00:00Z",
+  "agent": "codex",
+  "role": "implementer",
+  "work_item_id": "implementer:codex",
+  "dispatch_id": "TASK-RECEIPT-V3:implementer:1",
+  "dispatch_generation": true,
+  "event": "dispatch_submitted",
+  "dispatch_ref": "agents/codex/dispatch.md",
+  "expected_refs": ["agents/codex/evidence.md"],
+  "proof": {"adapter_record": {"submission_id": "source-submit-1"}}
+}

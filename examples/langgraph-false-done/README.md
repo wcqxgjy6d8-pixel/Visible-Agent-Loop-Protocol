@@ -24,13 +24,18 @@ Re-run the live false-done, repair, and independent review path:
 examples/langgraph-false-done/reproduce.sh
 ```
 
-The script creates an isolated temporary workspace, starts the local LangGraph
-API, records a real run ID, confirms the first adapter command exits blocked,
-preserves that workspace's failing audit, repairs on the same thread identity,
-runs the reviewer on a separate run, and audits the newly reproduced task to
-`fail_count=0`. It leaves the temporary workspace in place for inspection and
-stops only the server process that it started. It requires `uv`, Python 3.12,
-and `curl`; the script creates an ignored Python 3.12 environment on first run.
+The script creates an isolated temporary workspace and v0.3 control root,
+selects the task-local reproduction Leader, starts the local LangGraph API, and
+records real run IDs in the authoritative
+`runtime/langgraph/receipts.v3.jsonl` ledger. It confirms the first adapter
+command exits blocked, preserves that workspace's failing audit, repairs on the
+same thread identity, runs the reviewer on a separate run, and audits the newly
+reproduced task to `fail_count=0`. Running the script is the explicit action
+that authorizes its isolated Leader selection; it does not change the caller's
+VALP installation. It leaves the temporary workspace in place for inspection
+and stops only the server process that it started. It requires `uv`, Python
+3.12, and `curl`; the script creates an ignored Python 3.12 environment on
+first run.
 
 The case-local compatibility level in `conformance.json` is descriptive, not a
 new protocol-wide conformance grade. It applies only to this adapter/runtime

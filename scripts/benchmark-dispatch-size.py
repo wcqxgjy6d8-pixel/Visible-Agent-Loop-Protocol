@@ -79,8 +79,15 @@ def assignment_declaration(task_id: str) -> dict[str, object]:
 def model_aware_queue_preflight(
     agent_names: list[str] | None = None,
     runtime: str | None = None,
+    launch_argv_by_agent: dict[str, list[str]] | None = None,
+    version_command_by_agent: dict[str, list[str]] | None = None,
 ) -> dict[str, object]:
-    preflight = collect_runtime_preflight(agent_names, runtime=runtime)
+    preflight = collect_runtime_preflight(
+        agent_names,
+        runtime=runtime,
+        launch_argv_by_agent=launch_argv_by_agent,
+        version_command_by_agent=version_command_by_agent,
+    )
     observed_at = datetime.now(timezone.utc).isoformat()
     for agent, record in (preflight.get("agents") or {}).items():
         record["model_probe"] = {

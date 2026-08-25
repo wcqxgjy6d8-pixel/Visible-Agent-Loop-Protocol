@@ -8,7 +8,7 @@ multi-agent platform.
 
 | Area | Current state |
 |---|---|
-| Protocol | `0.2.0` |
+| Protocol | Stable `0.2.0`; `0.3.0-draft` normative documentation target |
 | Repository license | MIT |
 | Reference CLI | `bin/valp` with task workflow, v0.3 installation, leader, capability, migration, plugin, hello, conformance, audit, and doctor commands |
 | Reference runtime | HERDR for the documented Full Mode path |
@@ -23,10 +23,44 @@ is partially implemented as an executable `0.3.0-draft` core. The current stable
 release remains `0.2.0`; RFC 0001 remains incomplete and is not stable as a whole.
 The implementation guide is [docs/v0.3-implementation.md](v0.3-implementation.md).
 
-The shipped draft core covers control-root bootstrap, explicit leader selection,
-leader epochs, message/event ledgers, replayable state, capability layers,
-plugin manifest boundary checks, migration dry-run/apply guards, and isolated
-conformance fixtures.
+The shipped draft core covers control-root bootstrap, Doctor-backed Leader
+candidate discovery, selection/start separation, exact installation-owned
+Leader session binding, restart/rotation epoch fencing, message/event ledgers,
+replayable state, capability layers, plugin manifest boundary checks, migration
+dry-run/apply guards, and isolated conformance fixtures.
+
+## RFC 0002 Local Integration And Kernel Slice 1 Status
+
+[RFC 0002: VALP Layered Architecture](rfcs/0002-layered-architecture.md) and
+[SPEC Section 21](../SPEC.md#21-layered-architecture-and-kernel-boundary)
+document the accepted Protocol `0.3` ownership and proof model: five top-level
+layers, a pure deterministic Kernel, distinct Attempt identity, complementary
+proof kinds, cancellation fencing, bounded partial/degraded outcomes,
+Kernel-computed dimension gates, and independent version lines.
+
+The public RFC 0002 package comprises `SPEC.md`, `docs/index.md`, this
+project status page, and
+`docs/rfcs/0002-layered-architecture.md`. Pure Protocol Kernel Slice 1 implements
+the closed Layer 02 Task graph for all 13 truth statuses and its canonical
+identity, closed-enum, State, Result, idempotency, and rejection contracts. It
+also implements ordered `ReplayEntry` reducer re-execution, complete canonical
+Result equality, validated Genesis Root replay with negative tests, and a
+structural Checkpoint Root machine contract. MVP-H adds independently
+trust-policy-bound checkpoint authentication and deterministic suffix replay
+through the same reducer, with exact Result equality and zero emitted
+obligations. This is Layer 02 local proof, not checkpoint storage, effect
+recovery, wait/wake, or Adapter continuation. A separate pure reducer covers canonical v3 receipt write
+proposals and digest-bound legacy/v2 migration projections, with valid and
+adversarial fixtures. A file-backed Reference System store now adds cooperative
+inter-process locking, canonical-prefix replay, CAS, atomic replacement, and
+file plus directory synchronization. Current evidence covers process-crash
+recovery on the tested macOS/APFS host, not sudden power loss, hostile writers,
+or Windows parity. The LangGraph Adapter is the only runtime path that acquires
+canonical v3 proof and uses the durable v3 store end to end. HERDR, Queue,
+Manual Mode, and workflow observation/recovery remain legacy/v2
+compatibility-only paths. The complete Protocol Kernel and complete third layer
+remain unfinished. No broader Adapter conformance, platform parity, release
+support, or runtime-wide Done conformance is claimed.
 
 ## Verified In This Repository
 
@@ -61,9 +95,13 @@ platform.
 | Doctor/User/Leader authority chain | Covered for capability passports, explicit user-selected Leader evidence, Leader declarations, validation blockers, and publish-without-routing behavior | `tests/test_valp_doctor.py`, `tests/test_valp_workflow.py` |
 | Assignment declaration and validation schemas | Covered for bundled examples and negative cases | `schemas/assignment-declaration.schema.json`, `schemas/assignment-validation.schema.json`, `tests/test_schema_examples.py` |
 | Deterministic wake core | Covered locally for dependency barrier, identity rejection, revision CAS, duplicate wake, concurrent wake, and event-to-projection recovery | `valp_cli/workflow.py`, `tests/test_valp_workflow.py` |
-| v0.3 installation core | Covered for bootstrap, explicit leader selection, epoch fencing, CAS, idempotency, replay, capability registry, content-addressed claims/reviews, task Done reducer, plugin boundary, and migration dry-run | `valp_cli/control_plane.py`, `valp_cli/task_control.py`, `valp_cli/plugins.py`, `valp_cli/conformance.py`, `tests/test_control_plane.py` |
+| v0.3 installation core | Covered for bootstrap, Doctor-backed candidates, selection/start separation, exact Leader session binding, restart/rotation epoch fencing, CAS, idempotency, replay, capability registry, content-addressed claims/reviews, task Done reducer, plugin boundary, and migration dry-run | `valp_cli/control_plane.py`, `valp_cli/herdr_adapter.py`, `valp_cli/task_control.py`, `valp_cli/plugins.py`, `valp_cli/conformance.py`, `tests/test_control_plane.py`, `tests/test_herdr_adapter.py` |
+| Protocol 0.3 layered architecture | Public RFC 0002 package integrated; broader architecture remains a normative target | `SPEC.md` Section 21, `docs/index.md`, this page, and `docs/rfcs/0002-layered-architecture.md` |
+| Pure Protocol Kernel Slice 1 | Closed Layer 02 Task transition graph implemented; this is not the complete Protocol Kernel or complete third layer | `valp_cli/protocol_kernel.py`, `schemas/protocol-kernel.schema.json`, `tests/test_protocol_kernel.py` |
+| Pure v3 receipt-write, migration projection, and durable Reference System store | Covered for canonical append proposals, fail-closed legacy/v2 projection, proof-kind negative cases, fixtures, cooperative locking/CAS, and process-crash recovery on the tested macOS/APFS host; LangGraph is the only adopted runtime path | `valp_cli/protocol_receipts.py`, `valp_cli/receipt_store.py`, `schemas/receipts.schema.json`, `tests/test_protocol_receipts.py`, `tests/test_receipt_store.py`, `tests/fixtures/receipt-v3/` |
+| Remaining layered core machine contracts and conformance | Not implemented by these bounded slices | Requires remaining Adapter adoption/conformance, broader platform durability proof, independent review, and strict audit |
 | Local-process adapter | Covered for approved subprocess submission, lifecycle result, output evidence, and failure status | `valp_cli/process_adapter.py`, `schemas/process-adapter-run.schema.json`, `tests/test_control_plane.py` |
-| LangGraph API adapter | Covered for real run/thread identity, submission proof, state/output/checkpoint refs, failure reason, replay identity, and non-terminal wait windows | `valp_cli/langgraph_adapter.py`, `tests/test_langgraph_adapter.py` |
+| LangGraph API adapter | Covered for real run/thread and Attempt identity, canonical v3 ReceiptStore writes, strict resume/audit reads, dependency ordering, exact retry, stale CAS, proof mismatch, mixed-ledger rejection, post-commit reconciliation, false-Done blocking, and non-terminal wait windows | `valp_cli/langgraph_adapter.py`, `valp_cli/audit.py`, `valp_cli/submission.py`, `tests/test_langgraph_adapter.py` |
 | File-ledger queue concurrency | Covered on the current POSIX test host with synchronized cross-process submitters | `valp_cli/workflow.py`, `tests/test_valp_workflow.py`; real Windows subprocess proof remains open |
 | Wait/wake closed artifacts | Covered for shared closed suspension projections, immutable policy snapshots, event/reason pairing, valid/invalid fixtures, identity-bound external wake evidence, generated-result audit, and projection mismatch failure | `schemas/suspension.schema.json`, `schemas/wait-policy.schema.json`, `schemas/exception-wake.schema.json`, `schemas/wait-event.schema.json`, `schemas/wake-result.schema.json`, `tests/test_schema_examples.py`, `tests/test_valp_audit.py`, `tests/test_valp_workflow.py` |
 | Doctor diagnostics and capability passports | Covered for per-surface/session passports, four evidence layers, model/provider/session freshness, Skills, MCP, permissions, context, history binding, and role gates | `schemas/capability-passport.schema.json`, `tests/test_valp_doctor.py` |
@@ -76,22 +114,31 @@ platform.
 | Live HERDR dispatch E2E completion case study | Not covered in repository CI | Requires sanitized task folder plus runtime submission and final audit evidence |
 | Live zero-model-turn deterministic wake and exactly-once coordinator continuation | Not covered in repository CI | Requires a wake-ID-bound continuation invocation receipt plus restart/restore evidence from a real adapter |
 | Non-HERDR real adapter E2E | Covered for the local LangGraph API development runtime | Production hosting and deterministic coordinator auto-continuation remain open |
-| Full state-machine transition suite | Partially covered | Installation transitions are implemented and tested; the task-level legal transition graph remains planned |
+| Full state-machine transition suite | Partially covered | Installation, closed Layer 02 Task transitions, Work Item/Attempt graphs, and authenticated Checkpoint Root suffix replay are implemented and tested; wait/wake, checkpoint persistence/effect recovery, and Adapter adoption remain open |
 | Context compression runtime integration | Partially covered | Semantics are documented; live adapter enforcement is not yet covered |
 | Auto Visible watcher E2E | Not covered | Trigger policy semantics exist; watcher implementation is runtime-specific |
-| App-managed first install E2E | Not covered in repository CI | Protocol now defines doctor-first health gate; App installer implementation must prove it |
+| CLI-managed first install E2E | Source behavior covered; real installation activation remains a local proof gate | Protocol defines Doctor-first selection plus exact Leader start; each runtime must prove its own live session binding; an App is optional |
 
 ## Reference Runtime Boundary
 
 HERDR is the current reference runtime, not the VALP protocol.
 
-Current externally checked facts on 2026-07-06:
+Current externally checked facts on 2026-07-28:
 
 - `https://github.com/ogulcancelik/herdr` is public.
 - The repository contains source and project files, including Rust sources,
   `Cargo.toml`, tests, and docs, and GitHub shows published releases.
-- The repository license text says AGPL-3.0-or-later for open-source use plus
-  a commercial license option.
+- The immutable `v0.7.5` tag and Homebrew stable artifact are
+  `AGPL-3.0-or-later` with a commercial license option.
+- Upstream `master` was relicensed to `Apache-2.0` by commit `cd5ea1be0e69` on
+  2026-07-22, after `v0.7.5`; the tagged artifact did not change retroactively.
+
+The versioned HERDR Full Mode boundary uses a structured `herdr agent get`
+baseline followed by `herdr agent prompt <target> <payload> --wait --until
+working --timeout <ms>`. The `agent_prompted` response must preserve Agent
+identity and advance integer `state_change_seq`. Older pane insertion, Enter,
+and status observation is transport only: it records `dispatch_inserted`, stays
+`Manual-degraded`, and cannot record `dispatch_submitted`.
 
 VALP should not claim that HERDR is required by the protocol. It should also
 not imply that another runtime is already first-class until that adapter exists
@@ -109,7 +156,8 @@ and exports the required receipts and evidence.
 | Windows lock contention lacks native subprocess proof | The retry/deadline policy is platform-neutral, but this local run exercises real cross-process locking only on POSIX | Keep native Windows contention conformance open until run on a Windows host |
 | Task-ref grammar | Shared POSIX-style relative-ref grammar is enforced across runtime and artifact schemas | Covered for the reference CLI and current artifact family; adapter-specific path handling remains outside the protocol core |
 | Declared Python range lacks endpoint CI | Package metadata declares Python 3.9-3.12 | Public verification now exercises Python 3.9, 3.11, and 3.12 on Linux, macOS, and Windows |
-| App installer behavior is not a protocol runtime | First-launch UX can accidentally hide path, preflight, and submit boundaries | First-install health gate is specified; App must expose doctor/preflight/dry-run results |
+| Protocol Kernel beyond Slice 1 is incomplete | The closed Task graph can be mistaken for the complete third layer | Keep migration, additional Adapter, platform, and runtime-wide support claims blocked until matching implementation and conformance evidence exists |
+| Optional App installer behavior is not a protocol runtime | First-launch UX can accidentally hide path, Leader binding, preflight, and submit boundaries | First-install health gate is specified; any App must expose the same CLI-verifiable evidence |
 | Windows local Full Mode is conditional | Native Windows runtime support is beta-dependent | Recommend SSH remote for stable Windows workflow |
 | Stable release is early | Users need clear limits around runtime proof and adapter coverage | Use the v0.3 draft core for installation-control-plane evaluation; keep stable/live-runtime claims tied to adapter proof |
 | Small public community | Social proof is low | Avoid community-size overclaims |

@@ -1,0 +1,15 @@
+{
+  "source_ref": "valid/legacy.json",
+  "source_schema_version": "legacy",
+  "migration_id": "migration-legacy-1",
+  "draft": {
+    "event": "dispatch_written"
+  },
+  "preserved_fields": [
+    "agent",
+    "role",
+    "event",
+    "dispatch_ref",
+    "expected_refs"
+  ]
+}

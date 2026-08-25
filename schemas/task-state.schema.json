@@ -9,7 +9,7 @@
     "installation_id": {"type": "string", "minLength": 1},
     "task_id": {"type": "string", "minLength": 1},
     "revision": {"type": "integer", "minimum": 0},
-    "status": {"enum": ["new", "published", "scanning_capabilities", "scanning_context", "loading_local_overlay", "selecting_runtime_adapter", "classifying_task", "selecting_profile", "decomposing_tasks", "recommending_skills", "building_provider_matrix", "preflighting_runtime", "scoring_routes", "routing_capabilities", "routing_squad", "dispatching", "suspended", "planned", "locked", "executing", "verifying", "reviewing", "resolving_agent_recommendations", "fixing", "approval_required", "recording", "done", "blocked", "failed", "cancelled"]},
+    "status": {"$ref": "#/$defs/operationalPhase"},
     "active_blockers": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "gates": {"type": "object", "additionalProperties": {}},
     "last_event_id": {"type": ["string", "null"]},
@@ -17,5 +17,11 @@
     "protocol_version": {"type": "string", "minLength": 1},
     "updated_at": {"type": "string", "minLength": 1},
     "projection_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "operationalPhase": {
+      "description": "Layer 01 Reference System projection phase; it is not a Layer 02 Kernel Task status.",
+      "enum": ["new", "published", "scanning_capabilities", "scanning_context", "loading_local_overlay", "selecting_runtime_adapter", "classifying_task", "selecting_profile", "decomposing_tasks", "recommending_skills", "building_provider_matrix", "preflighting_runtime", "scoring_routes", "routing_capabilities", "routing_squad", "dispatching", "suspended", "planned", "locked", "executing", "verifying", "reviewing", "resolving_agent_recommendations", "fixing", "approval_required", "recording", "done", "blocked", "failed", "cancelled"]
+    }
   }
 }

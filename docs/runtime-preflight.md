@@ -18,6 +18,9 @@ Pane-controller adapters should record:
 runtime status
 restart/update-needed status
 submission capability and selected transport mode
+project/task-owned session provisioning capability
+task-owned runtime workspace scope
+owned-session binding ref, generation, and identity token
 agent pane id
 agent status
 terminal width and height, when available
@@ -81,8 +84,30 @@ and refuses to submit when a Leader-declared Agent has a failing preflight
 check. It reports the blocker to the Leader; it does not choose a replacement.
 For HERDR, an installed CLI is insufficient by itself: preflight also requires
 atomic `agent prompt` or the complete `pane send-text` + `pane send-keys` +
-`agent wait` fallback. Capability is detected from command help, not assumed
-from the HERDR version.
+`agent wait` fallback, plus `workspace create`, `agent start`, and `pane move`
+for isolated project/task-owned worker provisioning. Capability is detected
+from command help, not assumed from the HERDR version.
+
+For a submitted HERDR dispatch, preflight resolves the worker through
+`agent-sessions.json`. It does not select a pane by Agent label. The fresh pane,
+terminal, workspace/tab, Agent, and cwd facts must match the recorded binding.
+The adapter queries the recorded workspace directly instead of depending on a
+potentially truncated global pane list. The route-time pane scan remains
+capability discovery only.
+
+Before HERDR provisioning, the coordinator also resolves a bare launch command
+to an absolute executable path. This is a runtime-boundary check: the HERDR
+daemon is not assumed to inherit the coordinator's `PATH`. The command comes
+from the selected Agent's observed `runtime.launch_argv` capability or explicit
+adapter configuration; VALP does not guess it from the Agent name.
+When `runtime.version_command` is declared, preflight runs that exact argv. It
+does not append `--version` or infer another probe convention.
+
+After a new owned Agent starts, preflight may repeat read-only structured
+runtime metadata observation for a fixed bounded window. Unstructured pane,
+footer, transcript, and dispatch text are not model evidence. It records the
+attempt count in `owned_session_model_readiness`. Timeout leaves dispatch
+blocked; an observed ineligible model is not retried as readiness.
 
 ## Evidence Rule
 

@@ -5,7 +5,7 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass, asdict
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from .control_contract import (
@@ -77,6 +77,27 @@ WAKE_RESULT_BASE_FIELDS = {
     "recorded_at",
 }
 
+
+def _is_absolute_runtime_path(value: Any) -> bool:
+    text = str(value or "")
+    return bool(text) and (
+        PurePosixPath(text).is_absolute() or PureWindowsPath(text).is_absolute()
+    )
+
+
+def _herdr_agent_session_identity_token(identity: dict[str, Any]) -> str:
+    runtime_identity = {
+        key: str(identity.get(key) or "").strip()
+        for key in ("pane_id", "terminal_id", "workspace_id", "tab_id")
+    }
+    if any(not value for value in runtime_identity.values()):
+        return ""
+    digest = hashlib.sha256(
+        json.dumps(runtime_identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return f"sha256:{digest}"
+
+
 @dataclass
 class AuditItem:
     id: str
@@ -124,7 +145,21 @@ class TaskAudit:
         self.evidence_board = self._load_json("evidence-board.json")
         self.correction_cycle = self._load_json("correction-cycle.json")
         self.control_contract = self._load_json(CONTROL_CONTRACT_REF)
-        self.receipts = self._load_jsonl("dispatch-receipts.jsonl")
+        self.agent_sessions = self._load_json("agent-sessions.json")
+        self.agent_session_receipts = self._load_jsonl("agent-session-receipts.jsonl")
+        self.receipt_ledger_ref = "dispatch-receipts.jsonl"
+        langgraph_adoption_path = self.task_dir / "runtime" / "langgraph" / "adoption.json"
+        if langgraph_adoption_path.is_file():
+            self.receipt_ledger_ref = "runtime/langgraph/receipts.v3.jsonl"
+            try:
+                from .langgraph_adapter import load_langgraph_v3_receipts
+
+                self.receipts = load_langgraph_v3_receipts(self.task_dir)
+            except Exception as error:
+                self.receipts = []
+                self.jsonl_errors.setdefault(self.receipt_ledger_ref, []).append(str(error))
+        else:
+            self.receipts = self._load_jsonl(self.receipt_ledger_ref)
         self.routing_history = self._load_jsonl("routing-history.jsonl")
         self.wait_events = self._load_jsonl("wait-events.jsonl")
         self.approval_requests = self._load_jsonl("approvals/requested.jsonl")
@@ -146,6 +181,7 @@ class TaskAudit:
             self.check_selected_agents_and_context(),
             self.check_provider_matrix(),
             self.check_runtime_preflight(),
+            self.check_agent_sessions(),
             self.check_routing_confidence(),
             self.check_automation_policy(),
             self.check_iteration_budget(),
@@ -1170,6 +1206,333 @@ class TaskAudit:
             return self._warn("runtime_preflight", "Runtime preflight is recorded for Full Mode adapters", "Runtime preflight has warnings", evidence)
         return self._pass("runtime_preflight", "Runtime preflight is recorded for Full Mode adapters", "Runtime preflight recorded with no failures", evidence)
 
+    def check_agent_sessions(self) -> AuditItem:
+        title = "Full Mode dispatches use adapter-owned project/task Agent sessions"
+        evidence = self._existing(
+            [
+                "agent-sessions.json",
+                "agent-session-receipts.jsonl",
+                "dispatch-receipts.jsonl",
+                "routing.json",
+                "state.json",
+            ]
+        )
+        routing_marker = self.routing.get("agent_sessions")
+        state_marker = self.state.get("agent_sessions")
+        routing_runtime = (
+            self.routing.get("runtime_adapter")
+            if isinstance(self.routing.get("runtime_adapter"), dict)
+            else {}
+        )
+        state_runtime = (
+            self.state.get("runtime_adapter")
+            if isinstance(self.state.get("runtime_adapter"), dict)
+            else {}
+        )
+        if not routing_marker and not state_marker:
+            owned_session_surface = bool(
+                self.state.get("schema_version") == "valp-visible-loop-state.v2"
+                and routing_runtime.get("class") == "pane_controller"
+            )
+            owned_session_artifacts = bool(
+                self.agent_sessions
+                or self.agent_session_receipts
+                or any(
+                    isinstance(receipt.get("proof"), dict)
+                    and (receipt.get("proof") or {}).get("session_binding")
+                    for receipt in self.receipts
+                )
+            )
+            if owned_session_surface or owned_session_artifacts:
+                return self._fail(
+                    "agent_sessions",
+                    title,
+                    "State-v2 pane-controller task is missing required owned-session markers",
+                    evidence,
+                )
+            return self._skip(
+                "agent_sessions",
+                title,
+                "Legacy task does not claim the owned Agent session contract",
+                evidence,
+            )
+        expected_marker = {
+            "status": "ready",
+            "ref": "agent-sessions.json",
+            "receipts_ref": "agent-session-receipts.jsonl",
+        }
+        errors: list[str] = []
+        if routing_marker != expected_marker or state_marker != expected_marker:
+            errors.append("routing/state Agent session markers are missing or inconsistent")
+        routing_adapter_id = str(routing_runtime.get("id") or "").strip()
+        state_adapter_id = str(state_runtime.get("id") or "").strip()
+        if (
+            not routing_adapter_id
+            or state_adapter_id != routing_adapter_id
+        ):
+            errors.append("routing/state runtime adapter ids are missing or inconsistent")
+        errors.extend(self.jsonl_errors.get("agent-session-receipts.jsonl") or [])
+        projection = self.agent_sessions
+        task_id = str(self.routing.get("task_id") or self.state.get("task_id") or "")
+        projection_adapter = str(projection.get("adapter") or "").strip()
+        if (
+            projection.get("schema_version") != "valp-agent-sessions.v1"
+            or projection.get("task_id") != task_id
+            or not projection_adapter
+            or projection.get("status") != "ready"
+        ):
+            errors.append("agent-sessions.json is missing, blocked, or bound to another task/adapter")
+        if projection_adapter and projection_adapter != routing_adapter_id:
+            errors.append("Agent session projection adapter does not match routed runtime adapter")
+        bindings = projection.get("bindings") if isinstance(projection.get("bindings"), dict) else {}
+        if projection.get("status") == "ready" and not bindings:
+            errors.append("agent-sessions.json is ready but has no Agent session bindings")
+
+        def ownership_is_valid(ownership: Any) -> bool:
+            if not isinstance(ownership, dict):
+                return False
+            scope = ownership.get("scope")
+            return bool(
+                scope in {"project", "task"}
+                and re.fullmatch(
+                    r"sha256:[0-9a-f]{64}",
+                    str(ownership.get("project_identity") or ""),
+                )
+                and (scope != "task" or ownership.get("task_id") == task_id)
+            )
+
+        def launch_is_valid(launch: Any) -> bool:
+            if not isinstance(launch, dict):
+                return False
+            argv_present = "argv" in launch
+            runtime_ref_present = "runtime_ref" in launch
+            argv = launch.get("argv")
+            runtime_ref = launch.get("runtime_ref")
+            argv_valid = bool(
+                isinstance(argv, list)
+                and argv
+                and all(isinstance(item, str) and item.strip() for item in argv)
+            )
+            runtime_ref_valid = bool(
+                isinstance(runtime_ref, str) and runtime_ref.strip()
+            )
+            return bool(
+                (argv_valid or runtime_ref_valid)
+                and (not argv_present or argv_valid)
+                and (not runtime_ref_present or runtime_ref_valid)
+            )
+
+        def runtime_scope_is_valid(runtime_scope: Any, ownership: Any) -> bool:
+            return bool(
+                isinstance(runtime_scope, dict)
+                and isinstance(runtime_scope.get("kind"), str)
+                and runtime_scope.get("kind", "").strip()
+                and runtime_scope.get("ownership") in {"project", "task"}
+                and isinstance(ownership, dict)
+                and runtime_scope.get("ownership") == ownership.get("scope")
+            )
+
+        def runtime_identity_is_valid(identity: Any, identity_token: Any) -> bool:
+            token = str(identity_token or "")
+            return bool(
+                isinstance(identity, dict)
+                and len(identity) >= 2
+                and re.fullmatch(r"sha256:[0-9a-f]{64}", token)
+                and identity.get("token") == token
+            )
+
+        expected_sequence = list(range(1, len(self.agent_session_receipts) + 1))
+        actual_sequence = [record.get("event_sequence") for record in self.agent_session_receipts]
+        if actual_sequence != expected_sequence:
+            errors.append("Agent session receipt event_sequence is not contiguous")
+        for index, session_receipt in enumerate(self.agent_session_receipts, 1):
+            agent = str(session_receipt.get("agent") or "")
+            identity = session_receipt.get("runtime_identity") or {}
+            ownership = session_receipt.get("ownership") or {}
+            context = session_receipt.get("context") or {}
+            launch = session_receipt.get("launch") or {}
+            runtime_scope = session_receipt.get("runtime_scope") or {}
+            launch_argv = launch.get("argv") if isinstance(launch, dict) else None
+            generation = session_receipt.get("generation")
+            if session_receipt.get("adapter") != projection_adapter:
+                errors.append(
+                    f"line {index}: Agent session receipt adapter does not match projection adapter"
+                )
+            if (
+                session_receipt.get("schema_version") != "valp-agent-session-receipt.v1"
+                or session_receipt.get("task_id") != task_id
+                or not agent
+                or agent not in bindings
+                or session_receipt.get("event")
+                not in {"agent_session_provisioned", "agent_session_reused"}
+                or session_receipt.get("binding_ref") != "agent-sessions.json"
+                or type(generation) is not int
+                or int(generation or 0) < 1
+                or not ownership_is_valid(ownership)
+                or not isinstance(context, dict)
+                or not context
+                or not launch_is_valid(launch)
+                or not runtime_scope_is_valid(runtime_scope, ownership)
+                or not runtime_identity_is_valid(
+                    identity,
+                    session_receipt.get("identity_token"),
+                )
+            ):
+                errors.append(f"line {index}: Agent session receipt provenance is invalid")
+            if projection_adapter == "herdr":
+                expected_token = (
+                    _herdr_agent_session_identity_token(identity)
+                    if isinstance(identity, dict)
+                    else ""
+                )
+                if (
+                    ownership.get("scope") != "task"
+                    or not _is_absolute_runtime_path(context.get("cwd"))
+                    or runtime_scope.get("kind") != "workspace"
+                    or runtime_scope.get("ownership") != "task"
+                    or not str(runtime_scope.get("label") or "").strip()
+                    or runtime_scope.get("workspace_id") != identity.get("workspace_id")
+                    or expected_token != session_receipt.get("identity_token")
+                ):
+                    errors.append(
+                        f"line {index}: HERDR Agent session receipt provenance is invalid"
+                    )
+                if (
+                    not isinstance(launch_argv, list)
+                    or not launch_argv
+                    or not _is_absolute_runtime_path(launch_argv[0])
+                ):
+                    errors.append(
+                        f"line {index}: Agent session receipt has no absolute launch executable"
+                    )
+                if session_receipt.get("focused_at_provisioning") is not False:
+                    errors.append(
+                        f"line {index}: Agent session receipt does not prove non-focused provisioning"
+                    )
+        for agent, binding in bindings.items():
+            if not isinstance(binding, dict):
+                errors.append(f"{agent}: Agent session binding is not an object")
+                continue
+            identity = binding.get("runtime_identity") or {}
+            ownership = binding.get("ownership") or {}
+            context = binding.get("context") or {}
+            launch = binding.get("launch") or {}
+            runtime_scope = binding.get("runtime_scope") or {}
+            token = str(identity.get("token") or "")
+            generation = binding.get("generation")
+            launch_argv = launch.get("argv") if isinstance(launch, dict) else None
+            if (
+                binding.get("agent") != agent
+                or not str(binding.get("session_name") or "").strip()
+                or not ownership_is_valid(ownership)
+                or type(generation) is not int
+                or int(generation or 0) < 1
+                or not runtime_identity_is_valid(identity, token)
+                or binding.get("dispatch_eligible") is not True
+                or binding.get("lifecycle") not in {"provisioned", "reused"}
+                or not isinstance(context, dict)
+                or not context
+                or not launch_is_valid(launch)
+                or not runtime_scope_is_valid(runtime_scope, ownership)
+            ):
+                errors.append(f"{agent}: Agent session binding ownership or identity is invalid")
+                continue
+            if projection_adapter == "herdr":
+                expected_token = _herdr_agent_session_identity_token(identity)
+                if (
+                    ownership.get("scope") != "task"
+                    or not _is_absolute_runtime_path(context.get("cwd"))
+                    or runtime_scope.get("kind") != "workspace"
+                    or runtime_scope.get("ownership") != "task"
+                    or not str(runtime_scope.get("label") or "").strip()
+                    or runtime_scope.get("workspace_id") != identity.get("workspace_id")
+                    or token != expected_token
+                ):
+                    errors.append(f"{agent}: HERDR Agent session binding provenance is invalid")
+                    continue
+                if (
+                    not isinstance(launch_argv, list)
+                    or not launch_argv
+                    or not _is_absolute_runtime_path(launch_argv[0])
+                ):
+                    errors.append(f"{agent}: Agent session binding has no absolute launch executable")
+                    continue
+                if binding.get("focused_at_provisioning") is not False:
+                    errors.append(
+                        f"{agent}: Agent session binding does not prove non-focused provisioning"
+                    )
+                    continue
+            provisioned_generations = sorted(
+                session_receipt.get("generation")
+                for session_receipt in self.agent_session_receipts
+                if session_receipt.get("task_id") == task_id
+                and session_receipt.get("agent") == agent
+                and session_receipt.get("event") == "agent_session_provisioned"
+                and type(session_receipt.get("generation")) is int
+            )
+            if provisioned_generations != list(range(1, int(binding["generation"]) + 1)):
+                errors.append(f"{agent}: Agent session provisioning generations are incomplete")
+                continue
+            matching_provisioning_receipt = any(
+                session_receipt.get("adapter") == projection_adapter
+                and session_receipt.get("task_id") == task_id
+                and session_receipt.get("agent") == agent
+                and session_receipt.get("event") == "agent_session_provisioned"
+                and session_receipt.get("generation") == binding.get("generation")
+                and session_receipt.get("identity_token") == token
+                and session_receipt.get("binding_ref") == "agent-sessions.json"
+                and session_receipt.get("ownership") == ownership
+                and session_receipt.get("context") == context
+                and session_receipt.get("launch") == launch
+                and session_receipt.get("runtime_scope") == runtime_scope
+                and session_receipt.get("runtime_identity") == identity
+                for session_receipt in self.agent_session_receipts
+            )
+            if not matching_provisioning_receipt:
+                errors.append(f"{agent}: Agent session binding has no matching provisioning receipt")
+        submitted = [
+            receipt
+            for receipt in self.receipts
+            if receipt.get("event") == "dispatch_submitted"
+        ]
+        for receipt in submitted:
+            agent = str(receipt.get("agent") or "")
+            binding = bindings.get(agent) if isinstance(bindings, dict) else None
+            if not isinstance(binding, dict):
+                errors.append(f"{agent}: submitted dispatch has no owned session binding")
+                continue
+            proof = receipt.get("proof") or {}
+            proof_binding = proof.get("session_binding") or {}
+            matching_historical_provisioning = any(
+                session_receipt.get("adapter") == projection_adapter
+                and session_receipt.get("task_id") == task_id
+                and session_receipt.get("agent") == agent
+                and session_receipt.get("event") == "agent_session_provisioned"
+                and session_receipt.get("binding_ref") == proof_binding.get("ref")
+                and session_receipt.get("generation") == proof_binding.get("generation")
+                and session_receipt.get("identity_token")
+                == proof_binding.get("identity_token")
+                and session_receipt.get("ownership") == proof_binding.get("ownership")
+                for session_receipt in self.agent_session_receipts
+            )
+            if (
+                proof_binding.get("ref") != "agent-sessions.json"
+                or not matching_historical_provisioning
+            ):
+                errors.append(f"{agent}: submission proof is not bound to agent-sessions.json")
+                continue
+            proof_runtime = str(proof.get("runtime") or "").strip().casefold()
+            if proof_runtime != projection_adapter.casefold():
+                errors.append(f"{agent}: submission proof names another runtime adapter")
+        if errors:
+            return self._fail("agent_sessions", title, "; ".join(errors[:8]), evidence)
+        return self._pass(
+            "agent_sessions",
+            title,
+            f"{len(submitted)} submission(s) are bound to {projection_adapter} project/task-owned sessions",
+            evidence,
+        )
+
     def check_routing_confidence(self) -> AuditItem:
         evidence = self._existing(["routing.json", "state.json"])
         missing_recorded = "capabilities_missing" in self.routing or "capabilities_missing" in self.state
@@ -1735,9 +2098,9 @@ class TaskAudit:
         return self._pass("squad_routing", "Squad routing evidence is recorded when a squad is used", "Squad routing evidence found", evidence)
 
     def check_dispatch_receipts(self) -> AuditItem:
-        evidence = self._existing(["dispatch-receipts.jsonl"])
+        evidence = self._existing([self.receipt_ledger_ref])
         agents = self._selected_agents()
-        receipt_errors = self.jsonl_errors.get("dispatch-receipts.jsonl") or []
+        receipt_errors = self.jsonl_errors.get(self.receipt_ledger_ref) or []
         if receipt_errors:
             return self._fail(
                 "dispatch_receipts",
@@ -1757,7 +2120,12 @@ class TaskAudit:
                 evidence,
             )
         if not self.receipts:
-            return self._fail("dispatch_receipts", "Dispatch receipts satisfy the required gates", "Missing or empty dispatch-receipts.jsonl", evidence)
+            return self._fail(
+                "dispatch_receipts",
+                "Dispatch receipts satisfy the required gates",
+                f"Missing or empty {self.receipt_ledger_ref}",
+                evidence,
+            )
         runtime = self.routing.get("runtime_adapter") or self.state.get("runtime_adapter") or {}
         manual_mode = runtime.get("class") == "manual"
         completed_events = {"manual_result_attested", "dispatch_completed"} if manual_mode else {"dispatch_completed"}
@@ -1817,7 +2185,7 @@ class TaskAudit:
             return self._pass(
                 "dispatch_receipts",
                 "Dispatch receipts satisfy the required gates",
-                f"Each v2 work item has completion and identity-matched {mode_description} proof",
+                f"Each {'v3' if self.receipt_ledger_ref.endswith('receipts.v3.jsonl') else 'v2'} work item has completion and identity-matched {mode_description} proof",
                 evidence,
             )
         latest = self._latest_receipts_by_agent()
@@ -1852,7 +2220,7 @@ class TaskAudit:
         return self._pass("dispatch_receipts", "Dispatch receipts satisfy the required gates", "latest receipt is dispatch_completed for Leader-declared Agents and runtime submission proof exists", evidence)
 
     def check_submission_dependencies(self) -> AuditItem:
-        evidence = self._existing(["submission-dependencies.json", "dispatch-receipts.jsonl", "routing.json", "state.json"])
+        evidence = self._existing(["submission-dependencies.json", self.receipt_ledger_ref, "routing.json", "state.json"])
         expected_marker = {"status": "recorded", "ref": "submission-dependencies.json"}
         routing_marker = self.routing.get("submission_dependencies") or {}
         state_marker = self.state.get("submission_dependencies") or {}
@@ -2938,7 +3306,7 @@ class TaskAudit:
         receipt_refs = {str(ref) for ref in receipt.get("expected_refs") or []}
         expected_refs = {str(ref) for ref in item.get("expected_refs") or []}
         return (
-            receipt.get("schema_version") == "valp-dispatch-receipt.v2"
+            receipt.get("schema_version") in {"valp-dispatch-receipt.v2", "valp-dispatch-receipt.v3"}
             and all(receipt.get(key) == value for key, value in expected.items())
             and expected_refs.issubset(receipt_refs)
         )

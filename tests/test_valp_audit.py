@@ -21,6 +21,419 @@ REAL_DOC_EXAMPLE = ROOT / "examples" / "real-doc-calibration-task"
 
 
 class ValpAuditTests(unittest.TestCase):
+    def test_owned_agent_session_audit_binds_submission_to_provisioning_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            task_id = "TASK-OWNED-SESSION-AUDIT"
+            marker = {
+                "status": "ready",
+                "ref": "agent-sessions.json",
+                "receipts_ref": "agent-session-receipts.jsonl",
+            }
+            binding = json.loads(
+                (ROOT / "examples" / "agent-sessions.json").read_text(encoding="utf-8")
+            )
+            binding["task_id"] = task_id
+            binding["bindings"]["example-agent"]["ownership"]["task_id"] = task_id
+            (task / "agent-sessions.json").write_text(json.dumps(binding), encoding="utf-8")
+            session_receipt = json.loads(
+                (ROOT / "examples" / "agent-session-receipts.jsonl").read_text(encoding="utf-8")
+            )
+            session_receipt["task_id"] = task_id
+            session_receipt["ownership"]["task_id"] = task_id
+            (task / "agent-session-receipts.jsonl").write_text(
+                json.dumps(session_receipt) + "\n",
+                encoding="utf-8",
+            )
+            (task / "routing.json").write_text(
+                json.dumps({
+                    "task_id": task_id,
+                    "runtime_adapter": {
+                        "id": "herdr",
+                        "class": "pane_controller",
+                        "name": "HERDR",
+                    },
+                    "agent_sessions": marker,
+                }),
+                encoding="utf-8",
+            )
+            (task / "state.json").write_text(
+                json.dumps({
+                    "task_id": task_id,
+                    "runtime_adapter": {
+                        "id": "herdr",
+                        "class": "pane_controller",
+                        "name": "HERDR",
+                    },
+                    "agent_sessions": marker,
+                }),
+                encoding="utf-8",
+            )
+            owned = binding["bindings"]["example-agent"]
+            submission = {
+                "agent": "example-agent",
+                "event": "dispatch_submitted",
+                "proof": {
+                    "runtime": "HERDR",
+                    "session_binding": {
+                        "ref": "agent-sessions.json",
+                        "generation": owned["generation"],
+                        "identity_token": "sha256:" + ("f" * 64),
+                        "ownership": owned["ownership"],
+                    },
+                },
+            }
+            (task / "dispatch-receipts.jsonl").write_text(
+                json.dumps(submission) + "\n",
+                encoding="utf-8",
+            )
+
+            failed = TaskAudit(task).check_agent_sessions()
+            self.assertEqual(failed.status, FAIL)
+            self.assertIn("not bound", failed.message)
+
+            submission["proof"]["session_binding"]["identity_token"] = owned["runtime_identity"]["token"]
+            session_receipt["event"] = "agent_session_reused"
+            (task / "agent-session-receipts.jsonl").write_text(
+                json.dumps(session_receipt) + "\n",
+                encoding="utf-8",
+            )
+            failed = TaskAudit(task).check_agent_sessions()
+            self.assertEqual(failed.status, FAIL)
+            self.assertIn("generations are incomplete", failed.message)
+
+            session_receipt["event"] = "agent_session_provisioned"
+            (task / "agent-session-receipts.jsonl").write_text(
+                json.dumps(session_receipt) + "\n",
+                encoding="utf-8",
+            )
+            (task / "dispatch-receipts.jsonl").write_text(
+                json.dumps(submission) + "\n",
+                encoding="utf-8",
+            )
+            passed = TaskAudit(task).check_agent_sessions()
+            self.assertEqual(passed.status, PASS)
+
+            binding["bindings"]["example-agent"]["focused_at_provisioning"] = True
+            session_receipt["focused_at_provisioning"] = True
+            (task / "agent-sessions.json").write_text(
+                json.dumps(binding),
+                encoding="utf-8",
+            )
+            (task / "agent-session-receipts.jsonl").write_text(
+                json.dumps(session_receipt) + "\n",
+                encoding="utf-8",
+            )
+            failed = TaskAudit(task).check_agent_sessions()
+            self.assertEqual(failed.status, FAIL)
+            self.assertIn("non-focused provisioning", failed.message)
+
+            binding["bindings"]["example-agent"]["focused_at_provisioning"] = False
+            session_receipt["focused_at_provisioning"] = False
+            binding["bindings"]["example-agent"]["launch"]["argv"][0] = "example-agent"
+            session_receipt["launch"]["argv"][0] = "example-agent"
+            (task / "agent-sessions.json").write_text(
+                json.dumps(binding),
+                encoding="utf-8",
+            )
+            (task / "agent-session-receipts.jsonl").write_text(
+                json.dumps(session_receipt) + "\n",
+                encoding="utf-8",
+            )
+            failed = TaskAudit(task).check_agent_sessions()
+            self.assertEqual(failed.status, FAIL)
+            self.assertIn("absolute launch executable", failed.message)
+
+    def test_owned_session_audit_binds_historical_submission_to_its_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            task_id = "TASK-OWNED-SESSION-GENERATIONS"
+            marker = {
+                "status": "ready",
+                "ref": "agent-sessions.json",
+                "receipts_ref": "agent-session-receipts.jsonl",
+            }
+            projection = json.loads(
+                (ROOT / "examples" / "agent-sessions.json").read_text(encoding="utf-8")
+            )
+            projection["task_id"] = task_id
+            generation_one = projection["bindings"]["example-agent"]
+            generation_one["ownership"]["task_id"] = task_id
+            receipt_one = json.loads(
+                (ROOT / "examples" / "agent-session-receipts.jsonl").read_text(
+                    encoding="utf-8"
+                )
+            )
+            receipt_one["task_id"] = task_id
+            receipt_one["ownership"]["task_id"] = task_id
+
+            generation_two = json.loads(json.dumps(generation_one))
+            generation_two["generation"] = 2
+            generation_two["runtime_scope"]["workspace_id"] = "workspace-owned-2"
+            generation_two["runtime_scope"]["label"] = "valp-task-001-example-agent-g2"
+            identity_fields = {
+                "pane_id": "pane-owned-2",
+                "terminal_id": "terminal-owned-2",
+                "workspace_id": "workspace-owned-2",
+                "tab_id": "tab-owned-2",
+            }
+            generation_two["runtime_identity"] = {
+                **identity_fields,
+                "token": "sha256:" + hashlib.sha256(
+                    json.dumps(
+                        identity_fields,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+            }
+            projection["bindings"]["example-agent"] = generation_two
+            receipt_two = json.loads(json.dumps(receipt_one))
+            receipt_two.update({
+                "event_sequence": 2,
+                "generation": 2,
+                "identity_token": generation_two["runtime_identity"]["token"],
+                "ownership": generation_two["ownership"],
+                "context": generation_two["context"],
+                "launch": generation_two["launch"],
+                "runtime_scope": generation_two["runtime_scope"],
+                "runtime_identity": generation_two["runtime_identity"],
+            })
+            submission = {
+                "agent": "example-agent",
+                "event": "dispatch_submitted",
+                "proof": {
+                    "runtime": "HERDR",
+                    "session_binding": {
+                        "ref": "agent-sessions.json",
+                        "generation": 1,
+                        "identity_token": receipt_one["identity_token"],
+                        "ownership": receipt_one["ownership"],
+                    },
+                },
+            }
+            runtime = {"id": "herdr", "class": "pane_controller", "name": "HERDR"}
+            (task / "agent-sessions.json").write_text(json.dumps(projection), encoding="utf-8")
+            (task / "agent-session-receipts.jsonl").write_text(
+                json.dumps(receipt_one) + "\n" + json.dumps(receipt_two) + "\n",
+                encoding="utf-8",
+            )
+            (task / "dispatch-receipts.jsonl").write_text(
+                json.dumps(submission) + "\n",
+                encoding="utf-8",
+            )
+            (task / "routing.json").write_text(
+                json.dumps({
+                    "task_id": task_id,
+                    "runtime_adapter": runtime,
+                    "agent_sessions": marker,
+                }),
+                encoding="utf-8",
+            )
+            (task / "state.json").write_text(
+                json.dumps({
+                    "schema_version": "valp-visible-loop-state.v2",
+                    "task_id": task_id,
+                    "runtime_adapter": runtime,
+                    "agent_sessions": marker,
+                }),
+                encoding="utf-8",
+            )
+
+            item = TaskAudit(task).check_agent_sessions()
+            self.assertEqual(item.status, PASS, item.message)
+
+    def test_state_v2_pane_controller_cannot_drop_owned_session_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            runtime = {"id": "herdr", "class": "pane_controller", "name": "HERDR"}
+            (task / "routing.json").write_text(
+                json.dumps({"task_id": "TASK-MARKER", "runtime_adapter": runtime}),
+                encoding="utf-8",
+            )
+            (task / "state.json").write_text(
+                json.dumps({
+                    "schema_version": "valp-visible-loop-state.v2",
+                    "task_id": "TASK-MARKER",
+                    "runtime_adapter": runtime,
+                }),
+                encoding="utf-8",
+            )
+
+            item = TaskAudit(task).check_agent_sessions()
+            self.assertEqual(item.status, FAIL)
+            self.assertIn("missing required owned-session markers", item.message)
+
+    def test_owned_agent_session_audit_accepts_adapter_neutral_thread_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            task_id = "TASK-THREAD-SESSION-AUDIT"
+            marker = {
+                "status": "ready",
+                "ref": "agent-sessions.json",
+                "receipts_ref": "agent-session-receipts.jsonl",
+            }
+            runtime_identity_fields = {
+                "thread_id": "thread-1",
+                "worker_id": "worker-1",
+            }
+            identity_token = "sha256:" + hashlib.sha256(
+                json.dumps(
+                    runtime_identity_fields,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            ownership = {
+                "scope": "task",
+                "task_id": task_id,
+                "project_identity": "sha256:" + ("0" * 64),
+            }
+            context = {"project_ref": "project://example"}
+            launch = {"runtime_ref": "agent://example-agent"}
+            runtime_scope = {
+                "kind": "thread",
+                "ownership": "task",
+                "thread_id": "thread-1",
+            }
+            runtime_identity = {
+                **runtime_identity_fields,
+                "token": identity_token,
+            }
+            binding = {
+                "agent": "example-agent",
+                "session_name": "thread-session-1",
+                "generation": 1,
+                "ownership": ownership,
+                "context": context,
+                "launch": launch,
+                "runtime_scope": runtime_scope,
+                "runtime_identity": runtime_identity,
+                "lifecycle": "provisioned",
+                "dispatch_eligible": True,
+            }
+            projection = {
+                "schema_version": "valp-agent-sessions.v1",
+                "task_id": task_id,
+                "adapter": "example-thread-runtime",
+                "status": "ready",
+                "bindings": {"example-agent": binding},
+                "updated_at": "2026-07-26T12:00:00Z",
+            }
+            session_receipt = {
+                "schema_version": "valp-agent-session-receipt.v1",
+                "adapter": "example-thread-runtime",
+                "task_id": task_id,
+                "event_sequence": 1,
+                "ts": "2026-07-26T12:00:00Z",
+                "agent": "example-agent",
+                "event": "agent_session_provisioned",
+                "binding_ref": "agent-sessions.json",
+                "generation": 1,
+                "identity_token": identity_token,
+                "ownership": ownership,
+                "context": context,
+                "launch": launch,
+                "runtime_scope": runtime_scope,
+                "runtime_identity": runtime_identity,
+            }
+            submission = {
+                "agent": "example-agent",
+                "event": "dispatch_submitted",
+                "proof": {
+                    "runtime": "example-thread-runtime",
+                    "session_binding": {
+                        "ref": "agent-sessions.json",
+                        "generation": 1,
+                        "identity_token": identity_token,
+                        "ownership": ownership,
+                    },
+                },
+            }
+            (task / "agent-sessions.json").write_text(
+                json.dumps(projection),
+                encoding="utf-8",
+            )
+            (task / "agent-session-receipts.jsonl").write_text(
+                json.dumps(session_receipt) + "\n",
+                encoding="utf-8",
+            )
+            (task / "dispatch-receipts.jsonl").write_text(
+                json.dumps(submission) + "\n",
+                encoding="utf-8",
+            )
+            (task / "routing.json").write_text(
+                json.dumps({
+                    "task_id": task_id,
+                    "runtime_adapter": {
+                        "id": "example-thread-runtime",
+                        "class": "hosted_local_platform",
+                        "name": "Example Thread Runtime",
+                    },
+                    "agent_sessions": marker,
+                }),
+                encoding="utf-8",
+            )
+            (task / "state.json").write_text(
+                json.dumps({
+                    "task_id": task_id,
+                    "runtime_adapter": {
+                        "id": "example-thread-runtime",
+                        "class": "hosted_local_platform",
+                        "name": "Example Thread Runtime",
+                    },
+                    "agent_sessions": marker,
+                }),
+                encoding="utf-8",
+            )
+
+            passed = TaskAudit(task).check_agent_sessions()
+            self.assertEqual(passed.status, PASS)
+
+            projection["adapter"] = "another-adapter"
+            session_receipt["adapter"] = "another-adapter"
+            (task / "agent-sessions.json").write_text(
+                json.dumps(projection),
+                encoding="utf-8",
+            )
+            (task / "agent-session-receipts.jsonl").write_text(
+                json.dumps(session_receipt) + "\n",
+                encoding="utf-8",
+            )
+            failed = TaskAudit(task).check_agent_sessions()
+            self.assertEqual(failed.status, FAIL)
+            self.assertIn("routed runtime adapter", failed.message)
+
+            projection["adapter"] = "example-thread-runtime"
+            session_receipt["adapter"] = "example-thread-runtime"
+            (task / "agent-sessions.json").write_text(
+                json.dumps(projection),
+                encoding="utf-8",
+            )
+
+            session_receipt["adapter"] = "another-adapter"
+            (task / "agent-session-receipts.jsonl").write_text(
+                json.dumps(session_receipt) + "\n",
+                encoding="utf-8",
+            )
+            failed = TaskAudit(task).check_agent_sessions()
+            self.assertEqual(failed.status, FAIL)
+            self.assertIn("adapter", failed.message.lower())
+
+            projection["bindings"] = {}
+            (task / "agent-sessions.json").write_text(
+                json.dumps(projection),
+                encoding="utf-8",
+            )
+            (task / "agent-session-receipts.jsonl").write_text("", encoding="utf-8")
+            failed = TaskAudit(task).check_agent_sessions()
+            self.assertEqual(failed.status, FAIL)
+            self.assertIn("no Agent session bindings", failed.message)
+
     def test_v2_state_audit_rejects_unknown_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             task = Path(tmp) / ".herdr-loop" / "tasks" / "TASK-STATE-STATUS"

@@ -23,12 +23,13 @@ fi
 "$PYTHON_BIN" - "$WHEEL_PATH" <<'PY'
 import sys
 import zipfile
+from email.parser import BytesParser
 
 wheel = sys.argv[1]
 with zipfile.ZipFile(wheel) as archive:
     names = archive.namelist()
     metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
-    metadata = archive.read(metadata_name).decode("utf-8")
+    metadata = BytesParser().parsebytes(archive.read(metadata_name))
 
 required = {
     "valp_cli/__init__.py",
@@ -38,8 +39,10 @@ required = {
 missing = sorted(required.difference(names))
 if missing:
     raise SystemExit(f"wheel is missing required CLI files: {missing}")
-if "Version: 0.3.0rc1\n" not in metadata:
-    raise SystemExit("wheel metadata is not the 0.3.0rc1 candidate")
+if metadata.get("Version") != "0.3.0rc1":
+    raise SystemExit(
+        f"wheel metadata is not the 0.3.0rc1 candidate: {metadata.get('Version')!r}"
+    )
 
 for name in names:
     lowered = name.casefold()
@@ -48,8 +51,13 @@ for name in names:
 PY
 
 "$PYTHON_BIN" -m venv "$VENV_DIR"
-VENV_PYTHON="$VENV_DIR/bin/python"
-VENV_VALP="$VENV_DIR/bin/valp"
+if [[ -f "$VENV_DIR/Scripts/python.exe" ]]; then
+  VENV_PYTHON="$VENV_DIR/Scripts/python.exe"
+  VENV_VALP="$VENV_DIR/Scripts/valp.exe"
+else
+  VENV_PYTHON="$VENV_DIR/bin/python"
+  VENV_VALP="$VENV_DIR/bin/valp"
+fi
 "$VENV_PYTHON" -m pip install --no-deps "$WHEEL_PATH" >/dev/null
 "$VENV_VALP" --version | grep -Fx "valp 0.3.0rc1" >/dev/null
 for profile in core-reader core-writer plugin-host migration; do

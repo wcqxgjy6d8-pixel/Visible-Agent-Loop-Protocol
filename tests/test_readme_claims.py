@@ -125,6 +125,9 @@ class ReadmeClaimTests(unittest.TestCase):
         for profile in ("core-reader", "core-writer", "plugin-host", "migration"):
             self.assertIn(profile, wheel_check)
         self.assertNotIn("--no-build-isolation", wheel_check)
+        self.assertIn('metadata.get("Version") != "0.3.0rc1"', wheel_check)
+        self.assertIn('"$VENV_DIR/Scripts/python.exe"', wheel_check)
+        self.assertIn('"$VENV_DIR/Scripts/valp.exe"', wheel_check)
         self.assertIn('"$VENV_VALP" --version', wheel_check)
         self.assertIn("standalone wheel must not invent Git source provenance", wheel_check)
 

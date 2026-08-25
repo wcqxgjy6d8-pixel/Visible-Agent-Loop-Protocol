@@ -408,10 +408,9 @@ def _append(
             proof_kind=proof_kind,
             proof=proof,
         )
-        proof_ref = str(
-            (attempt_root / "receipt-proofs" / f"{event}-{proof_kind.value}.json")
-            .relative_to(directory)
-        )
+        proof_ref = (
+            attempt_root / "receipt-proofs" / f"{event}-{proof_kind.value}.json"
+        ).relative_to(directory).as_posix()
         write_json(directory / proof_ref, record)
         proof_bindings.append(
             ProofBinding(proof_kind, proof_ref, digest(record), subject)

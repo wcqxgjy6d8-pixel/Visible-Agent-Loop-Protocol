@@ -99,8 +99,13 @@ class HerdrUnixSocketRpcClient:
             )
         except (TypeError, ValueError) as exc:
             raise ContinuationError("HERDR RPC params are not JSON serializable") from exc
+        socket_family = getattr(socket, "AF_UNIX", None)
+        if socket_family is None:
+            raise ContinuationError(
+                "HERDR RPC transport failed: Unix-domain sockets are unavailable"
+            )
         try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            with socket.socket(socket_family, socket.SOCK_STREAM) as connection:
                 connection.settimeout(self.timeout)
                 connection.connect(self.socket_path)
                 connection.sendall(encoded)

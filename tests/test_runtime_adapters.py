@@ -198,6 +198,9 @@ class RuntimeAdapterAdoptionTests(unittest.TestCase):
                 {item["proof_kind"] for item in receipt["proof_bindings"]},
                 {"process_bound", "content_bound"},
             )
+            for binding in receipt["proof_bindings"]:
+                self.assertNotIn("\\", binding["proof_ref"])
+                self.assertTrue((directory / binding["proof_ref"]).is_file())
             self.assertEqual(observation["status"], "accepted")
             self.assertEqual(len(observation["provenance"]), 2)
             self.assertTrue((directory / "runtime/herdr/adoption.json").is_file())

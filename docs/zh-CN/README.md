@@ -26,6 +26,23 @@ VALP 要求任务过程留下可审计的证据：
 
 所以 VALP 更像一个 acceptance system，而不是聊天提示词集合。
 
+## 完整闭环
+
+```text
+Doctor 观察能力护照 -> 用户选择 Installation Leader -> 发布任务
+  -> Leader 声明 WorkItem 与 Agent 分工 -> VALP 验证并由 Adapter 绑定 Worker、可见派送
+  -> submission receipt -> Worker evidence -> completion receipt
+  -> 验证 -> 独立审查 -> 修复/复审 -> 建议处理 -> 审批
+  -> final synthesis + feedback -> valp audit -> PASS / WARN / FAIL
+  -> 独立受 gate 约束的任务状态 -> Done / Blocked / Failed
+  -> 可选 Task Graph（单任务、确定性、只读）
+```
+
+完整时序见[可见工作流](../visual-flow.md)，图谱边界见
+[Task Graph 与 Ontology](../task-graph.md)。Task Graph 不能生成 proof，也不能
+改变 audit。Neo4j 不属于本候选版；下一版如采用，也只能作为读取现有 ledger 的
+可选 ontology 投影，不能成为路由、证据或审计权威。
+
 ## 版本入口与兼容性
 
 当前使用版本线是 `v0.3.0`，可以从候选分支和精确 SHA 做明确评估。`v0.3` 的
@@ -117,6 +134,7 @@ Summary: pass=14 warn=0 fail=0
 | Audit | 用 `valp audit` 检查任务证据是否满足 Done Criteria |
 | Correction cycle | 退件、重试、blocked、invalid、superseded 后的修复闭环记录 |
 | Final synthesis | 最终总结，必须指出结果、决策、分歧和证据缺口 |
+| Task Graph | 单个任务的确定性只读视图；显示已有 receipt、evidence 与 audit 摘要，不是权威 |
 
 完整术语表见 [glossary.md](glossary.md)。
 

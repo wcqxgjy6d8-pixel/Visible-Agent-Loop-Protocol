@@ -57,7 +57,12 @@ class TaskGraphTests(unittest.TestCase):
             task_dir = self._copy_example(tmp)
             board_path = task_dir / "evidence-board.json"
             board = json.loads(board_path.read_text(encoding="utf-8"))
-            board["claims"][0]["required_evidence"].append("/Users/private/evidence.md")
+            unsafe_refs = [
+                "/Users/private/evidence.md",
+                "C:\\private\\evidence.md",
+                "\\\\server\\share\\evidence.md",
+            ]
+            board["claims"][0]["required_evidence"].extend(unsafe_refs)
             board_path.write_text(json.dumps(board), encoding="utf-8")
             graph = build_task_graph(task_dir, {
                 "status": "pass", "task_dir": "/Users/private/task", "items": [{"message": "/Users/private/secret"}],
@@ -67,7 +72,10 @@ class TaskGraphTests(unittest.TestCase):
             serialized = json.dumps(graph, ensure_ascii=False)
             self.assertNotIn("/Users/private", serialized)
             self.assertNotIn("evidence:/Users", serialized)
-            self.assertNotIn("/Users/private/evidence.md", [node["label"] for node in graph["nodes"]])
+            labels = [node["label"] for node in graph["nodes"]]
+            for unsafe_ref in unsafe_refs:
+                self.assertNotIn(unsafe_ref, serialized)
+                self.assertNotIn(unsafe_ref, labels)
             self.assertEqual(graph["audit"], {"status": "pass", "pass_count": 1, "warn_count": 0, "fail_count": 0, "skip_count": 0})
             self.assertEqual(list(schema_validator(ROOT / "schemas" / "task-graph.schema.json").iter_errors(graph)), [])
 

@@ -10,7 +10,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Iterable
 
 
@@ -605,8 +605,13 @@ def leader_installation_root(workspace: Path, root: Path | None = None) -> Path:
 
 
 def safe_control_ref(ref: str) -> str:
-    candidate = Path(ref)
-    if not ref or candidate.is_absolute() or "\\" in ref or ":" in ref:
+    if (
+        not ref
+        or PurePosixPath(ref).is_absolute()
+        or PureWindowsPath(ref).is_absolute()
+        or "\\" in ref
+        or ":" in ref
+    ):
         raise ControlPlaneError("VALP-E-MESSAGE-SCHEMA", "Control evidence refs must be relative POSIX paths")
     parts = ref.split("/")
     if any(part in {"", ".", ".."} for part in parts):
@@ -2350,7 +2355,7 @@ class InstallationCore:
     def _draft_control_files(self) -> list[tuple[str, Path]]:
         files: list[tuple[str, Path]] = []
         for path in sorted(self.root.rglob("*")):
-            source_ref = str(path.relative_to(self.root))
+            source_ref = path.relative_to(self.root).as_posix()
             if not source_ref or source_ref.split("/", 1)[0] in DRAFT_MIGRATION_EXCLUDED_ROOTS:
                 continue
             if path.is_symlink():
@@ -2521,7 +2526,7 @@ class InstallationCore:
                         f"Legacy migration does not follow symlinks: {path.relative_to(legacy_root)}",
                     )
                 if path.is_file():
-                    task_files.append({"source_ref": str(path.relative_to(workspace.resolve())), "digest": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(), "bytes": path.stat().st_size})
+                    task_files.append({"source_ref": path.relative_to(workspace.resolve()).as_posix(), "digest": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(), "bytes": path.stat().st_size})
         plan = {
             "schema_version": "valp-migration-plan.v1",
             "migration_id": _new_id("migration"),
@@ -2573,7 +2578,7 @@ class InstallationCore:
         if Path(str(plan.get("target_root") or "")).resolve() != target.resolve():
             raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Migration target root mismatch")
         files = plan.get("files") or []
-        prefix = str(source.relative_to(workspace.resolve())) + "/"
+        prefix = source.relative_to(workspace.resolve()).as_posix() + "/"
         target_inventory: dict[str, dict[str, Any]] = {}
         for item in files:
             source_ref = safe_control_ref(str(item.get("source_ref") or ""))
@@ -2595,7 +2600,7 @@ class InstallationCore:
         actual_source_refs = set()
         if source.is_dir():
             for path in source.rglob("*"):
-                source_ref = str(path.relative_to(source))
+                source_ref = path.relative_to(source).as_posix()
                 if path.is_symlink():
                     raise ControlPlaneError(
                         "VALP-E-MIGRATION-UNSUPPORTED",
@@ -2611,7 +2616,7 @@ class InstallationCore:
                 raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", "Legacy migration target is missing")
             actual_refs = set()
             for path in base.rglob("*"):
-                target_ref = str(path.relative_to(base))
+                target_ref = path.relative_to(base).as_posix()
                 if path.is_symlink():
                     raise ControlPlaneError("VALP-E-MIGRATION-UNSUPPORTED", f"Legacy target contains a symlink: {target_ref}")
                 if path.is_file():
@@ -2819,7 +2824,7 @@ class InstallationCore:
             if exact_inventory:
                 actual_refs = set()
                 for path in sorted(base.rglob("*")):
-                    source_ref = str(path.relative_to(base))
+                    source_ref = path.relative_to(base).as_posix()
                     if path.is_symlink():
                         raise ControlPlaneError(
                             "VALP-E-MIGRATION-UNSUPPORTED",

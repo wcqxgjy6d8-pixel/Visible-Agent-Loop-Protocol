@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 from typing import Any
 
@@ -79,12 +79,15 @@ def _expected_refs(task_dir: Path, evidence_board: dict[str, Any], receipts: lis
 
 def _is_safe_task_ref(value: str) -> bool:
     """Accept only non-empty task-relative POSIX paths without traversal."""
-    path = Path(value)
+    posix_path = PurePosixPath(value)
+    windows_path = PureWindowsPath(value)
     return bool(
         value
-        and not path.is_absolute()
+        and not posix_path.is_absolute()
+        and not windows_path.is_absolute()
         and "\\" not in value
-        and all(part not in {"", ".", ".."} for part in path.parts)
+        and ":" not in value
+        and all(part not in {"", ".", ".."} for part in value.split("/"))
     )
 
 

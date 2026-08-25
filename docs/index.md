@@ -39,6 +39,21 @@ completion requires automation policy, dispatch receipts, expected evidence,
 verification/review, approval gates when needed, final synthesis, and
 task-local learning feedback that points to proof.
 
+The complete authority and evidence path is: Doctor observes current
+capabilities; the user selects the Installation Leader; the Leader declares
+WorkItems and role-to-Agent assignments; VALP validates, binds Worker sessions,
+and dispatches through an adapter; adapter-backed receipts record submission
+and completion while Workers return expected evidence; verification, independent
+review, recommendation resolution, approval, synthesis, feedback, and
+`valp audit` close the task. The optional Task Graph then projects that one
+task without changing it. See the [visual flow](visual-flow.md).
+
+![VALP 0.3 Doctor to Audit workflow](assets/valp-v03-open-core-overview.gif)
+
+Neo4j is not part of this candidate. A future version may use it as an optional
+ontology projection, but never as protocol truth, completion proof, or audit
+authority.
+
 VALP source currently defines the `0.3.0` protocol candidate and `0.3.0rc1`
 reference CLI. Stable status, external review, same-commit CI, merge, tag,
 release, and post-release smoke remain pending. It is not a hosted production

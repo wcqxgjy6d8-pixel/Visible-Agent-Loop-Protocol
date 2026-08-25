@@ -7,7 +7,7 @@ import re
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Callable, Iterator
 
 
@@ -198,14 +198,19 @@ def binding_has_verified_bootstrap_lifecycle(binding: dict[str, Any] | None) -> 
         return False
     verification = binding.get("bootstrap_verification")
     identity = binding.get("runtime_identity")
-    evidence_ref = Path(str((verification or {}).get("evidence_ref") or ""))
+    evidence_ref = str((verification or {}).get("evidence_ref") or "")
+    posix_ref = PurePosixPath(evidence_ref)
+    windows_ref = PureWindowsPath(evidence_ref)
     return bool(
         isinstance(verification, dict)
         and isinstance(identity, dict)
         and verification.get("status") == "verified"
-        and str(evidence_ref).strip()
-        and not evidence_ref.is_absolute()
-        and ".." not in evidence_ref.parts
+        and evidence_ref.strip()
+        and not posix_ref.is_absolute()
+        and not windows_ref.is_absolute()
+        and "\\" not in evidence_ref
+        and ":" not in evidence_ref
+        and all(part not in {"", ".", ".."} for part in evidence_ref.split("/"))
         and verification.get("generation") == binding.get("generation")
         and str(verification.get("pane_id") or "").strip()
         == str(identity.get("pane_id") or "").strip()

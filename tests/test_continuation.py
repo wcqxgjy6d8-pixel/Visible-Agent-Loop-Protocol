@@ -10,6 +10,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
@@ -35,45 +36,86 @@ from valp_cli.continuation import (
 )
 
 
+class _FakeRpcConnection:
+    def __init__(self, observed: dict[str, object], *, response_id: str | None = None) -> None:
+        self.observed = observed
+        self.response_id = response_id
+        self.response = b""
+        self.timeout: float | None = None
+        self.connected_to = ""
+
+    def __enter__(self) -> "_FakeRpcConnection":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def settimeout(self, timeout: float) -> None:
+        self.timeout = timeout
+
+    def connect(self, path: str) -> None:
+        self.connected_to = path
+
+    def sendall(self, raw: bytes) -> None:
+        if not raw.endswith(b"\n") or raw.count(b"\n") != 1:
+            raise AssertionError("request must use one JSON-RPC line")
+        request = json.loads(raw)
+        self.observed.update(request)
+        self.response = json.dumps({
+            "jsonrpc": "2.0",
+            "id": self.response_id or request["id"],
+            "result": {"type": "coordinator_continued"},
+        }).encode("utf-8") + b"\n"
+
+    def recv(self, _size: int) -> bytes:
+        response, self.response = self.response, b""
+        return response
+
+
 class HerdrUnixSocketRpcClientTests(unittest.TestCase):
     def test_call_uses_json_rpc_line_framing_and_requires_matching_id(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            socket_path = Path(tmp) / "herdr.sock"
-            observed: dict[str, object] = {}
-            ready = threading.Event()
+        observed: dict[str, object] = {}
 
-            def serve() -> None:
-                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
-                    server.bind(str(socket_path))
-                    server.listen(1)
-                    ready.set()
-                    connection, _ = server.accept()
-                    with connection:
-                        raw = b""
-                        while not raw.endswith(b"\n"):
-                            raw += connection.recv(4096)
-                        request = json.loads(raw)
-                        observed.update(request)
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": request["id"],
-                            "result": {"type": "coordinator_continued"},
-                        }
-                        connection.sendall(json.dumps(response).encode("utf-8") + b"\n")
-
-            thread = threading.Thread(target=serve)
-            thread.start()
-            self.assertTrue(ready.wait(1))
+        connection = _FakeRpcConnection(observed)
+        socket_path = Path("runtime/herdr.sock")
+        with patch.object(socket, "AF_UNIX", 1, create=True), patch(
+            "valp_cli.continuation.socket.socket", return_value=connection
+        ) as socket_factory:
             result = HerdrUnixSocketRpcClient(socket_path, timeout=1).call(
                 "coordinator.continue", {"target": "wBF:p1"}
             )
-            thread.join(1)
 
-            self.assertEqual(result["result"], {"type": "coordinator_continued"})
-            self.assertEqual(observed["jsonrpc"], "2.0")
-            self.assertEqual(observed["method"], "coordinator.continue")
-            self.assertEqual(observed["params"], {"target": "wBF:p1"})
-            self.assertIsInstance(observed["id"], str)
+        socket_factory.assert_called_once_with(1, socket.SOCK_STREAM)
+        self.assertEqual(connection.timeout, 1.0)
+        self.assertEqual(connection.connected_to, str(socket_path))
+        self.assertEqual(result["result"], {"type": "coordinator_continued"})
+        self.assertEqual(observed["jsonrpc"], "2.0")
+        self.assertEqual(observed["method"], "coordinator.continue")
+        self.assertEqual(observed["params"], {"target": "wBF:p1"})
+        self.assertIsInstance(observed["id"], str)
+
+    def test_call_rejects_response_with_mismatched_id(self) -> None:
+        connection = _FakeRpcConnection({}, response_id="wrong-id")
+        with patch.object(socket, "AF_UNIX", 1, create=True), patch(
+            "valp_cli.continuation.socket.socket", return_value=connection
+        ):
+            with self.assertRaisesRegex(ContinuationError, "id does not match request"):
+                HerdrUnixSocketRpcClient("runtime/herdr.sock", timeout=1).call("ping", {})
+
+    def test_call_fails_closed_when_unix_socket_family_is_unavailable(self) -> None:
+        socket_without_af_unix = SimpleNamespace(SOCK_STREAM=socket.SOCK_STREAM)
+        with patch("valp_cli.continuation.socket", socket_without_af_unix):
+            with self.assertRaisesRegex(
+                ContinuationError, "Unix-domain sockets are unavailable"
+            ):
+                HerdrUnixSocketRpcClient("runtime/herdr.sock", timeout=1).call("ping", {})
+
+    def test_call_fails_closed_when_unix_socket_transport_is_unavailable(self) -> None:
+        with patch.object(socket, "AF_UNIX", 1, create=True), patch(
+            "valp_cli.continuation.socket.socket", side_effect=OSError("unavailable")
+        ):
+            with self.assertRaisesRegex(ContinuationError, "transport failed: unavailable"):
+                HerdrUnixSocketRpcClient("runtime/herdr.sock", timeout=1).call("ping", {})
 
 
 class ContinuationStoreTests(unittest.TestCase):

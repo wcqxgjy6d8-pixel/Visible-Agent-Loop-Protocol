@@ -23,6 +23,7 @@ from valp_cli.control_plane import (
     digest_value,
     digest_without,
     leader_installation_root,
+    safe_control_ref,
     write_json,
 )
 from valp_cli.herdr_adapter import HerdrSubmissionError
@@ -43,6 +44,17 @@ class ControlPlaneTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_control_refs_reject_cross_platform_absolute_paths(self) -> None:
+        for ref in (
+            "/etc/passwd",
+            "/Users/private/evidence.md",
+            "C:\\private\\evidence.md",
+            "\\\\server\\share\\evidence.md",
+        ):
+            with self.subTest(ref=ref), self.assertRaises(ControlPlaneError):
+                safe_control_ref(ref)
+        self.assertEqual(safe_control_ref("agents/codex/evidence.md"), "agents/codex/evidence.md")
 
     def test_leader_root_reuses_configured_installation_from_another_workspace(self) -> None:
         global_root = self.workspace / "global-control"

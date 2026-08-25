@@ -5,135 +5,135 @@
     "fps": 20,
     "frames": 41
   },
-  "signature": "VALP / 0.3",
+  "signature": "VALP / 0.3 RC",
   "title": {
-    "prefix": "VALP 的核心",
-    "highlight": "0.3 开源协议",
-    "subtitle": "让 Agent 的完成声明变成可审计证据"
+    "prefix": "VALP 工作流",
+    "highlight": "先证据 再 Done",
+    "subtitle": "Doctor -> Leader -> Worker -> Evidence -> Audit"
   },
-  "input_title": "任务 / 输入",
-  "read_label": "读取",
-  "context_label": "上下文",
+  "input_title": "授权 / 输入",
+  "read_label": "观察",
+  "context_label": "当前真值",
   "inputs": [
     {
-      "label": "需求",
+      "label": "用户授权",
       "icon": "file",
       "color": "#7ee3d6"
     },
     {
-      "label": "Agent",
+      "label": "任务",
       "icon": "folder",
       "color": "#38bdf8"
     },
     {
-      "label": "运行时",
+      "label": "Agent 能力",
       "icon": "package",
       "color": "#f4b64e"
     },
     {
-      "label": "规则",
+      "label": "外部 Runtime",
       "icon": "shield",
       "color": "#ff7ab6"
     }
   ],
   "core": {
-    "title": "证据控制层",
-    "subtitle": "（不绑定 Provider）",
+    "title": "可见证据闭环",
+    "subtitle": "（协议不绑定 Worker 或 Provider）",
     "cards": [
       {
-        "title": "分工",
-        "body": "声明角色、能力\n和运行时边界",
+        "title": "Doctor",
+        "body": "能力护照\n用户选 Leader",
         "icon": "scan"
       },
       {
-        "title": "执行留证",
-        "body": "回执、证据、\n审查、审批",
+        "title": "Leader",
+        "body": "声明分工\n契约与派送",
         "icon": "shield"
       },
       {
-        "title": "审计",
-        "body": "重放状态，\n关闭 Done 闸门",
+        "title": "Worker",
+        "body": "回执与证据\n验证与复审",
         "icon": "hash"
       }
     ]
   },
   "decision": {
-    "title": "完成？",
-    "body": "看证据，\n不看口号",
-    "yes_label": "是"
+    "title": "Audit 通过？",
+    "body": "review\napproval",
+    "yes_label": "PASS"
   },
   "output": {
-    "label": "审计结果",
+    "label": "PASS / WARN\n/ FAIL",
     "icon": "file"
   },
-  "loop_label": "直到预期证据、审查和闸门全部满足",
-  "retry_label": "否 / 缺证据或运行时证明冲突",
+  "loop_label": "缺证据或冲突：修复 → 重派 → 复审",
+  "retry_label": "FAIL / 不允许假 Done",
   "left_panel": {
-    "title": "公开输入",
-    "badge": "可移植",
+    "title": "任务契约",
+    "badge": "task-local",
     "cards": [
       {
-        "title": "任务",
-        "body": "需求、角色、\n预期证据",
+        "title": "Task",
+        "body": "目标与 WorkItem",
         "icon": "file"
       },
       {
-        "title": "Agent",
-        "body": "能力分层、\n模型与会话事实",
+        "title": "Context",
+        "body": "最小必要上下文",
         "icon": "folder"
       },
       {
-        "title": "规则",
-        "body": "权限、预算、\n审批边界",
+        "title": "Skills",
+        "body": "推荐、使用或跳过",
         "icon": "shield"
       }
     ]
   },
   "center_panel": {
-    "title": "可持久账本",
-    "subtitle": "（可重放、绑定摘要）",
-    "footer": "CAS + 重放 + 失败即关闭",
+    "title": "证据账本",
+    "subtitle": "（可重放、绑定摘要、fail closed）",
+    "footer": "receipt ≠ evidence ≠ audit",
     "cards": [
       {
-        "title": "回执",
-        "body": "派送与提交\n证明",
+        "title": "Dispatch",
+        "body": "written / submitted",
         "icon": "file"
       },
       {
-        "title": "证据",
-        "body": "声明、审查、\n验证记录",
+        "title": "Evidence",
+        "body": "expected / produced",
         "icon": "folder"
       },
       {
-        "title": "状态",
-        "body": "事件、检查点、\n恢复历史",
+        "title": "Review",
+        "body": "independent / fixes",
         "icon": "hash"
       },
       {
-        "title": "审计",
-        "body": "通过、阻挡、\n或明确缺口",
+        "title": "Close",
+        "body": "approval / synthesis",
         "icon": "db"
       }
     ]
   },
   "right_panel": {
-    "title": "可移植输出",
-    "incoming_label": "打包",
-    "return_label": "可复核",
+    "title": "可复核视图",
+    "incoming_label": "投影",
+    "return_label": "只读",
     "cards": [
       {
-        "title": "CLI",
-        "body": "安装、Leader、\n路由、审计",
+        "title": "Audit",
+        "body": "PASS / WARN / FAIL",
         "icon": "package"
       },
       {
-        "title": "适配器",
-        "body": "HERDR、LangGraph、\n本地进程、手动模式",
+        "title": "Task Graph",
+        "body": "单任务 · 确定性",
         "icon": "folder"
       },
       {
-        "title": "Schema",
-        "body": "可移植契约、\n示例、测试",
+        "title": "Next: Ontology",
+        "body": "Neo4j 可选\n永远非权威",
         "icon": "file"
       }
     ]

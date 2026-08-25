@@ -7,8 +7,6 @@ Agent says done. VALP asks for proof.
 ![License](https://img.shields.io/github/license/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 
-![VALP 0.3 open core gif](docs/assets/valp-v03-open-core-overview.gif)
-
 VALP is an open protocol and reference CLI for visible, evidence-backed
 autonomous and multi-agent work. It catches false completion by checking
 automation policy, dispatch receipts, expected evidence, review/approval gates,
@@ -26,10 +24,6 @@ bin/valp graph examples/full-mode-task --format all
 
 ![VALP audit demo: PASS to FAIL to PASS](docs/assets/valp-audit-demo.svg)
 
-The Chinese animated GIF is an explanatory asset. See the
-[public evidence proof](docs/case-studies/visible-dispatch-process-proof.md)
-for the machine-checkable audit excerpts behind it.
-
 For automated Full Mode, [HERDR](https://github.com/ogulcancelik/herdr) is the
 current reference runtime. HERDR is not required by the protocol; any runtime
 can be VALP-compatible when it exports the required receipts and evidence.
@@ -44,6 +38,36 @@ source.
 The protocol is designed for terminal-based AI coding agents, review agents,
 research agents, prototype agents, and coordinator agents. It is not tied to a
 single project, operating system, terminal emulator, or model provider.
+
+## How VALP Closes The Loop
+
+```text
+Doctor observes current capability truth
+  -> user explicitly selects the Installation Leader
+  -> user publishes a task
+  -> Leader declares WorkItems and role-to-Agent assignments
+  -> VALP validates capabilities, context, skills, permissions, and evidence contracts
+  -> runtime adapter preflight, Worker-session binding, and visible dispatch
+  -> submission receipt -> Worker execution -> completion receipt + expected evidence
+  -> verification -> independent review -> bounded fix/review loop
+  -> recommendation resolution -> approval gate -> final synthesis + feedback
+  -> valp audit -> PASS / WARN / FAIL
+  -> separately gated task lifecycle -> Done / Blocked / Failed
+  -> optional deterministic single-task Task Graph projection
+```
+
+![VALP 0.3 Doctor to Audit workflow](docs/assets/valp-v03-open-core-overview.gif)
+
+The animation is an explanatory map, not runtime or release proof. The
+[visual timeline](docs/visual-flow.md) defines each handoff, while the
+[public process proof](docs/case-studies/visible-dispatch-process-proof.md)
+shows machine-checkable excerpts from a real publish-and-dispatch run.
+
+The Task Graph is a read-only view of one task's existing receipts, evidence,
+and audit summary. It never creates proof or changes audit state. Neo4j is not
+implemented, required, or included in this candidate. A later version may use
+it only as an optional ontology projection; it must remain downstream of the
+task ledger and can never become routing, evidence, or audit authority.
 
 ## Current Status
 
@@ -324,17 +348,16 @@ work silently.
 ```text
 Doctor capability passports
   -> user-selected Leader
-  -> user request
-  -> VALP task folder
-  -> Leader assignment declaration
-  -> VALP declaration validation
-  -> reference CLI or compatible runtime adapter
-  -> agent sessions, queues, hosted runs, or manual handoffs
-  -> dispatch receipts
-  -> expected evidence
-  -> verification/review/approval gates
-  -> final synthesis
-  -> valp audit
+  -> task publication
+  -> Leader-declared WorkItems and role-to-Agent assignments
+  -> VALP capability/context/skill/evidence validation
+  -> adapter preflight, Worker binding, and visible dispatch
+  -> adapter-backed submission/completion receipts + Worker evidence
+  -> verification -> independent review -> bounded correction loop
+  -> recommendation resolution -> approval -> synthesis + feedback
+  -> valp audit: PASS / WARN / FAIL
+  -> separately gated lifecycle state: Done / Blocked / Failed
+  -> optional read-only Task Graph
 ```
 
 HERDR is the current reference runtime for the automated path. It is not the

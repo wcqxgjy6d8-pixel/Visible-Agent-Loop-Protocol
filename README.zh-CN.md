@@ -20,6 +20,34 @@ VALP 要求任务过程留下可审计的证据：
 
 所以 VALP 更像一个多 Agent 工作流的验收单，而不是聊天提示词集合。
 
+## 完整工作流
+
+```text
+Doctor 观察当前能力真值
+  -> 用户明确选择 Installation Leader
+  -> 用户发布任务
+  -> Leader 声明 WorkItem 与角色到 Agent 的分工
+  -> VALP 验证能力、上下文、Skill、权限与证据契约
+  -> Runtime adapter 预检、绑定 Worker session 与可见派送
+  -> 提交回执 -> Worker 执行 -> 完成回执 + 预期证据
+  -> 验证 -> 独立审查 -> 有界修复/复审
+  -> 处理 Agent 建议 -> 审批 gate -> 最终总结 + feedback
+  -> valp audit -> PASS / WARN / FAIL
+  -> 独立受 gate 约束的任务状态 -> Done / Blocked / Failed
+  -> 可选的确定性单任务 Task Graph 投影
+```
+
+![VALP 0.3 Doctor 到 Audit 工作流](docs/assets/valp-v03-open-core-overview.gif)
+
+这张动图是解释图，不是 Runtime 或 release 证明。逐步语义见
+[完整可见流程](docs/visual-flow.md)，可复核的真实 publish/dispatch 片段见
+[公开过程证据](docs/case-studies/visible-dispatch-process-proof.md)。
+
+Task Graph 只读显示单个任务已有的 receipts、evidence 与 audit 摘要，不能生成
+证据或改变审计结果。Neo4j 不在本候选版中，也不是依赖；下一版可以把它作为
+可选 ontology 投影，但它只能读取既有 task ledger，永远不能成为路由、证据或
+审计权威。
+
 ## 谁选 Agent
 
 这个权力边界是固定的：

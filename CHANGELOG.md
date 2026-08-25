@@ -31,6 +31,14 @@
   shortest PASS -> FAIL -> PASS audit demo.
 - Adds a terminal-style hero demo asset to show PASS -> FAIL -> PASS before a
   reader reaches the long README sections.
+- Adds a deterministic, read-only single-task Task Graph and documents that
+  Neo4j is deferred to a future optional Ontology projection, never protocol or
+  audit authority.
+- Rebuilds the public animated workflow around the Doctor -> Leader -> Worker
+  -> Evidence -> Audit path, with editable Excalidraw and static PNG sources.
+- Normalizes machine-readable artifact references to POSIX form across hosts,
+  rejects Unix, Windows, and UNC absolute evidence paths consistently, and
+  makes Unix-socket framing tests portable without weakening transport checks.
 - Links active RFC, adapter feedback, and good-first-issue entry points from
   README, Pages, community docs, and Chinese README.
 

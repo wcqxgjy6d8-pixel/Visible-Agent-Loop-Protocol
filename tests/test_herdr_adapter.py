@@ -431,7 +431,13 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
             },
         }
 
-        for unsafe_ref in ("/etc/passwd", "evidence/../../secret.json"):
+        for unsafe_ref in (
+            "/etc/passwd",
+            "/Users/private/evidence.md",
+            "C:\\private\\evidence.md",
+            "\\\\server\\share\\evidence.md",
+            "evidence/../../secret.json",
+        ):
             with self.subTest(evidence_ref=unsafe_ref):
                 binding["bootstrap_verification"]["evidence_ref"] = unsafe_ref
                 self.assertFalse(binding_has_verified_bootstrap_lifecycle(binding))

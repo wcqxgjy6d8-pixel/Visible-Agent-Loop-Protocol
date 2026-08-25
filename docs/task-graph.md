@@ -11,9 +11,14 @@ Worker-local context slice. It may contain `Agent`, `Capability`, `Model`,
 `Policy`, `Evidence`, and routing-prior relationships.
 
 Ontology is not completion proof, is not a user-facing result by itself, and
-does not replace the task-local receipt ledger or `valp audit`. The current
-Neo4j work remains an optional private projection and does not require a live
-database for the protocol.
+does not replace the task-local receipt ledger or `valp audit`.
+
+Neo4j is deferred beyond the `0.3.0rc1` candidate and is not implemented,
+required, or included in this candidate. A future version may use Neo4j as
+an optional cross-task Ontology projection. That projection may read existing
+task ledgers and evidence, but it must not select a Leader or Worker, write the
+canonical Task Graph, create proof, change protocol state, or become an audit
+input or authority.
 
 ## Task Graph
 

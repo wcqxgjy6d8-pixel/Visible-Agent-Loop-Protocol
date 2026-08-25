@@ -10,13 +10,15 @@ branches for different purposes. They must not be treated as interchangeable.
 | `main` | Current merged public source | Yes, when it points to the current stable release |
 | `vX.Y.Z` | Immutable stable release and reproducible source | Yes |
 | `vX.Y.Z-draft` | Historical or testing pre-release | No, unless explicitly testing that draft |
+| `X.Y.ZrcN` package | Release-candidate CLI for exact-SHA evaluation | No, unless explicitly evaluating the candidate |
 | `codex/*`, feature branches | Review or development candidates | No |
 
-`v0.3.0` is the current intended version line. It can be evaluated directly
-from a candidate branch at its exact SHA while GitHub merge, tag, and release
-metadata are completed. Those are publication and reproducibility gates: before
-they close, the candidate is not the default public installation, and `v0.2.0`
-remains only a legacy reproduction and migration source.
+`v0.3.0` is the intended protocol version line and `0.3.0rc1` is the current
+reference CLI candidate. Evaluate it from a candidate branch at its exact SHA.
+Stable status also requires RFC 0001 Sections 20 and 21, profile-specific
+conformance, required checks, external review, merge, tag, release metadata,
+and post-release smoke. Before they close, the candidate is not the default
+public installation; `v0.2.0` remains legacy reproduction and migration history.
 
 The `v0.2.0` release remains available for legacy reproduction and migration
 only. Once the release gate closes, the immutable `v0.3.0` tag becomes the

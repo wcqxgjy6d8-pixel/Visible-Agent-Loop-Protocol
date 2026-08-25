@@ -175,6 +175,117 @@ class ValpDoctorTests(unittest.TestCase):
             "unknown",
         )
 
+    def test_doctor_keeps_overlay_only_declarations_unknown_and_ineligible(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "source": "test registry",
+            "agents": {},
+        }
+        overlay = {
+            "agent_capability_profiles": {
+                "overlay-only-agent": {
+                    "routing_hint_only": True,
+                    "likely_roles": ["implementation", "verification"],
+                    "must_not_do": ["release_without_approval"],
+                    "context_policy": {"hard_compression_pct": 70},
+                    "model_identity": {
+                        "agent_surface": "local-surface",
+                        "provider": "local-provider",
+                        "declared_model": {
+                            "model_id": "local-model",
+                            "provider": "local-provider",
+                            "reasoning_mode": "default",
+                            "source": "operator declaration",
+                            "timestamp": "2026-08-05T00:00:00Z",
+                            "confidence": "high",
+                            "freshness": "current",
+                        },
+                    },
+                }
+            }
+        }
+        preflight = {
+            "runtime": "HERDR",
+            "adapter_class": "pane_controller",
+            "status": "warn",
+            "agents": {"overlay-only-agent": {"status": "fail", "model_probe": {"status": "unavailable"}}},
+        }
+        with patch("valp_cli.doctor.load_local_capabilities", return_value=capabilities), \
+                patch("valp_cli.doctor.load_local_overlay", return_value=overlay), \
+                patch("valp_cli.doctor.collect_runtime_preflight", return_value=preflight):
+            passports = commission_capability_passports(
+                Path("/example/workspace"),
+                evaluated_at="2026-08-05T00:00:00Z",
+            )
+
+        passport = passports[0]
+        self.assertEqual(passport["agent_surface"], "unknown")
+        self.assertEqual(passport["local_installation"]["status"], "unknown")
+        self.assertEqual(passport["model_identity"]["declared_model"]["model_id"], "unknown")
+        self.assertEqual(passport["model_identity"]["declared_model"]["provider"], "unknown")
+        self.assertEqual(passport["model_identity"]["observed_model"]["model_id"], "unknown")
+        self.assertEqual(passport["permissions"], {"filesystem": [], "network": [], "shell": [], "mutation": []})
+        self.assertEqual(passport["context"]["policy"], {})
+        self.assertEqual(passport["role_eligibility"]["implementer"], "not_declared")
+        self.assertEqual(passport["model_identity"]["evidence_status"], "unknown")
+
+    def test_runtime_probe_does_not_make_overlay_only_agent_addressable(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "source": "test registry",
+            "agents": {},
+        }
+        overlay = {
+            "agent_capability_profiles": {
+                "runtime-only-agent": {
+                    "routing_hint_only": True,
+                    "likely_roles": ["implementation"],
+                }
+            }
+        }
+        preflight = {
+            "runtime": "test-runtime",
+            "adapter_class": "local_process_worker",
+            "status": "pass",
+            "agents": {
+                "runtime-only-agent": {
+                    "status": "pass",
+                    "model_probe": {
+                        "status": "observed",
+                        "source": "test runtime metadata",
+                        "observed_at": "2026-08-05T00:00:00Z",
+                        "ttl_seconds": 3600,
+                        "model": {
+                            "model_id": "runtime-observed-model",
+                            "provider": "runtime-observed-provider",
+                        },
+                        "session_identity": {
+                            "status": "known",
+                            "token": "sha256:runtime-only-session",
+                            "source": "test runtime metadata",
+                            "generation": "1",
+                        },
+                    },
+                }
+            },
+        }
+        with patch("valp_cli.doctor.load_local_capabilities", return_value=capabilities), \
+                patch("valp_cli.doctor.load_local_overlay", return_value=overlay), \
+                patch("valp_cli.doctor.collect_runtime_preflight", return_value=preflight):
+            passports = commission_capability_passports(
+                Path("/example/workspace"),
+                evaluated_at="2026-08-05T00:01:00Z",
+            )
+
+        passport = passports[0]
+        self.assertEqual(passport["live_callability"]["status"], "pass")
+        self.assertEqual(
+            passport["model_identity"]["observed_model"]["model_id"],
+            "runtime-observed-model",
+        )
+        self.assertEqual(passport["role_eligibility"]["implementer"], "not_declared")
+        self.assertEqual(passport["role_eligibility"]["leader"], "not_declared")
+
     def test_doctor_commissions_capability_passport_with_observed_model_identity(self) -> None:
         capabilities = {
             "schema_version": "valp-agent-capabilities.v1",

@@ -169,6 +169,7 @@ transition, context compression path, or Auto Visible runtime watcher.
 
 ## Is this ready for production?
 
-This repository is a stable `0.3.0` protocol and reference CLI. Use it as a
-protocol and evidence structure. Production use still depends on a compatible runtime,
+This repository is the `0.3.0` protocol candidate with a `0.3.0rc1` reference
+CLI. Use it as a protocol and evidence structure under evaluation. Stable and
+production use still depend on the RFC release gates, a compatible runtime,
 adapter quality, live E2E verification, and local operational controls.

@@ -138,6 +138,7 @@ def commission_capability_passports(root: Path, *, evaluated_at: str) -> list[di
 
     for agent_id in agent_ids:
         info = agents.get(agent_id)
+        overlay_profile = overlay_profiles.get(agent_id) or {}
         if not isinstance(info, dict):
             discovery_source = (
                 "runtime adapter discovery"
@@ -145,7 +146,10 @@ def commission_capability_passports(root: Path, *, evaluated_at: str) -> list[di
                 else "local overlay routing hint"
             )
             info = {
-                "active": True,
+                # An overlay/runtime-discovered surface is useful to report, but
+                # it cannot become addressable or capability-declared without
+                # direct registry/runtime evidence.
+                "active": False,
                 "installation": {
                     "status": "unknown",
                     "version": "unknown",
@@ -169,7 +173,7 @@ def commission_capability_passports(root: Path, *, evaluated_at: str) -> list[di
                 build_capability_passport(
                     agent_id,
                     info,
-                    overlay_profiles.get(agent_id) or {},
+                    overlay_profile,
                     capability_source=str(capabilities.get("source") or "unknown"),
                     runtime_preflight=preflight,
                     agent_preflight=session_preflight,

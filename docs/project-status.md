@@ -1,31 +1,32 @@
 # Project Status And Evidence
 
-VALP source currently defines a stable `0.3.0` protocol and reference CLI.
-External repository publication, tags, and release artifacts remain separate
-delivery gates. Treat VALP as a portable evidence standard and coordination
-shape, not as a finished multi-agent platform.
+VALP source currently defines the `0.3.0` protocol candidate and `0.3.0rc1`
+reference CLI. Stable status remains blocked on RFC 0001 Sections 20 and 21,
+same-commit CI, external review, merge, tag, release, and post-release smoke.
+Treat VALP as a portable evidence standard and coordination shape, not as a
+finished multi-agent platform.
 
 ## Current Package
 
 | Area | Current state |
 |---|---|
-| Protocol | Stable `0.3.0` protocol and reference CLI |
+| Protocol | `0.3.0` protocol candidate and `0.3.0rc1` reference CLI |
 | Repository license | MIT |
 | Reference CLI | `bin/valp` with task workflow, v0.3 installation, leader, capability, migration, plugin, hello, conformance, audit, and doctor commands |
 | Reference runtime | HERDR for the documented Full Mode path |
 | Other runtime adapters | Local-process and LangGraph API adapters are implemented; LangGraph includes approved, identity-bound cancellation effect execution, but its proof uses the local development runtime rather than production hosting |
 | Public examples | Three synthetic fixtures, two sanitized real task case studies, and one sanitized visible-dispatch process ledger |
-| Public release | `v0.3.0` is the current usage line from the pushed candidate SHA; merge, immutable tag, and external release metadata remain pending publication gates; `v0.2.0` is legacy |
+| Public release | No `v0.3.0` release exists; evaluate the candidate from an exact local or remote SHA; `v0.2.0` remains immutable legacy history |
 
-## v0.3.0 Protocol And Reference CLI
+## v0.3.0 Protocol Candidate And Reference CLI
 
 [RFC 0001: VALP v0.3 Installation Control Plane](rfcs/0001-v0.3-installation-control-plane.md)
-is accepted and implemented as the executable `0.3.0` protocol and reference
-CLI. Runtime, adapter, platform, and production claims remain limited to the
-evidence in this matrix.
+is implemented as the executable `0.3.0` protocol candidate and `0.3.0rc1`
+reference CLI. Its stable-version Done Criteria remain open. Runtime, adapter,
+platform, and production claims remain limited to the evidence in this matrix.
 The implementation guide is [docs/v0.3-implementation.md](v0.3-implementation.md).
 
-The shipped `0.3.0` core covers control-root bootstrap, Doctor-backed Leader
+The candidate `0.3.0` core covers control-root bootstrap, Doctor-backed Leader
 candidate discovery, selection/start separation, exact installation-owned
 Leader session binding, restart/rotation epoch fencing, message/event ledgers,
 replayable state, capability layers, plugin manifest boundary checks, migration
@@ -124,6 +125,7 @@ platform.
 | Correction cycle evidence | Covered for schema, audit pass, and missing-record failure | `schemas/correction-cycle.schema.json`, `examples/full-mode-task/correction-cycle.json`, `tests/test_valp_audit.py` |
 | Automation policy evidence | Covered for schema, examples, and audit gate | `schemas/automation-policy.schema.json`, `examples/full-mode-task/automation-policy.json`, `tests/test_valp_audit.py` |
 | Context pack evidence | Covered for schema, CLI generation, examples, and audit gate | `schemas/context-pack.schema.json`, `valp_cli/workflow.py`, `examples/full-mode-task/context-pack.json` |
+| User-facing Task Graph projection | Covered for deterministic JSON, self-contained HTML/SVG, receipt/evidence links, missing-evidence states, and audit boundary | `valp_cli/task_graph.py`, `schemas/task-graph.schema.json`, `docs/task-graph.md`, `tests/test_task_graph.py` |
 | Learning feedback evidence | Covered for schema, examples, and audit gate | `schemas/learning-feedback.schema.json`, `examples/full-mode-task/learning-feedback.json`, `tests/test_valp_audit.py` |
 | Doctor/User/Leader authority chain | Covered for capability passports, explicit user-selected Leader evidence, Leader declarations, validation blockers, and publish-without-routing behavior | `tests/test_valp_doctor.py`, `tests/test_valp_workflow.py` |
 | Assignment declaration and validation schemas | Covered for bundled examples and negative cases | `schemas/assignment-declaration.schema.json`, `schemas/assignment-validation.schema.json`, `tests/test_schema_examples.py` |
@@ -194,7 +196,7 @@ and exports the required receipts and evidence.
 | Provider-specific live cancellation breadth remains bounded | LangGraph and the reference Queue now have executable cancellation/proof paths; HERDR 0.7.4 still exposes no atomic cancel command | Keep HERDR cancellation unsupported until the runtime executes the operation and records identity-bound effect proof; retain Queue production-host and cross-platform proof as separate gates |
 | Optional App installer behavior is not a protocol runtime | First-launch UX can accidentally hide path, Leader binding, preflight, and submit boundaries | First-install health gate is specified; any App must expose the same CLI-verifiable evidence |
 | Windows local Full Mode is conditional | Native Windows runtime support is beta-dependent | Recommend SSH remote for stable Windows workflow |
-| Stable release is early | Users need clear limits around runtime proof and adapter coverage | Use the v0.3.0 protocol and reference CLI with stable/live-runtime claims tied to adapter proof |
+| Stable release is not yet closed | RFC real-E2E, profile conformance, review, CI, tag, release, and post-release smoke remain open | Evaluate the exact candidate SHA and do not present it as the default stable install |
 | Small public community | Social proof is low | Avoid community-size overclaims |
 
 ## Promotion Language
@@ -228,4 +230,4 @@ HERDR-free automation path already shipped
 1. Turn the visible dispatch process proof into a full sanitized live Full Mode
    completion case study with runtime submission proof and final audit output.
 2. Add an independently operated hosted or agent-provider adapter path.
-3. Grow RFCs, failure cases, and adapter feedback around the `v0.3.0` release.
+3. Grow RFCs, failure cases, and adapter feedback around the `v0.3.0` candidate.

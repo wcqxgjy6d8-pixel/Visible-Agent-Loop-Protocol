@@ -138,6 +138,22 @@ class SchemaExampleTests(unittest.TestCase):
 
         self.assertEqual(violations, [])
 
+    def test_public_examples_do_not_embed_absolute_operator_paths(self) -> None:
+        absolute_operator_path = re.compile(
+            r"(?:/Users/|/home/|(?<![A-Za-z0-9])[A-Za-z]:\\+)"
+        )
+        violations: list[str] = []
+        for path in sorted((ROOT / "examples").rglob("*")):
+            relative = path.relative_to(ROOT / "examples")
+            if "task-graph" in relative.parts or any(part.startswith(".") for part in relative.parts):
+                continue
+            if not path.is_file() or path.suffix not in {".json", ".jsonl", ".md", ".txt", ".sh"}:
+                continue
+            if absolute_operator_path.search(path.read_text(encoding="utf-8")):
+                violations.append(str(path.relative_to(ROOT)))
+
+        self.assertEqual(violations, [])
+
     def test_bundled_json_examples_match_schemas(self) -> None:
         validators = {
             schema_name: schema_validator(ROOT / "schemas" / schema_name)
@@ -421,14 +437,14 @@ class SchemaExampleTests(unittest.TestCase):
         self.assertIn("I2 tracer bullet", tracer)
         self.assertIn("does not raise the whole State layer above I1", normalized_tracer)
 
-    def test_public_status_marks_v030_stable_without_broad_runtime_claims(self) -> None:
+    def test_public_status_marks_v030_as_candidate_without_broad_runtime_claims(self) -> None:
         for relative_path in ("README.md", "docs/index.md", "docs/project-status.md"):
             with self.subTest(path=relative_path):
                 document = (ROOT / relative_path).read_text(encoding="utf-8")
                 normalized = " ".join(document.split())
                 self.assertIn("`0.3.0`", normalized)
-                self.assertNotIn("RFC 0001 remains incomplete", normalized)
-                self.assertNotIn("stable release remains `0.2.0`", normalized)
+                self.assertIn("candidate", normalized.casefold())
+                self.assertNotIn("locally stable `0.3.0`", normalized.casefold())
                 self.assertIn("production", normalized)
 
     def test_remote_mode_public_claims_are_conditional_on_adapter_evidence(self) -> None:

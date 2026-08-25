@@ -26,6 +26,7 @@ Start here:
 - [Cost governance](cost-governance.md)
 - [Open core and commercial boundary](open-source-commercial-boundary.md)
 - [Skill discovery, routing, and Worker use](skill-recommendation.md)
+- [Task Graph and Ontology boundary](task-graph.md)
 - [Runtime adapter checklist](adapter-checklist.md)
 - [Runtime adapters](runtime-adapters.md)
 - [Layered runtime promotion readiness](layered-runtime-promotion-readiness.md)
@@ -38,9 +39,10 @@ completion requires automation policy, dispatch receipts, expected evidence,
 verification/review, approval gates when needed, final synthesis, and
 task-local learning feedback that points to proof.
 
-VALP source currently defines a locally stable `0.3.0` protocol and reference
-CLI. This checkout is a local publication candidate; GitHub push, review, merge,
-tag, and release remain pending. It is not a hosted production platform.
+VALP source currently defines the `0.3.0` protocol candidate and `0.3.0rc1`
+reference CLI. Stable status, external review, same-commit CI, merge, tag,
+release, and post-release smoke remain pending. It is not a hosted production
+platform.
 
 ## Protocol 0.3 Layered Architecture
 
@@ -85,18 +87,18 @@ digest-chained effect ledger records pending, fulfilled, or blocked outcomes
 against real proof without replaying effects.
 This remains a bounded Kernel and Reference System implementation, not proof of
 every external runtime, platform, or production deployment. No cross-platform
-parity or release support is claimed. The stable protocol and reference CLI are
-`0.3.0`. See the [promotion-readiness matrix](layered-runtime-promotion-readiness.md)
+parity or release support is claimed. The protocol target is `0.3.0` and the
+current reference CLI is `0.3.0rc1`. See the [promotion-readiness matrix](layered-runtime-promotion-readiness.md)
 for the exact boundary between local implementation evidence and live or
 cross-platform gates.
 
-## v0.3.0 Protocol And Reference CLI
+## v0.3.0 Protocol Candidate And Reference CLI
 
-The stable protocol and reference CLI are `0.3.0`. The
+The protocol target is `0.3.0` and the current reference CLI is `0.3.0rc1`. The
 [v0.3 installation control plane RFC](rfcs/0001-v0.3-installation-control-plane.md)
-is accepted and incorporated into the reference CLI, schemas, and conformance
-runner. Remaining live-runtime work does not broaden the release's explicitly
-scoped adapter, platform, or production-support claims.
+is incorporated into the reference CLI, schemas, and conformance runner.
+Stable-version Done Criteria and release gates remain open; candidate status
+does not broaden adapter, platform, or production-support claims.
 
 The `0.3.0` implementation extends VALP's evidence discipline from individual tasks to the
 installation control plane: the user selects an Installation Leader;
@@ -113,6 +115,9 @@ accepted protocol contract.
 First useful actions:
 
 - Run `bin/valp audit examples/minimal-task` to inspect the evidence shape.
+- Run `bin/valp graph examples/full-mode-task --format all` to render the
+  evidence-linked user-facing Task Graph. It is a projection for inspection;
+  `valp audit` remains the completion gate.
 - Read [When Agent "Done" Is Not Done](when-agent-done-is-not-done.md) for the
   shortest public explanation.
 - Run the [minimal audit demo](minimal-audit-demo.md) to see PASS -> FAIL ->

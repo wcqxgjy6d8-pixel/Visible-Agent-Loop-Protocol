@@ -103,15 +103,17 @@ def model_identity_for(
 ) -> dict[str, Any]:
     info = info or {}
     overlay_profile = overlay_profile or {}
+    # A local overlay is a routing hint, not a source of model truth.  Only a
+    # registry declaration or a current runtime probe may populate identity.
     raw = info.get("model_identity") or {}
     if not isinstance(raw, dict):
         raw = {}
     evaluation_time = evaluated_at or observed_at or _now()
     timestamp = observed_at or evaluation_time
-    provider = _value(raw.get("provider") or info.get("provider") or overlay_profile.get("provider"), agent)
+    provider = _value(raw.get("provider") or info.get("provider"), "unknown")
     surface = _value(
         raw.get("agent_surface") or info.get("agent_surface"),
-        "codex_cli" if agent == "codex" else agent,
+        "unknown",
     )
     reasoning = _value(raw.get("reasoning_mode") or info.get("reasoning_mode"), "unknown")
     declared = _model_record(

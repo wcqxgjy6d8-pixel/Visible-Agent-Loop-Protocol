@@ -11,7 +11,7 @@
   "status": "complete",
   "backend": "task-skill-router",
   "command": [
-    "/home/valp-user/.local/bin/task-skill-router",
+    "task-skill-router",
     "--batch"
   ],
   "exit_code": 0,
@@ -28,20 +28,20 @@
       "num_community_mappings": 35,
       "num_community_only_mappings": 4,
       "skills_dirs": [
-        "/home/valp-user/.task-skill-router/skills",
-        "/home/valp-user/.codex/skills",
-        "/home/valp-user/.claude/skills",
-        "/home/valp-user/.agents/skills",
-        "/home/valp-user/.hermes/skills"
+        "skill-root://task-skill-router",
+        "skill-root://codex",
+        "skill-root://claude",
+        "skill-root://agents",
+        "skill-root://hermes"
       ],
-      "config_path": "/home/valp-user/.config/task-skill-router/config.yaml",
-      "community_path": "/home/valp-user/.config/task-skill-router/community.yaml",
+      "config_path": "config://task-skill-router/main",
+      "community_path": "config://task-skill-router/community",
       "confidence_threshold": 0.12,
       "matches": [
         {
           "skill": "product-runtime-eval",
           "installed": true,
-          "path": "/home/valp-user/.hermes/skills/product-runtime-eval/SKILL.md",
+          "path": "skill-root://hermes/product-runtime-eval/SKILL.md",
           "confidence": 0.669,
           "mode": "auto-load",
           "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
@@ -70,7 +70,7 @@
         {
           "skill": "product-operating-layer",
           "installed": true,
-          "path": "/home/valp-user/.claude/skills/product-operating-layer/SKILL.md",
+          "path": "skill-root://claude/product-operating-layer/SKILL.md",
           "confidence": 0.542,
           "mode": "auto-load",
           "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
@@ -99,7 +99,7 @@
         {
           "skill": "herdr-coordinator-self-review",
           "installed": true,
-          "path": "/home/valp-user/.hermes/skills/devops/herdr-coordinator-self-review/SKILL.md",
+          "path": "skill-root://hermes/devops/herdr-coordinator-self-review/SKILL.md",
           "confidence": 0.258,
           "mode": "auto-load",
           "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
@@ -126,7 +126,7 @@
         {
           "skill": "project-context-injection",
           "installed": true,
-          "path": "/home/valp-user/.hermes/skills/project-context-injection/SKILL.md",
+          "path": "skill-root://hermes/project-context-injection/SKILL.md",
           "confidence": 0.22,
           "mode": "auto-load",
           "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
@@ -153,7 +153,7 @@
         {
           "skill": "requesting-code-review",
           "installed": true,
-          "path": "/home/valp-user/.hermes/skills/software-development/requesting-code-review/SKILL.md",
+          "path": "skill-root://hermes/software-development/requesting-code-review/SKILL.md",
           "confidence": 0.22,
           "mode": "auto-load",
           "reason": "TF-IDF match on skill metadata + community mapping; intent boost: agent-orchestration",
@@ -216,20 +216,20 @@
       "num_community_mappings": 35,
       "num_community_only_mappings": 4,
       "skills_dirs": [
-        "/home/valp-user/.task-skill-router/skills",
-        "/home/valp-user/.codex/skills",
-        "/home/valp-user/.claude/skills",
-        "/home/valp-user/.agents/skills",
-        "/home/valp-user/.hermes/skills"
+        "skill-root://task-skill-router",
+        "skill-root://codex",
+        "skill-root://claude",
+        "skill-root://agents",
+        "skill-root://hermes"
       ],
-      "config_path": "/home/valp-user/.config/task-skill-router/config.yaml",
-      "community_path": "/home/valp-user/.config/task-skill-router/community.yaml",
+      "config_path": "config://task-skill-router/main",
+      "community_path": "config://task-skill-router/community",
       "confidence_threshold": 0.12,
       "matches": [
         {
           "skill": "product-runtime-eval",
           "installed": true,
-          "path": "/home/valp-user/.hermes/skills/product-runtime-eval/SKILL.md",
+          "path": "skill-root://hermes/product-runtime-eval/SKILL.md",
           "confidence": 0.428,
           "mode": "auto-load",
           "reason": "TF-IDF match on skill metadata",
@@ -251,7 +251,7 @@
         {
           "skill": "product-operating-layer",
           "installed": true,
-          "path": "/home/valp-user/.claude/skills/product-operating-layer/SKILL.md",
+          "path": "skill-root://claude/product-operating-layer/SKILL.md",
           "confidence": 0.338,
           "mode": "auto-load",
           "reason": "TF-IDF match on skill metadata",
@@ -273,7 +273,7 @@
         {
           "skill": "hermes-agent",
           "installed": true,
-          "path": "/home/valp-user/.hermes/skills/autonomous-ai-agents/hermes-agent/SKILL.md",
+          "path": "skill-root://hermes/autonomous-ai-agents/hermes-agent/SKILL.md",
           "confidence": 0.232,
           "mode": "auto-load",
           "reason": "TF-IDF match on skill metadata",
@@ -295,7 +295,7 @@
         {
           "skill": "node-inspect-debugger",
           "installed": true,
-          "path": "/home/valp-user/.hermes/skills/software-development/node-inspect-debugger/SKILL.md",
+          "path": "skill-root://hermes/software-development/node-inspect-debugger/SKILL.md",
           "confidence": 0.223,
           "mode": "auto-load",
           "reason": "TF-IDF match on skill metadata",
@@ -317,7 +317,7 @@
         {
           "skill": "codebase-inspection",
           "installed": true,
-          "path": "/home/valp-user/.hermes/skills/github/codebase-inspection/SKILL.md",
+          "path": "skill-root://hermes/github/codebase-inspection/SKILL.md",
           "confidence": 0.22,
           "mode": "auto-load",
           "reason": "TF-IDF match on skill metadata; intent boost: codebase-analysis",
@@ -378,20 +378,20 @@
       "num_community_mappings": 35,
       "num_community_only_mappings": 4,
       "skills_dirs": [
-        "/home/valp-user/.task-skill-router/skills",
-        "/home/valp-user/.codex/skills",
-        "/home/valp-user/.claude/skills",
-        "/home/valp-user/.agents/skills",
-        "/home/valp-user/.hermes/skills"
+        "skill-root://task-skill-router",
+        "skill-root://codex",
+        "skill-root://claude",
+        "skill-root://agents",
+        "skill-root://hermes"
       ],
-      "config_path": "/home/valp-user/.config/task-skill-router/config.yaml",
-      "community_path": "/home/valp-user/.config/task-skill-router/community.yaml",
+      "config_path": "config://task-skill-router/main",
+      "community_path": "config://task-skill-router/community",
       "confidence_threshold": 0.12,
       "matches": [
         {
           "skill": "product-runtime-eval",
           "installed": true,
-          "path": "/home/valp-user/.hermes/skills/product-runtime-eval/SKILL.md",
+          "path": "skill-root://hermes/product-runtime-eval/SKILL.md",
           "confidence": 0.712,
           "mode": "auto-load",
           "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
@@ -420,7 +420,7 @@
         {
           "skill": "product-operating-layer",
           "installed": true,
-          "path": "/home/valp-user/.claude/skills/product-operating-layer/SKILL.md",
+          "path": "skill-root://claude/product-operating-layer/SKILL.md",
           "confidence": 0.373,
           "mode": "auto-load",
           "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
@@ -477,7 +477,7 @@
         {
           "skill": "herdr-coordinator-self-review",
           "installed": true,
-          "path": "/home/valp-user/.hermes/skills/devops/herdr-coordinator-self-review/SKILL.md",
+          "path": "skill-root://hermes/devops/herdr-coordinator-self-review/SKILL.md",
           "confidence": 0.269,
           "mode": "auto-load",
           "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
@@ -504,7 +504,7 @@
         {
           "skill": "triage",
           "installed": true,
-          "path": "/home/valp-user/.agents/skills/triage/SKILL.md",
+          "path": "skill-root://agents/triage/SKILL.md",
           "confidence": 0.22,
           "mode": "auto-load",
           "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
@@ -585,20 +585,20 @@
         "num_community_mappings": 35,
         "num_community_only_mappings": 4,
         "skills_dirs": [
-          "/home/valp-user/.task-skill-router/skills",
-          "/home/valp-user/.codex/skills",
-          "/home/valp-user/.claude/skills",
-          "/home/valp-user/.agents/skills",
-          "/home/valp-user/.hermes/skills"
+          "skill-root://task-skill-router",
+          "skill-root://codex",
+          "skill-root://claude",
+          "skill-root://agents",
+          "skill-root://hermes"
         ],
-        "config_path": "/home/valp-user/.config/task-skill-router/config.yaml",
-        "community_path": "/home/valp-user/.config/task-skill-router/community.yaml",
+        "config_path": "config://task-skill-router/main",
+        "community_path": "config://task-skill-router/community",
         "confidence_threshold": 0.12,
         "matches": [
           {
             "skill": "product-runtime-eval",
             "installed": true,
-            "path": "/home/valp-user/.hermes/skills/product-runtime-eval/SKILL.md",
+            "path": "skill-root://hermes/product-runtime-eval/SKILL.md",
             "confidence": 0.669,
             "mode": "auto-load",
             "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
@@ -627,7 +627,7 @@
           {
             "skill": "product-operating-layer",
             "installed": true,
-            "path": "/home/valp-user/.claude/skills/product-operating-layer/SKILL.md",
+            "path": "skill-root://claude/product-operating-layer/SKILL.md",
             "confidence": 0.542,
             "mode": "auto-load",
             "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
@@ -656,7 +656,7 @@
           {
             "skill": "herdr-coordinator-self-review",
             "installed": true,
-            "path": "/home/valp-user/.hermes/skills/devops/herdr-coordinator-self-review/SKILL.md",
+            "path": "skill-root://hermes/devops/herdr-coordinator-self-review/SKILL.md",
             "confidence": 0.258,
             "mode": "auto-load",
             "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
@@ -683,7 +683,7 @@
           {
             "skill": "project-context-injection",
             "installed": true,
-            "path": "/home/valp-user/.hermes/skills/project-context-injection/SKILL.md",
+            "path": "skill-root://hermes/project-context-injection/SKILL.md",
             "confidence": 0.22,
             "mode": "auto-load",
             "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
@@ -710,7 +710,7 @@
           {
             "skill": "requesting-code-review",
             "installed": true,
-            "path": "/home/valp-user/.hermes/skills/software-development/requesting-code-review/SKILL.md",
+            "path": "skill-root://hermes/software-development/requesting-code-review/SKILL.md",
             "confidence": 0.22,
             "mode": "auto-load",
             "reason": "TF-IDF match on skill metadata + community mapping; intent boost: agent-orchestration",
@@ -773,20 +773,20 @@
         "num_community_mappings": 35,
         "num_community_only_mappings": 4,
         "skills_dirs": [
-          "/home/valp-user/.task-skill-router/skills",
-          "/home/valp-user/.codex/skills",
-          "/home/valp-user/.claude/skills",
-          "/home/valp-user/.agents/skills",
-          "/home/valp-user/.hermes/skills"
+          "skill-root://task-skill-router",
+          "skill-root://codex",
+          "skill-root://claude",
+          "skill-root://agents",
+          "skill-root://hermes"
         ],
-        "config_path": "/home/valp-user/.config/task-skill-router/config.yaml",
-        "community_path": "/home/valp-user/.config/task-skill-router/community.yaml",
+        "config_path": "config://task-skill-router/main",
+        "community_path": "config://task-skill-router/community",
         "confidence_threshold": 0.12,
         "matches": [
           {
             "skill": "product-runtime-eval",
             "installed": true,
-            "path": "/home/valp-user/.hermes/skills/product-runtime-eval/SKILL.md",
+            "path": "skill-root://hermes/product-runtime-eval/SKILL.md",
             "confidence": 0.428,
             "mode": "auto-load",
             "reason": "TF-IDF match on skill metadata",
@@ -808,7 +808,7 @@
           {
             "skill": "product-operating-layer",
             "installed": true,
-            "path": "/home/valp-user/.claude/skills/product-operating-layer/SKILL.md",
+            "path": "skill-root://claude/product-operating-layer/SKILL.md",
             "confidence": 0.338,
             "mode": "auto-load",
             "reason": "TF-IDF match on skill metadata",
@@ -830,7 +830,7 @@
           {
             "skill": "hermes-agent",
             "installed": true,
-            "path": "/home/valp-user/.hermes/skills/autonomous-ai-agents/hermes-agent/SKILL.md",
+            "path": "skill-root://hermes/autonomous-ai-agents/hermes-agent/SKILL.md",
             "confidence": 0.232,
             "mode": "auto-load",
             "reason": "TF-IDF match on skill metadata",
@@ -852,7 +852,7 @@
           {
             "skill": "node-inspect-debugger",
             "installed": true,
-            "path": "/home/valp-user/.hermes/skills/software-development/node-inspect-debugger/SKILL.md",
+            "path": "skill-root://hermes/software-development/node-inspect-debugger/SKILL.md",
             "confidence": 0.223,
             "mode": "auto-load",
             "reason": "TF-IDF match on skill metadata",
@@ -874,7 +874,7 @@
           {
             "skill": "codebase-inspection",
             "installed": true,
-            "path": "/home/valp-user/.hermes/skills/github/codebase-inspection/SKILL.md",
+            "path": "skill-root://hermes/github/codebase-inspection/SKILL.md",
             "confidence": 0.22,
             "mode": "auto-load",
             "reason": "TF-IDF match on skill metadata; intent boost: codebase-analysis",
@@ -935,20 +935,20 @@
         "num_community_mappings": 35,
         "num_community_only_mappings": 4,
         "skills_dirs": [
-          "/home/valp-user/.task-skill-router/skills",
-          "/home/valp-user/.codex/skills",
-          "/home/valp-user/.claude/skills",
-          "/home/valp-user/.agents/skills",
-          "/home/valp-user/.hermes/skills"
+          "skill-root://task-skill-router",
+          "skill-root://codex",
+          "skill-root://claude",
+          "skill-root://agents",
+          "skill-root://hermes"
         ],
-        "config_path": "/home/valp-user/.config/task-skill-router/config.yaml",
-        "community_path": "/home/valp-user/.config/task-skill-router/community.yaml",
+        "config_path": "config://task-skill-router/main",
+        "community_path": "config://task-skill-router/community",
         "confidence_threshold": 0.12,
         "matches": [
           {
             "skill": "product-runtime-eval",
             "installed": true,
-            "path": "/home/valp-user/.hermes/skills/product-runtime-eval/SKILL.md",
+            "path": "skill-root://hermes/product-runtime-eval/SKILL.md",
             "confidence": 0.712,
             "mode": "auto-load",
             "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
@@ -977,7 +977,7 @@
           {
             "skill": "product-operating-layer",
             "installed": true,
-            "path": "/home/valp-user/.claude/skills/product-operating-layer/SKILL.md",
+            "path": "skill-root://claude/product-operating-layer/SKILL.md",
             "confidence": 0.373,
             "mode": "auto-load",
             "reason": "TF-IDF match on skill metadata; intent boost: verification-eval, agent-orchestration",
@@ -1034,7 +1034,7 @@
           {
             "skill": "herdr-coordinator-self-review",
             "installed": true,
-            "path": "/home/valp-user/.hermes/skills/devops/herdr-coordinator-self-review/SKILL.md",
+            "path": "skill-root://hermes/devops/herdr-coordinator-self-review/SKILL.md",
             "confidence": 0.269,
             "mode": "auto-load",
             "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
@@ -1061,7 +1061,7 @@
           {
             "skill": "triage",
             "installed": true,
-            "path": "/home/valp-user/.agents/skills/triage/SKILL.md",
+            "path": "skill-root://agents/triage/SKILL.md",
             "confidence": 0.22,
             "mode": "auto-load",
             "reason": "TF-IDF match on skill metadata; intent boost: agent-orchestration",
@@ -1146,7 +1146,7 @@
       "backend": "task-skill-router",
       "agent": "langgraph_coordinator",
       "command": [
-        "/home/valp-user/.local/bin/task-skill-router",
+        "task-skill-router",
         "--agent",
         "langgraph_coordinator",
         "--batch"
@@ -1162,7 +1162,7 @@
       "backend": "task-skill-router",
       "agent": "langgraph_reviewer",
       "command": [
-        "/home/valp-user/.local/bin/task-skill-router",
+        "task-skill-router",
         "--agent",
         "langgraph_reviewer",
         "--batch"
@@ -1178,7 +1178,7 @@
       "backend": "task-skill-router",
       "agent": "langgraph_worker",
       "command": [
-        "/home/valp-user/.local/bin/task-skill-router",
+        "task-skill-router",
         "--agent",
         "langgraph_worker",
         "--batch"

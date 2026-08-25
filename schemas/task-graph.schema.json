@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schemas/task-graph.schema.json",
+  "title": "VALP Task Graph",
+  "description": "A deterministic, projection-only, evidence-linked user-facing view of one VALP task. It is not an authority or proof source.",
+  "type": "object",
+  "required": ["schema_version", "graph_kind", "authority", "projection_only", "task_id", "status", "audit", "nodes", "edges"],
+  "properties": {
+    "schema_version": {"const": "valp-task-graph.v1"},
+    "graph_kind": {"const": "task_graph"},
+    "authority": {"const": "task-local-ledger-and-audit"},
+    "projection_only": {"const": true},
+    "task_id": {"type": "string", "minLength": 1, "pattern": "^[^/\\\\]+$"},
+    "status": {"enum": ["unknown", "new", "published", "scanning_capabilities", "scanning_context", "loading_local_overlay", "selecting_runtime_adapter", "classifying_task", "selecting_profile", "decomposing_tasks", "recommending_skills", "building_provider_matrix", "scoring_routes", "routing_capabilities", "routing_squad", "dispatching", "suspended", "planned", "locked", "executing", "verifying", "reviewing", "resolving_agent_recommendations", "fixing", "approval_required", "recording", "running", "blocked", "done", "failed", "cancelled", "pass", "warn", "fail"]},
+    "audit": {
+      "type": "object",
+      "required": ["status", "pass_count", "warn_count", "fail_count", "skip_count"],
+      "properties": {
+        "status": {"enum": ["pass", "warn", "fail", "not_run"]},
+        "pass_count": {"type": "integer", "minimum": 0},
+        "warn_count": {"type": "integer", "minimum": 0},
+        "fail_count": {"type": "integer", "minimum": 0},
+        "skip_count": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "ontology_ref": {"const": "ontology is used for routing; it is not this user-facing graph"},
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "label", "status", "refs"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9:._/-]*$"},
+          "kind": {"enum": ["task", "workitem", "agent", "evidence", "receipt", "audit"]},
+          "label": {"type": "string", "minLength": 1},
+          "status": {"enum": ["unknown", "new", "published", "scanning_capabilities", "scanning_context", "loading_local_overlay", "selecting_runtime_adapter", "classifying_task", "selecting_profile", "decomposing_tasks", "recommending_skills", "building_provider_matrix", "scoring_routes", "routing_capabilities", "routing_squad", "dispatching", "suspended", "planned", "locked", "executing", "verifying", "reviewing", "resolving_agent_recommendations", "fixing", "approval_required", "recording", "running", "completed", "blocked", "done", "failed", "cancelled", "present", "missing", "recorded", "pass", "warn", "fail", "not_run"]},
+          "detail": {"type": "string"},
+          "refs": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]*$"}
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from", "to", "type"],
+        "properties": {
+          "from": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9:._/-]*$"},
+          "to": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9:._/-]*$"},
+          "type": {"enum": ["HAS_WORK_ITEM", "ASSIGNED_TO", "PRODUCES", "RECORDED_AS", "CHECKED_BY"]}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1029,6 +1029,7 @@ def scan_workspace(
     capabilities = load_local_capabilities(root)
     overlay = load_local_overlay(root)
     agents = capabilities.get("agents") or {}
+    capabilities["agents"] = agents
     launch_argv_by_agent = capability_runtime_argv_by_agent(agents, "launch_argv")
     version_command_by_agent = capability_runtime_argv_by_agent(agents, "version_command")
     capabilities["runtime_preflight"] = collect_runtime_preflight(

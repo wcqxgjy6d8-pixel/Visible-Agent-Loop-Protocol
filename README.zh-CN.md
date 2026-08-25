@@ -48,17 +48,20 @@ branch、push、pull request 或 merge 是用户与其 Agent 自己的后续工�
 
 ## 版本入口与兼容性
 
-当前使用版本线是 `v0.3.0`，可以从候选分支和精确 SHA 做明确评估。`v0.3` 的
-required checks、external review、merge、不可变 tag 和 GitHub release metadata
-仍是发布流程 gate；完成前，候选版本不是默认的公开安装入口。`v0.2.0` 只保留为
+当前候选协议版本线是 `v0.3.0`，reference CLI package 为
+`0.3.0rc1`，可以从候选分支和精确 SHA 做明确评估。RFC 要求的真实
+non-HERDR E2E、分 profile conformance、required checks、external review、merge、
+不可变 tag、GitHub release metadata 和 post-release smoke 尚未全部完成；
+在此之前它不是 stable release。`v0.2.0` 只保留为
 旧运行复现与迁移来源；旧 tag 和 release 会保留为不可变的历史记录。升级与兼容规则见
 [版本与兼容性](docs/versioning-and-compatibility.md)。
 
-## v0.3.0 协议与参考 CLI
+## v0.3.0 候选协议与参考 CLI
 
-稳定协议与 reference CLI 版本是 `0.3.0`。[RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)
-已经接受，其 installation control plane 语义已纳入 `SPEC.md`、schemas 与
-reference CLI。请看 [v0.3 implementation guide](docs/v0.3-implementation.md)。
+协议 wire/version target 是 `0.3.0`，当前 reference CLI package 是
+`0.3.0rc1`。[RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)
+语义已纳入 `SPEC.md`、schemas 与 reference CLI，但 stable-version Done Criteria
+尚未闭合。请看 [v0.3 implementation guide](docs/v0.3-implementation.md)。
 
 如果把 Prompt、Tools、Agents 看成 Software 3.0 的执行层，VALP 更像外面的
 控制与验收层：它不负责让模型突然更聪明，而是让控制决策和 done claim
@@ -76,9 +79,8 @@ reference CLI。请看 [v0.3 implementation guide](docs/v0.3-implementation.md)�
 - Provider-neutral plugin manifest 检查、显式 migration，以及包含负面与恢复
   场景的 conformance tests。
 
-`0.3.0` 的稳定称号只覆盖协议与 reference CLI，不表示所有 Runtime、Provider、
-平台或生产部署都已得到证明。相关支持声明继续以项目状态矩阵中的具体证据为
-边界，不把有限的 adapter 证明扩张成通用生产可靠性承诺。
+当前是协议与 reference CLI 候选版，不表示任何 Runtime、Provider、
+平台、生产部署或 stable release 已得到证明。
 
 对外声明按证据包分层：协议与 reference CLI 由 schemas、测试和 bundled audits
 证明；自动 Full Mode 由具体 runtime adapter 的 dispatch/session/evidence/review
@@ -125,7 +127,7 @@ bin/valp audit examples/minimal-task
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0
+Summary: pass=14 warn=0 fail=0
 ```
 
 再看 [Minimal audit demo](docs/minimal-audit-demo.md)，它会展示：

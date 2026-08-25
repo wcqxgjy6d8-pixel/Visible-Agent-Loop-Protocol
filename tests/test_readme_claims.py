@@ -113,6 +113,21 @@ class ReadmeClaimTests(unittest.TestCase):
                 self.assertIn(bootstrap, text)
                 self.assertLess(text.index(bootstrap), text.index(editable_install))
 
+    def test_candidate_package_version_and_distribution_boundary_are_consistent(self) -> None:
+        pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        package_init = (ROOT / "valp_cli" / "__init__.py").read_text(encoding="utf-8")
+        wheel_check = (ROOT / "scripts" / "verify-wheel.sh").read_text(encoding="utf-8")
+
+        self.assertRegex(pyproject, r'(?m)^version = "0\.3\.0rc1"$')
+        self.assertIn('__version__ = "0.3.0rc1"', package_init)
+        self.assertIn("CLI-only artifact", README.read_text(encoding="utf-8"))
+        self.assertIn("complete protocol distribution", (ROOT / "INSTALL.md").read_text(encoding="utf-8"))
+        for profile in ("core-reader", "core-writer", "plugin-host", "migration"):
+            self.assertIn(profile, wheel_check)
+        self.assertNotIn("--no-build-isolation", wheel_check)
+        self.assertIn('"$VENV_VALP" --version', wheel_check)
+        self.assertIn("standalone wheel must not invent Git source provenance", wheel_check)
+
     def test_dispatch_size_benchmark_measures_generated_dispatches(self) -> None:
         result = subprocess.run(
             [sys.executable, "scripts/benchmark-dispatch-size.py"],

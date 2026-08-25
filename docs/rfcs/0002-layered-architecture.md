@@ -1,15 +1,13 @@
 # RFC 0002: VALP Layered Architecture
 
-Status: Accepted for VALP `0.3.0`; based on frozen Blueprint 0001 layered-architecture semantics
+Status: Accepted semantics for the VALP `0.3.0` release candidate
 
 Target: VALP `0.3.0`
 
 Created: 2026-07-29
 
-Source basis: frozen-source provenance carried from Blueprint 0001. The source
-artifacts and artifact manifest are not distributed in this repository, so the
-metadata below is traceability context, not locally reproducible verification
-evidence.
+Source basis: the public decisions and contracts in this RFC, `SPEC.md`, schemas,
+and tests. Private design artifacts are not normative protocol inputs.
 
 ## 1. Abstract
 
@@ -35,38 +33,23 @@ and runtime proof belong in separate acceptance artifacts.
 
 ## 2. Status And Normative Language
 
-This RFC is accepted as part of the stable `0.3.0` protocol and reference CLI.
-Its schemas and Reference System slices are incorporated through reviewed
-changes. Acceptance does not imply complete Kernel, Adapter, platform, or
+This RFC's semantics are accepted for the `0.3.0` protocol candidate. Its
+schemas and Reference System slices are incorporated through reviewed changes.
+Acceptance does not close stable-version, Kernel, Adapter, platform, or
 production conformance beyond the evidence in the project status matrix.
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are normative.
 
-## 3. Frozen Source Provenance
+## 3. Public Provenance Boundary
 
-The semantics in this document were derived from four frozen Blueprint 0001
-artifacts. Their SHA-256 digests and byte sizes were recorded during the source
-review. They cannot be re-verified from this public repository because neither
-the artifacts nor their manifest are included here.
+The public normative lineage is this RFC, `SPEC.md`, the referenced schemas,
+and executable tests. Historical private design material is intentionally
+excluded because an external implementer cannot inspect or reproduce it. No
+undistributed artifact digest is needed to interpret or implement this RFC.
 
-Blueprint 0001 is a design-source identifier only. It is not
-[RFC 0001: VALP v0.3 Installation Control Plane](0001-v0.3-installation-control-plane.md),
-which is the public RFC 0001 in this repository. This RFC is the public
-layered-architecture RFC 0002.
-
-| Artifact | SHA-256 digest | Size |
-|---|---|---|
-| `AGENT-DECISION-LEDGER.md` | `6ef30a36a78065490275a230451eea799ecd596d007550fc4abadda0d2c69159` | 17693 bytes |
-| `RFC-0001-LAYERED-ARCHITECTURE.md` | `75aa3739c48be35daa74638c1afc13c88b167c9d5b350c4d4855cba11b96f30a` | 31556 bytes |
-| `CORE-CONTRACTS.md` | `5a7a3e45c129bbd2ea4f4ba2425269c337cb239610486ea7ec6c07164a82ee4a` | 29946 bytes |
-| `ACCEPTANCE-PLAN.md` | `15c7a8be062f2d31e9e9ca082d6933ff3d9a99e4cac464da44250f417d71168b` | 15919 bytes |
-
-Input artifact digests:
-
-- Architecture preview:
-  `f5565273d646981cce3dfe2225b04f3b2774b5333bf55db9cdc55b74582ccef8`
-- Leader synthesis report:
-  `97115cada60f2c76efc4fbce0a58715ad458b7adfec899f13e0eda0b3337294d`
+[RFC 0001: VALP v0.3 Installation Control Plane](0001-v0.3-installation-control-plane.md)
+is the separate public installation-control-plane RFC. This document is the
+public layered-architecture RFC 0002.
 
 ## 4. Design Decision Traceability
 

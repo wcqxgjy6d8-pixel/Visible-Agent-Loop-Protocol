@@ -2935,6 +2935,30 @@ Only `valid` evidence can satisfy expected evidence gates. A file that exists bu
 is marked `superseded`, `invalid`, `rejected`, or `blocked` does not count as
 completion evidence.
 
+### 18.1 Task Graph Projection
+
+The Reference System MAY emit a Task Graph using
+`valp-task-graph.v1`. It is a deterministic Layer 01 presentation projection
+of one task-local ledger and a bounded audit summary. It is not a protocol
+authority, an evidence artifact, an approval record, or a substitute for
+`valp audit`. A missing artifact, displayed receipt, graph edge, or graph
+status MUST NOT create proof or change the audit result.
+
+The canonical JSON projection MUST be derived only from task-local inputs and
+an explicitly supplied audit summary. Given identical inputs, it MUST serialize
+to identical bytes. Canonical graph JSON MUST NOT include a generation time,
+absolute task/workspace path, copied raw audit report, provider-local runtime
+identifier, or other machine-local render metadata. Implementations MAY create
+HTML or SVG renderings from canonical JSON, but those renderings are not
+independent sources of truth.
+
+Each graph reference MUST be a safe, task-relative path. Absolute paths,
+parent traversal, and refs that resolve outside the task folder MUST be rejected
+or omitted. The schema owns the closed public node-kind and edge-type vocabulary
+for this projection. The graph remains separate from any ontology or routing
+projection: ontology may inform routing, while the Task Graph only presents
+task-local ledger and audit state.
+
 Agents must not make runtime/build/test/lint/UI verification claims without
 concrete evidence. Claims such as "build passed", "tests passed", "UI verified",
 or equivalent must cite a command log, screenshot, receipt, or evidence path.

@@ -1,11 +1,11 @@
 # Changelog
 
-## 0.3.0
+## 0.3.0-rc.1
 
-- Promotes the installation control plane, layered protocol kernel, adapter
-  boundary, evidence contracts, and reference CLI to the stable `0.3.0`
-  protocol line while keeping runtime, platform, and production claims scoped
-  to concrete evidence.
+- Prepares the installation control plane, layered protocol kernel, adapter
+  boundary, evidence contracts, and `0.3.0rc1` reference CLI as the release
+  candidate for the `0.3.0` protocol line. Stable status remains gated by RFC
+  0001 Sections 20 and 21.
 - Adds an explicit, digest-checked `0.3.0-draft -> 0.3.0` installation migration
   that checkpoints the complete control root, preserves Leader authority,
   fences terminal draft Tasks as legacy-read-only, resumes interrupted control

@@ -51,13 +51,31 @@ transcripts or stale memory.
 : Records the validated assignment outcome: Leader-declared Agents, expected evidence, actual
 evidence, blockers, result, lessons, and next routing hints.
 
+`routing-feedback.json` is the routing-facing history consumed by the reference
+CLI. Its workspace index is only an index: before a record can influence a new
+route, the CLI resolves the task-local record and checks task identity,
+completion gates, review, approval, verification, and referenced evidence.
+The resulting history is a prior for candidate scoring, never an assignment or
+proof of current capability.
+
 `learning-feedback.json`
 : Records what the system learned and which protocol, schema, audit, docs,
 local overlay, skill, runtime adapter, or memory updates are proposed.
 
+Learning feedback is a separate, evidence-backed proposal record. It does not
+write to the registry, capability passport, protocol, schema, overlay, skill,
+memory, or runtime adapter by itself. An accepted proposal must pass the
+relevant review, approval, and change-control path; a live skill, plugin,
+memory, MCP, or agent-configuration change becomes a separately scoped task
+with explicit user approval and fresh delegation evidence.
+
 ## Learning Rule
 
-Learning feedback is a prior, not authority.
+Learning feedback can explain or propose improvements to future routing, but it
+is not authority. The reference CLI's directly consumable routing prior comes
+from validated `routing-feedback` history. Every new task still performs fresh
+capability, provider, context, and permission scans; current observations win
+over historical feedback.
 
 Workspace feedback indexes are also not authority. A positive history entry
 must resolve to matching task-local feedback, passed completion gates, and

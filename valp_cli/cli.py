@@ -29,6 +29,7 @@ from .plugins import load_plugin_manifest
 from .task_control import TASK_STATUSES, init_task, replay_task, task_state, transition_task
 from .process_adapter import run_process
 from .langgraph_adapter import LangGraphAdapterError, resume_langgraph_run, submit_langgraph_run
+from .task_graph import build_task_graph, render_task_graph
 from .herdr_adapter import (
     HerdrAutoVisibleWatcher,
     HerdrSubmissionError,
@@ -323,8 +324,8 @@ notes:
     plugin_validate.add_argument("path", help="Plugin manifest JSON path")
     plugin_validate.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
-    conformance = sub.add_parser("conformance", help="Run isolated v0.3 core conformance fixtures")
-    conformance.add_argument("--profile", default="core-writer", choices=["core-reader", "core-writer", "plugin-host", "migration"], help="Conformance profile")
+    conformance = sub.add_parser("conformance", help="Run isolated v0.3 profile-scoped smoke fixtures")
+    conformance.add_argument("--profile", default="core-writer", choices=["core-reader", "core-writer", "plugin-host", "migration"], help="Implemented smoke profile")
     conformance.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     evidence = sub.add_parser("evidence", help="Record content-addressed installation evidence")
@@ -692,6 +693,24 @@ notes:
     audit.add_argument("--task", dest="task_id", help="Task id under <workspace>/.herdr-loop/tasks/")
     audit.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     audit.add_argument("--strict", action="store_true", help="Treat warnings as failures")
+    audit.add_argument(
+        "--emit-task-graph",
+        action="store_true",
+        help="Refresh the evidence-linked user-facing Task Graph after auditing",
+    )
+
+    graph = sub.add_parser("graph", help="Generate an evidence-linked user-facing Task Graph")
+    graph.add_argument("path", nargs="?", default=".", help="Task folder or workspace root")
+    graph.add_argument("--task", dest="task_id", help="Task id under <workspace>/.herdr-loop/tasks/")
+    graph.add_argument("--workspace", help="Workspace root when --task is used")
+    graph.add_argument(
+        "--format",
+        choices=["json", "html", "svg", "all"],
+        default="all",
+        help="Output format (default: all)",
+    )
+    graph.add_argument("--output-dir", help="Output directory; defaults to <task>/task-graph")
+    graph.add_argument("--json", action="store_true", help="Print machine-readable generation metadata")
 
     cost = sub.add_parser("cost", help="Manage provider-neutral task cost evidence")
     cost_sub = cost.add_subparsers(dest="cost_command", required=True)
@@ -1341,7 +1360,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "conformance":
         result = run_conformance(args.profile)
-        print(json.dumps(result, indent=2, ensure_ascii=False) if args.json or result["fail_count"] else f"VALP conformance {result['status']}: pass={result['pass_count']} fail={result['fail_count']}")
+        print(json.dumps(result, indent=2, ensure_ascii=False) if args.json or result["fail_count"] else f"VALP conformance smoke {result['status']}: pass={result['pass_count']} fail={result['fail_count']}")
         return 1 if result["fail_count"] else 0
 
     if args.command == "evidence" and args.evidence_command == "add":
@@ -1986,10 +2005,47 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "audit":
         directory = resolve_task_dir(Path(args.path), args.task_id)
         report = TaskAudit(directory, strict=args.strict).run()
+        graph_result = None
+        if args.emit_task_graph:
+            graph = build_task_graph(directory, report_to_dict(report))
+            written = render_task_graph(graph, directory / "task-graph", {"json", "html", "svg"})
+            graph_result = {"directory": str(directory / "task-graph"), "files": [str(path) for path in written]}
         if args.json:
-            print(json.dumps(report_to_dict(report), indent=2, ensure_ascii=False))
+            payload = report_to_dict(report)
+            if graph_result:
+                payload["task_graph"] = graph_result
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
         else:
             print_text_report(report)
+            if graph_result:
+                print()
+                print(f"Task Graph refreshed: {graph_result['directory']}")
+        return 1 if report.status == FAIL else 0
+
+    if args.command == "graph":
+        workspace = Path(args.workspace) if args.workspace else Path(args.path)
+        directory = resolve_task_dir(workspace, args.task_id)
+        report = TaskAudit(directory).run()
+        graph = build_task_graph(directory, report_to_dict(report))
+        formats = {"json", "html", "svg"} if args.format == "all" else {args.format}
+        output_dir = Path(args.output_dir) if args.output_dir else directory / "task-graph"
+        written = render_task_graph(graph, output_dir, formats)
+        result = {
+            "task_id": graph["task_id"],
+            "status": graph["status"],
+            "audit": graph["audit"],
+            "output_dir": str(output_dir.resolve()),
+            "files": [str(path.resolve()) for path in written],
+            "projection_only": True,
+        }
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print(f"Task Graph: {graph['task_id']}")
+            print(f"Status: {graph['status']} | Audit: {graph['audit'].get('status', 'not_run')}")
+            print(f"Output: {output_dir.resolve()}")
+            for path in written:
+                print(f"  {path.name}")
         return 1 if report.status == FAIL else 0
 
     if args.command == "doctor":

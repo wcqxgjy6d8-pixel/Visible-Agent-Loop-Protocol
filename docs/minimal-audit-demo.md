@@ -20,7 +20,7 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0
+Summary: pass=14 warn=0 fail=0
 ```
 
 ## 2. Break The Expected Evidence
@@ -60,7 +60,7 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0
+Summary: pass=14 warn=0 fail=0
 ```
 
 ## What This Proves

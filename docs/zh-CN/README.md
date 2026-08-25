@@ -35,7 +35,7 @@ required checks、external review、merge、不可变 tag 和 release 仍是发�
 
 ## v0.3.0：从任务验收到安装级控制平面
 
-稳定协议与 reference CLI 版本是 `0.3.0`。
+当前协议候选版本是 `0.3.0`，reference CLI 候选版本是 `0.3.0rc1`。
 [RFC 0001](../rfcs/0001-v0.3-installation-control-plane.md) 已接受，其
 installation-control-plane core、schemas、claim/review、task reducer 和
 local-process adapter 已在 reference CLI 中落地。Runtime 支持范围仍以具体
@@ -56,7 +56,7 @@ adapter 证据为边界。
 Leader；发现 CLI、Skill 或 MCP 不等于已经能调用；Runtime completed 仍不等于
 VALP Done；写完 RFC 更不等于功能已经发布。
 
-`0.3.0` 的稳定称号只覆盖协议与 reference CLI，不表示跨 runtime continuation
+未来 `0.3.0` 的稳定称号只会覆盖协议与 reference CLI，不表示跨 runtime continuation
 或生产部署已经普遍成立。当前 LangGraph 开发 runtime 的公开脱敏 E2E 只证明
 该 adapter/runtime pair。请同时查看[当前项目状态](../project-status.md)，
 不要把局部证明扩张成通用平台承诺。
@@ -95,7 +95,7 @@ bin/valp audit examples/minimal-task
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0
+Summary: pass=14 warn=0 fail=0
 ```
 
 再看这个演示：

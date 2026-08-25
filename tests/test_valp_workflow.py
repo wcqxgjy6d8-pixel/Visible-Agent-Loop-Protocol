@@ -22,6 +22,7 @@ import valp_cli.workflow as workflow_module
 from valp_cli.audit import TaskAudit
 from valp_cli.cli import main
 from valp_cli.herdr_adapter import HerdrSubmissionError
+from valp_cli.model_identity import model_identity_for
 from valp_cli.submission import (
     build_submission_dependencies,
     dependency_order_errors,
@@ -3309,7 +3310,7 @@ class ValpWorkflowTests(unittest.TestCase):
             with contextlib.redirect_stdout(output):
                 main(["--version"])
         self.assertEqual(raised.exception.code, 0)
-        self.assertIn("valp 0.3.0", output.getvalue())
+        self.assertIn("valp 0.3.0rc1", output.getvalue())
 
     def test_profile_classification_scores_all_matches(self) -> None:
         self.assertEqual(classify_profile("Fix the HERDR agent connector code"), "agent-runtime")
@@ -9370,6 +9371,218 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertIn("OLD-DONE", score["evidence_history_refs"][0])
             self.assertEqual(score["model_evidence"]["history_status"], "invalidated")
 
+    def test_completed_task_feedback_is_consumed_by_next_task_scoring(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_done_feedback_history(root, task_id="TASK-A-DONE")
+            publish_task(root, "TASK-B-NEXT", "Fix a bug and run tests", runtime="queue")
+
+            history = load_routing_feedback_history(root)
+            self.assertEqual([record["task_id"] for record in history], ["TASK-A-DONE"])
+
+            probe = {
+                "schema_version": "valp-model-probe.v1",
+                "status": "observed",
+                "source": "test runtime metadata",
+                "observed_at": "2026-07-10T00:00:00Z",
+                "ttl_seconds": 86400,
+                "model": {
+                    "model_id": "test-model",
+                    "provider": "test-provider",
+                    "reasoning_mode": "unknown",
+                    "confidence": "high",
+                },
+                "session_identity": {
+                    "status": "known",
+                    "token": "sha256:test-session",
+                    "source": "test runtime metadata",
+                    "generation": "1",
+                },
+            }
+            agent_info = {
+                "active": True,
+                "role": ["implementation"],
+                "model_identity": {
+                    "declared_model": {
+                        "model_id": "test-model",
+                        "provider": "test-provider",
+                        "reasoning_mode": "unknown",
+                        "confidence": "high",
+                    }
+                },
+            }
+            first_identity = model_identity_for(
+                "codex",
+                agent_info,
+                {},
+                runtime_probe=probe,
+                evaluated_at="2026-07-10T00:00:00Z",
+            )
+            agent_info["model_identity"]["history_binding"] = first_identity["history_binding"]
+
+            scores = score_candidates(
+                "software-code",
+                {"codex": agent_info},
+                history,
+                runtime_preflight={
+                    "agents": {
+                        "codex": {
+                            "model_probe": probe
+                        }
+                    }
+                },
+                evaluated_at="2026-07-10T00:05:00Z",
+            )
+
+            self.assertEqual(scores["codex"]["evidence_history"], 0.68)
+            self.assertIn("TASK-A-DONE", scores["codex"]["evidence_history_refs"][0])
+
+    def test_historical_success_cannot_route_to_missing_current_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_done_feedback_history(root, task_id="TASK-A-DONE")
+            capabilities_path = root / ".valp" / "agents" / "capabilities.json"
+            capabilities_path.parent.mkdir(parents=True)
+            capabilities_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-agent-capabilities.v1",
+                        "updated_at": "2026-07-10T00:00:00Z",
+                        "agents": {
+                            "manual-operator": {
+                                "active": True,
+                                "role": ["review"],
+                                "strengths": ["writes manual evidence"],
+                                "skills": [],
+                                "mcp_servers": [],
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            task_dir = publish_task(
+                root,
+                "TASK-B-MISSING-CURRENT",
+                "Review a source",
+                profile="generic-analysis",
+                runtime="manual",
+            )
+            declaration = {
+                "schema_version": "valp-assignment-declaration.v1",
+                "declaration_id": "decl-TASK-B-MISSING-CURRENT",
+                "task_id": "TASK-B-MISSING-CURRENT",
+                "declared_at": "2026-07-10T00:01:00Z",
+                "leader": {
+                    "agent_id": "manual-leader",
+                    "selected_by": "user",
+                    "selection_ref": "test-user-selection:TASK-B-MISSING-CURRENT",
+                },
+                "assignments": {"reviewer": "codex"},
+                "reasons": {"reviewer": "Historical success must not substitute for current capability evidence."},
+            }
+
+            with patch("valp_cli.workflow.load_local_overlay", return_value={}):
+                with self.assertRaisesRegex(SystemExit, "unknown_agent:reviewer:codex"):
+                    route_task(
+                        root,
+                        "TASK-B-MISSING-CURRENT",
+                        runtime="manual",
+                        assignment_declaration=declaration,
+                    )
+
+            blocked = read_json(task_dir / "assignment-validation.json")
+            self.assertEqual(blocked["status"], "blocked")
+            self.assertIn("unknown_agent:reviewer:codex", blocked["blockers"])
+
+    def test_learning_feedback_is_not_consumed_or_written_back_during_routing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_a = root / ".herdr-loop" / "tasks" / "TASK-A-LEARNING-ONLY"
+            task_a.mkdir(parents=True)
+            (task_a / "learning-feedback.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-learning-feedback.v1",
+                        "task_id": "TASK-A-LEARNING-ONLY",
+                        "profile": "generic-analysis",
+                        "result": "done",
+                        "learning_items": [
+                            {
+                                "kind": "routing",
+                                "observation": "A proposal exists but is not routing authority.",
+                                "evidence_refs": [],
+                                "confidence": "high",
+                                "next_effect": "Requires explicit disposition.",
+                            }
+                        ],
+                        "proposed_updates": [],
+                        "privacy_notes": ["test fixture"],
+                        "updated_at": "2026-07-10T00:00:00Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            registry = root / ".valp" / "registry.json"
+            passport = root / ".valp" / "passport.json"
+            capabilities = root / ".valp" / "agents" / "capabilities.json"
+            capabilities.parent.mkdir(parents=True)
+            capabilities.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-agent-capabilities.v1",
+                        "updated_at": "2026-07-10T00:00:00Z",
+                        "agents": {
+                            "manual-operator": {
+                                "active": True,
+                                "role": ["review"],
+                                "strengths": ["writes manual evidence"],
+                                "skills": [],
+                                "mcp_servers": [],
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            registry.parent.mkdir(parents=True, exist_ok=True)
+            registry.write_text('{"version":1,"entries":[]}', encoding="utf-8")
+            passport.write_text('{"version":1,"capabilities":[]}', encoding="utf-8")
+            before_registry = registry.read_bytes()
+            before_passport = passport.read_bytes()
+
+            self.assertEqual(load_routing_feedback_history(root), [])
+            task_b = publish_task(
+                root,
+                "TASK-B-LEARNING-ONLY",
+                "Review a source",
+                profile="generic-analysis",
+                runtime="manual",
+            )
+            routing = route_task(
+                root,
+                "TASK-B-LEARNING-ONLY",
+                runtime="manual",
+                assignment_declaration={
+                    "schema_version": "valp-assignment-declaration.v1",
+                    "declaration_id": "decl-TASK-B-LEARNING-ONLY",
+                    "task_id": "TASK-B-LEARNING-ONLY",
+                    "declared_at": "2026-07-10T00:01:00Z",
+                    "leader": {
+                        "agent_id": "manual-leader",
+                        "selected_by": "user",
+                        "selection_ref": "test-user-selection:TASK-B-LEARNING-ONLY",
+                    },
+                    "assignments": {"reviewer": "manual-operator"},
+                    "reasons": {"reviewer": "Manual reviewer is current and reachable for this fixture."},
+                },
+            )
+
+            self.assertEqual(routing["candidate_scores"]["manual-operator"]["evidence_history_refs"], [])
+            self.assertEqual(registry.read_bytes(), before_registry)
+            self.assertEqual(passport.read_bytes(), before_passport)
+            self.assertTrue((task_b / "routing.json").exists())
+
     def test_unbacked_feedback_index_does_not_affect_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -9459,6 +9672,35 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertEqual(task_dir.resolve(), (root / ".herdr-loop" / "tasks" / "TASK-ROUTE").resolve())
             self.assertEqual(routing["profile"], "research")
             self.assertTrue((task_dir / "routing.json").exists())
+
+    def test_scan_excludes_overlay_only_agent_from_routing_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capabilities_path = root / ".valp" / "agents" / "capabilities.json"
+            capabilities_path.parent.mkdir(parents=True)
+            capabilities_path.write_text(
+                json.dumps({"schema_version": "valp-agent-capabilities.v1", "agents": {}}),
+                encoding="utf-8",
+            )
+            overlay = {
+                "agent_capability_profiles": {
+                    "overlay-only-agent": {
+                        "routing_hint_only": True,
+                        "likely_roles": ["implementation", "verification"],
+                        "model_identity": {
+                            "agent_surface": "local-surface",
+                            "provider": "local-provider",
+                            "declared_model": {"model_id": "local-model"},
+                        },
+                    }
+                }
+            }
+            with patch("valp_cli.workflow.load_local_overlay", return_value=overlay):
+                scanned = scan_workspace(root, runtime="manual")
+
+            self.assertNotIn("overlay-only-agent", scanned["agents"])
+            scores = score_candidates("software-code", scanned["agents"])
+            self.assertNotIn("overlay-only-agent", scores)
 
     def test_refresh_scan_preserves_routed_task_phase(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/doctor-snapshot.v1.json",
+  "title": "VALP Doctor Snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "snapshot_digest",
+    "issued_at",
+    "expires_at",
+    "requested_ttl_seconds",
+    "effective_ttl_seconds",
+    "reuse_eligible",
+    "ineligible_reasons",
+    "workspace",
+    "dependency_fingerprint",
+    "report_digest",
+    "report"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-doctor-snapshot.v1"},
+    "snapshot_digest": {"$ref": "#/$defs/digest"},
+    "issued_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "requested_ttl_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
+    "effective_ttl_seconds": {"type": "integer", "minimum": 0, "maximum": 3600},
+    "reuse_eligible": {"type": "boolean"},
+    "ineligible_reasons": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "workspace": {"type": "string", "minLength": 1},
+    "dependency_fingerprint": {"$ref": "#/$defs/digest"},
+    "report_digest": {"$ref": "#/$defs/digest"},
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspace",
+        "generated_at",
+        "status",
+        "pass_count",
+        "warn_count",
+        "fail_count",
+        "checks",
+        "capability_passports"
+      ],
+      "properties": {
+        "workspace": {"type": "string", "minLength": 1},
+        "generated_at": {"type": "string", "format": "date-time"},
+        "status": {"enum": ["pass", "warn", "fail"]},
+        "pass_count": {"type": "integer", "minimum": 0},
+        "warn_count": {"type": "integer", "minimum": 0},
+        "fail_count": {"type": "integer", "minimum": 0},
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "title", "status", "message", "evidence", "suggestion"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "title": {"type": "string", "minLength": 1},
+              "status": {"enum": ["pass", "warn", "fail"]},
+              "message": {"type": "string"},
+              "evidence": {"type": "array", "items": {"type": "string"}},
+              "suggestion": {"type": ["string", "null"]}
+            }
+          }
+        },
+        "capability_passports": {"type": "array", "items": {"type": "object"}}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"reuse_eligible": {"const": true}}, "required": ["reuse_eligible"]},
+      "then": {"properties": {"effective_ttl_seconds": {"minimum": 1}, "ineligible_reasons": {"maxItems": 0}}}
+    },
+    {
+      "if": {"properties": {"reuse_eligible": {"const": false}}, "required": ["reuse_eligible"]},
+      "then": {"properties": {"ineligible_reasons": {"minItems": 1}}}
+    }
+  ],
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

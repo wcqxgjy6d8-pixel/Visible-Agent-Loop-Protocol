@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/repair-plan.v1.json",
+  "title": "VALP Doctor Repair Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "plan_id",
+    "plan_digest",
+    "generated_at",
+    "workspace",
+    "workspace_fingerprint",
+    "pre_state_digest",
+    "status",
+    "risk_classification",
+    "selected_strategy",
+    "diagnostics",
+    "hypotheses",
+    "actions",
+    "approval",
+    "stop_conditions"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-repair-plan.v1"},
+    "plan_id": {"type": "string", "pattern": "^repair-[0-9a-f]{16}$"},
+    "plan_digest": {"$ref": "#/$defs/digest"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "workspace": {"type": "string", "minLength": 1},
+    "workspace_fingerprint": {"$ref": "#/$defs/digest"},
+    "pre_state_digest": {"$ref": "#/$defs/digest"},
+    "status": {"enum": ["ready", "approval_required", "blocked", "not_required"]},
+    "risk_classification": {"enum": ["none", "low", "medium", "high", "protected"]},
+    "selected_strategy": {"type": "string", "minLength": 1},
+    "diagnostics": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/diagnostic"}
+    },
+    "hypotheses": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/hypothesis"}
+    },
+    "actions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/action"}
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "status", "deferred_mutation_required", "protected_categories"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "status": {"enum": ["not_required", "required"]},
+        "deferred_mutation_required": {"type": "boolean"},
+        "protected_categories": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        }
+      }
+    },
+    "stop_conditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "ready"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "risk_classification": {"const": "low"},
+          "actions": {"minItems": 1},
+          "approval": {
+            "properties": {
+              "required": {"const": false},
+              "status": {"const": "not_required"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "approval_required"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "risk_classification": {"const": "protected"},
+          "approval": {
+            "properties": {
+              "required": {"const": true},
+              "status": {"const": "required"},
+              "deferred_mutation_required": {"const": true},
+              "protected_categories": {"minItems": 1}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "diagnostic_id",
+        "code",
+        "severity",
+        "subject",
+        "observed_status",
+        "repairability",
+        "evidence"
+      ],
+      "properties": {
+        "diagnostic_id": {"type": "string", "minLength": 1},
+        "code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]+$"},
+        "severity": {"enum": ["warn", "fail"]},
+        "subject": {"type": "string", "minLength": 1},
+        "observed_status": {"type": "string", "minLength": 1},
+        "repairability": {
+          "enum": ["bounded_recheck", "protected_operator_action", "operator_review"]
+        },
+        "evidence": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "hypothesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hypothesis_id",
+        "diagnostic_id",
+        "cause_code",
+        "confidence",
+        "subject",
+        "evidence",
+        "next_probe"
+      ],
+      "properties": {
+        "hypothesis_id": {"type": "string", "minLength": 1},
+        "diagnostic_id": {"type": "string", "minLength": 1},
+        "cause_code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]+$"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "subject": {"type": "string", "minLength": 1},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "next_probe": {"type": "string", "minLength": 1}
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_id",
+        "kind",
+        "risk",
+        "target",
+        "mutation_surface",
+        "preconditions",
+        "expected_changed",
+        "must_remain_unchanged",
+        "postconditions",
+        "timeout_seconds",
+        "max_attempts",
+        "reversible",
+        "verification_strength"
+      ],
+      "properties": {
+        "action_id": {"type": "string", "pattern": "^action-[1-9][0-9]*$"},
+        "kind": {"enum": ["doctor.recheck"]},
+        "risk": {"const": "low"},
+        "target": {"type": "string", "minLength": 1},
+        "mutation_surface": {"const": "none"},
+        "preconditions": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "expected_changed": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "must_remain_unchanged": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "postconditions": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 300},
+        "max_attempts": {"const": 1},
+        "reversible": {"const": true},
+        "verification_strength": {"const": "deterministic"}
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": "valp-recovery-plan.v1",
+  "generated_at": "2026-08-26T10:00:00Z",
+  "workspace": "example-workspace",
+  "source_identity": {"digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111", "facts": {}},
+  "dependency_evidence": {"digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222", "facts": {}},
+  "pre_observation_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "diagnostics": [],
+  "authority": {"mcp.process": "L2"},
+  "action": {
+    "action_id": "action-1", "kind": "mcp.process.restart",
+    "resource": {"schema_version": "valp-recovery-resource.v1", "kind": "mcp.process", "resource_id": "example-mcp", "resource_version": "v1", "resource_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"},
+    "timeout_seconds": 30, "max_attempts": 1, "rollback": {"kind": "provider.rollback", "token_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"}, "verification": "independent-doctor-observation",
+    "action_digest": "sha256:08446861f310750ef95a54d9b8b6ed095c6daa9104283bb2b3fd96803503b4ed"
+  },
+  "proof_ttl_seconds": 300,
+  "status": "approval_required",
+  "plan_digest": "sha256:6c25601421ff3c86e82bada12648ce7ed6cb52daaabb278a4ab3e1e6a96b9c52",
+  "plan_id": "recovery-c42398b3a00a43d0"
+}

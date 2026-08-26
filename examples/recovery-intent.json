@@ -1,0 +1,9 @@
+{
+  "schema_version": "valp-recovery-intent.v1",
+  "plan_digest": "sha256:6c25601421ff3c86e82bada12648ce7ed6cb52daaabb278a4ab3e1e6a96b9c52",
+  "action_digest": "sha256:08446861f310750ef95a54d9b8b6ed095c6daa9104283bb2b3fd96803503b4ed",
+  "approval_digest": "sha256:71a9b374b9d2286303f6027be3cd9742cc9c9ca964b244be2f6d67ba50d44f9f",
+  "created_at": "2026-08-26T10:00:02Z",
+  "state": "accepted",
+  "intent_digest": "sha256:a9dc8284ae5618d6d0a1a47439da41e9a45193c548453c53016560ccb5ac5318"
+}

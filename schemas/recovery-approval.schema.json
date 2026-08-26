@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/recovery-approval.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "approval_id", "approval_ref", "approver_identity", "approved_at", "expires_at", "plan_digest", "action_digest", "authority", "approval_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-recovery-approval.v1"},
+    "approval_id": {"type": "string", "minLength": 1}, "approval_ref": {"type": "string", "minLength": 1}, "approver_identity": {"type": "string", "minLength": 1},
+    "approved_at": {"type": "string", "format": "date-time"}, "expires_at": {"type": "string", "format": "date-time"},
+    "plan_digest": {"$ref": "#/$defs/digest"}, "action_digest": {"$ref": "#/$defs/digest"},
+    "authority": {"type": "object", "additionalProperties": false, "required": ["mcp.process"], "properties": {"mcp.process": {"const": "L2"}}}, "approval_digest": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}
+}

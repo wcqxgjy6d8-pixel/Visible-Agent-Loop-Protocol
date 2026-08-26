@@ -104,8 +104,11 @@ When `runtime.version_command` is declared, preflight runs that exact argv. It
 does not append `--version` or infer another probe convention.
 
 After a new owned Agent starts, preflight may repeat read-only structured
-runtime metadata observation for a fixed bounded window. Unstructured pane,
-footer, transcript, and dispatch text are not model evidence. It records the
+runtime metadata observation for a fixed bounded window. The immutable
+task-owned provisioning receipt may record one explicit, unambiguous selection
+as `launch_attested`, but it is not `runtime_observed` and cannot satisfy the
+model gate. Unstructured pane, footer, transcript, dispatch text, product-name
+inference, and inferred launch defaults are not model evidence. It records the
 attempt count in `owned_session_model_readiness`. Timeout leaves dispatch
 blocked; an observed ineligible model is not retried as readiness.
 

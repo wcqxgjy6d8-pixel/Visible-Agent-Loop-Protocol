@@ -47,10 +47,42 @@ EXAMPLE_SCHEMA_BY_NAME = {
     "continuation-capability.json": "continuation-capability.schema.json",
     "continuation-event.json": "continuation-event.schema.json",
     "continuation-invocation-receipt.json": "continuation-invocation-receipt.schema.json",
+    "pricing-snapshots.json": "pricing-snapshots.schema.json",
+    "cost-budget.json": "cost-budget.schema.json",
+    "cost-report.json": "cost-report.schema.json",
 }
 
 
 class SchemaExampleTests(unittest.TestCase):
+    def test_watcher_trigger_requires_task_source_and_deduplication_identity(self) -> None:
+        validator = schema_validator(ROOT / "schemas" / "trigger-policy.schema.json")
+        trigger = {
+            "schema_version": "valp-trigger-policy.v1",
+            "task_id": "TASK-WATCH-1",
+            "trigger_mode": "watcher",
+            "trigger_source": "runtime_api",
+            "source_event_id": "herdr-event-42",
+            "matched_signal": "queue item is ready",
+            "rule_ref": "runtime-policy.json#queue-ready",
+            "risk_classification": "low",
+            "selected_action": "publish_only",
+            "approval_required": False,
+            "deduplication_identity": "sha256:" + "a" * 64,
+        }
+
+        self.assertEqual(list(validator.iter_errors(trigger)), [])
+        for required_field in (
+            "task_id",
+            "source_event_id",
+            "matched_signal",
+            "rule_ref",
+            "deduplication_identity",
+        ):
+            with self.subTest(required_field=required_field):
+                incomplete = dict(trigger)
+                incomplete.pop(required_field)
+                self.assertTrue(list(validator.iter_errors(incomplete)))
+
     def test_assignment_declaration_requires_user_selected_leader_evidence(self) -> None:
         declaration = json.loads(
             (ROOT / "examples" / "assignment-declaration.json").read_text(encoding="utf-8")
@@ -94,16 +126,7 @@ class SchemaExampleTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
     def test_public_examples_do_not_embed_operator_provider_snapshots(self) -> None:
-        forbidden = (
-            "/Users/" + "chenwei" + "sheng",
-            "Chende" + "MacBook",
-            "Codex" + "PlusPlus",
-            "configured" + "-relay",
-            "deepseek" + "-v4-pro",
-            "gpt-" + "5.6-sol",
-            "gpt-" + "5.6-luna",
-            "qwen" + "3.7-plus",
-        )
+        forbidden = ("private-relay", "model-internal", "operator-snapshot")
         violations: list[str] = []
         for path in sorted((ROOT / "examples").rglob("*")):
             if not path.is_file() or path.suffix not in {".json", ".jsonl", ".md", ".txt"}:
@@ -112,6 +135,22 @@ class SchemaExampleTests(unittest.TestCase):
             for value in forbidden:
                 if value in text:
                     violations.append(f"{path.relative_to(ROOT)} contains {value}")
+
+        self.assertEqual(violations, [])
+
+    def test_public_examples_do_not_embed_absolute_operator_paths(self) -> None:
+        absolute_operator_path = re.compile(
+            r"(?:/Users/|/home/|(?<![A-Za-z0-9])[A-Za-z]:\\+)"
+        )
+        violations: list[str] = []
+        for path in sorted((ROOT / "examples").rglob("*")):
+            relative = path.relative_to(ROOT / "examples")
+            if "task-graph" in relative.parts or any(part.startswith(".") for part in relative.parts):
+                continue
+            if not path.is_file() or path.suffix not in {".json", ".jsonl", ".md", ".txt", ".sh"}:
+                continue
+            if absolute_operator_path.search(path.read_text(encoding="utf-8")):
+                violations.append(str(path.relative_to(ROOT)))
 
         self.assertEqual(violations, [])
 
@@ -153,6 +192,18 @@ class SchemaExampleTests(unittest.TestCase):
                 data = json.loads(line)
                 for error in validator.iter_errors(data):
                     errors.append(f"{path.relative_to(ROOT)}:{lineno} {error.json_path}: {error.message}")
+        self.assertEqual(errors, [])
+
+    def test_cost_event_examples_match_schemas(self) -> None:
+        usage_validator = schema_validator(ROOT / "schemas" / "usage-event.schema.json")
+        billing_validator = schema_validator(ROOT / "schemas" / "billing-event.schema.json")
+        errors: list[str] = []
+        for path, validator in ((ROOT / "examples" / "cost-governance-task" / "usage-events.jsonl", usage_validator), (ROOT / "examples" / "cost-governance-task" / "billing-events.jsonl", billing_validator)):
+            if not path.exists():
+                continue
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if line.strip():
+                    errors.extend(f"{path.relative_to(ROOT)}:{lineno} {error.message}" for error in validator.iter_errors(json.loads(line)))
         self.assertEqual(errors, [])
 
     def test_bundled_agent_session_receipts_match_schema(self) -> None:
@@ -386,15 +437,15 @@ class SchemaExampleTests(unittest.TestCase):
         self.assertIn("I2 tracer bullet", tracer)
         self.assertIn("does not raise the whole State layer above I1", normalized_tracer)
 
-    def test_public_status_marks_rfc_incomplete_and_names_the_local_wake_subset(self) -> None:
+    def test_public_status_marks_v030_as_candidate_without_broad_runtime_claims(self) -> None:
         for relative_path in ("README.md", "docs/index.md", "docs/project-status.md"):
             with self.subTest(path=relative_path):
                 document = (ROOT / relative_path).read_text(encoding="utf-8")
                 normalized = " ".join(document.split())
-                self.assertIn("RFC 0001 remains incomplete", normalized)
-                self.assertIn("implemented", normalized)
-                self.assertIn("stable release remains `0.2.0`", normalized)
-                self.assertNotIn("stable `0.3.0` release", normalized)
+                self.assertIn("`0.3.0`", normalized)
+                self.assertIn("candidate", normalized.casefold())
+                self.assertNotIn("locally stable `0.3.0`", normalized.casefold())
+                self.assertIn("production", normalized)
 
     def test_remote_mode_public_claims_are_conditional_on_adapter_evidence(self) -> None:
         for relative_path in (

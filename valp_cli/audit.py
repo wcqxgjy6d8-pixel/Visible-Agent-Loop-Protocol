@@ -14,10 +14,12 @@ from .control_contract import (
     validate_control_contract,
     validate_control_slice,
 )
+from .herdr_adapter import binding_has_verified_bootstrap_lifecycle
 from .continuation import SUCCESS_EVENTS, digest as continuation_digest, file_digest as continuation_file_digest, idempotency_key as continuation_idempotency_key
 from .delegation import validate_delegation_policy
 from .model_identity import model_aware_provider_errors, model_aware_role_errors
 from .risk import classify_approval_risks
+from .cost_governance import CostGovernanceError, build_cost_report
 from .submission import (
     dependency_order_errors,
     deterministic_receipt_ledger_errors,
@@ -148,18 +150,53 @@ class TaskAudit:
         self.agent_sessions = self._load_json("agent-sessions.json")
         self.agent_session_receipts = self._load_jsonl("agent-session-receipts.jsonl")
         self.receipt_ledger_ref = "dispatch-receipts.jsonl"
-        langgraph_adoption_path = self.task_dir / "runtime" / "langgraph" / "adoption.json"
-        if langgraph_adoption_path.is_file():
-            self.receipt_ledger_ref = "runtime/langgraph/receipts.v3.jsonl"
+        adopted = [
+            adapter_id
+            for adapter_id in ("herdr", "queue", "manual", "langgraph")
+            if (self.task_dir / "runtime" / adapter_id / "adoption.json").is_file()
+        ]
+        if len(adopted) > 1:
+            self.receipts = []
+            self.jsonl_errors.setdefault(self.receipt_ledger_ref, []).append(
+                "multiple runtime adoption markers"
+            )
+        elif adopted:
+            adapter_id = adopted[0]
+            self.receipt_ledger_ref = f"runtime/{adapter_id}/receipts.v3.jsonl"
             try:
-                from .langgraph_adapter import load_langgraph_v3_receipts
+                if adapter_id == "langgraph":
+                    from .langgraph_adapter import load_langgraph_v3_receipts
 
-                self.receipts = load_langgraph_v3_receipts(self.task_dir)
+                    self.receipts = load_langgraph_v3_receipts(self.task_dir)
+                else:
+                    from .runtime_adapters import load_runtime_v3_receipts
+
+                    self.receipts = load_runtime_v3_receipts(self.task_dir, adapter_id)
             except Exception as error:
                 self.receipts = []
                 self.jsonl_errors.setdefault(self.receipt_ledger_ref, []).append(str(error))
         else:
             self.receipts = self._load_jsonl(self.receipt_ledger_ref)
+        self.raw_receipts = list(self.receipts)
+        if adopted == ["manual"]:
+            try:
+                from .runtime_adapters import manual_effective_receipt_ids
+
+                effective_ids = manual_effective_receipt_ids(
+                    self.task_dir, str(self.state.get("task_id") or self.task_dir.name)
+                )
+                self.receipts = [
+                    receipt
+                    for receipt in self.receipts
+                    if receipt.get("event") not in {
+                        "manual_dispatch_written", "manual_delivery_attested",
+                        "manual_result_attested", "manual_blocked",
+                    }
+                    or str(receipt.get("receipt_id") or "") in effective_ids
+                ]
+            except Exception as error:
+                self.receipts = []
+                self.jsonl_errors.setdefault(self.receipt_ledger_ref, []).append(str(error))
         self.routing_history = self._load_jsonl("routing-history.jsonl")
         self.wait_events = self._load_jsonl("wait-events.jsonl")
         self.approval_requests = self._load_jsonl("approvals/requested.jsonl")
@@ -196,6 +233,7 @@ class TaskAudit:
             self.check_expected_evidence(),
             self.check_correction_cycle(),
             self.check_agent_recommendations(),
+            self.check_cost_governance(),
             self.check_claim_evidence(),
             self.check_verification(),
             self.check_review_findings(),
@@ -315,6 +353,27 @@ class TaskAudit:
             if names != list(SUCCESS_EVENTS[: len(names)]):
                 errors.append(f"{wake_id}: acknowledgement chain is incomplete or out of order")
 
+            intent_path = artifact_dir / "invocation.inflight"
+            if intent_path.is_file():
+                try:
+                    intent = json.loads(intent_path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    errors.append(f"{wake_id}: invocation intent is malformed")
+                    intent = {}
+                expected_intent = {
+                    "schema_version": "valp-continuation-invocation-intent.v1",
+                    "task_id": envelope.get("task_id"),
+                    "wake_id": envelope.get("wake_id"),
+                    "continuation_generation": envelope.get("continuation_generation"),
+                    "idempotency_key": key,
+                    "envelope_digest": envelope_digest,
+                    "target": envelope.get("target"),
+                }
+                if intent != expected_intent:
+                    errors.append(f"{wake_id}: invocation intent is not envelope-correlated")
+                if "resume_consumed" in names:
+                    errors.append(f"{wake_id}: consumed continuation retains an inflight intent")
+
             if "resume_consumed" not in names:
                 continue
             started = next((event for event in correlated if event.get("event") == "continuation_started"), {})
@@ -370,8 +429,22 @@ class TaskAudit:
                 errors.append(f"{wake_id}: capability, target, and provider receipt do not correlate")
             for ref in (receipt.get("identity_evidence_ref"), receipt.get("duplicate_suppression_ref")):
                 ref = str(ref or "")
-                if not self._is_safe_task_ref(ref) or not (self.task_dir / ref).is_file():
+                evidence_path = self.task_dir / ref
+                if not self._is_safe_task_ref(ref) or not evidence_path.is_file():
                     errors.append(f"{wake_id}: provider evidence ref is missing or unsafe")
+                    continue
+                addressed = re.fullmatch(
+                    r"evidence/[a-z0-9]+(?:-[a-z0-9]+)*/([0-9a-f]{64})\.json",
+                    ref,
+                )
+                if addressed is not None:
+                    try:
+                        evidence_value = json.loads(evidence_path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        errors.append(f"{wake_id}: content-addressed provider evidence is malformed")
+                        continue
+                    if continuation_digest(evidence_value) != f"sha256:{addressed.group(1)}":
+                        errors.append(f"{wake_id}: content-addressed provider evidence digest mismatches its ref")
 
         known_pending_keys = {event.get("idempotency_key") for event in pending_events}
         for event in success_events:
@@ -771,8 +844,9 @@ class TaskAudit:
             receipt_error = wait_receipt_event_error(
                 event,
                 previous_suspension,
-                self.receipts,
+                self.raw_receipts,
                 task_id,
+                self.task_dir,
             )
             if receipt_error:
                 return self._fail(
@@ -1171,7 +1245,16 @@ class TaskAudit:
             return self._fail("provider_matrix", "Provider matrix fields needed for the task are recorded", "Missing provider_matrix", evidence)
         providers = matrix.get("providers")
         role_assignments = self.routing.get("role_assignments") or self.state.get("role_assignments") or {}
-        model_errors = model_aware_provider_errors(matrix) + model_aware_role_errors(matrix, role_assignments)
+        # Terminal tasks are judged at their recorded completion boundary. This
+        # keeps an otherwise valid completion from expiring merely because a
+        # later audit runs after the probe TTL; active routing remains live.
+        evaluated_at = None
+        if self.state.get("status") == "done":
+            evaluated_at = self.state.get("updated_at") or self.state.get("completed_at")
+        model_errors = model_aware_provider_errors(
+            matrix,
+            evaluated_at=evaluated_at,
+        ) + model_aware_role_errors(matrix, role_assignments, evaluated_at=evaluated_at)
         if model_errors:
             return self._fail(
                 "provider_matrix",
@@ -1347,6 +1430,7 @@ class TaskAudit:
             errors.append("Agent session receipt event_sequence is not contiguous")
         for index, session_receipt in enumerate(self.agent_session_receipts, 1):
             agent = str(session_receipt.get("agent") or "")
+            event = session_receipt.get("event")
             identity = session_receipt.get("runtime_identity") or {}
             ownership = session_receipt.get("ownership") or {}
             context = session_receipt.get("context") or {}
@@ -1358,13 +1442,34 @@ class TaskAudit:
                 errors.append(
                     f"line {index}: Agent session receipt adapter does not match projection adapter"
                 )
+            if event == "agent_session_bootstrap_verified":
+                binding = bindings.get(agent)
+                if (
+                    session_receipt.get("schema_version")
+                    != "valp-agent-session-receipt.v1"
+                    or session_receipt.get("task_id") != task_id
+                    or not agent
+                    or not isinstance(binding, dict)
+                    or session_receipt.get("binding_ref") != "agent-sessions.json"
+                    or type(generation) is not int
+                    or int(generation or 0) < 1
+                    or not re.fullmatch(
+                        r"sha256:[0-9a-f]{64}",
+                        str(session_receipt.get("identity_token") or ""),
+                    )
+                    or not str(session_receipt.get("evidence_ref") or "").strip()
+                    or not str(session_receipt.get("native_session_id") or "").strip()
+                ):
+                    errors.append(
+                        f"line {index}: bootstrap verification receipt provenance is invalid"
+                    )
+                continue
             if (
                 session_receipt.get("schema_version") != "valp-agent-session-receipt.v1"
                 or session_receipt.get("task_id") != task_id
                 or not agent
                 or agent not in bindings
-                or session_receipt.get("event")
-                not in {"agent_session_provisioned", "agent_session_reused"}
+                or event not in {"agent_session_provisioned", "agent_session_reused"}
                 or session_receipt.get("binding_ref") != "agent-sessions.json"
                 or type(generation) is not int
                 or int(generation or 0) < 1
@@ -1429,7 +1534,7 @@ class TaskAudit:
                 or int(generation or 0) < 1
                 or not runtime_identity_is_valid(identity, token)
                 or binding.get("dispatch_eligible") is not True
-                or binding.get("lifecycle") not in {"provisioned", "reused"}
+                or binding.get("lifecycle") not in {"provisioned", "reused", "bootstrap_ready"}
                 or not isinstance(context, dict)
                 or not context
                 or not launch_is_valid(launch)
@@ -1460,6 +1565,30 @@ class TaskAudit:
                 if binding.get("focused_at_provisioning") is not False:
                     errors.append(
                         f"{agent}: Agent session binding does not prove non-focused provisioning"
+                    )
+                    continue
+            if binding.get("lifecycle") == "bootstrap_ready":
+                verification = binding.get("bootstrap_verification") or {}
+                bootstrap_receipts = [
+                    session_receipt
+                    for session_receipt in self.agent_session_receipts
+                    if session_receipt.get("task_id") == task_id
+                    and session_receipt.get("agent") == agent
+                    and session_receipt.get("event")
+                    == "agent_session_bootstrap_verified"
+                    and session_receipt.get("generation") == generation
+                ]
+                if (
+                    not binding_has_verified_bootstrap_lifecycle(binding)
+                    or len(bootstrap_receipts) != 1
+                    or bootstrap_receipts[0].get("identity_token") != token
+                    or bootstrap_receipts[0].get("evidence_ref")
+                    != verification.get("evidence_ref")
+                    or bootstrap_receipts[0].get("native_session_id")
+                    != verification.get("native_session_id")
+                ):
+                    errors.append(
+                        f"{agent}: verified bootstrap lifecycle has no matching receipt"
                     )
                     continue
             provisioned_generations = sorted(
@@ -1495,7 +1624,69 @@ class TaskAudit:
             for receipt in self.receipts
             if receipt.get("event") == "dispatch_submitted"
         ]
+        receipt_by_id = {
+            str(receipt.get("receipt_id") or ""): receipt
+            for receipt in submitted
+            if str(receipt.get("receipt_id") or "")
+        }
+
+        def bound_to_provisioning(receipt: dict[str, Any]) -> bool:
+            agent = str(receipt.get("agent") or "")
+            proof_binding = ((receipt.get("proof") or {}).get("session_binding") or {})
+            return bool(
+                proof_binding.get("ref") == "agent-sessions.json"
+                and any(
+                    session_receipt.get("adapter") == projection_adapter
+                    and session_receipt.get("task_id") == task_id
+                    and session_receipt.get("agent") == agent
+                    and session_receipt.get("event") == "agent_session_provisioned"
+                    and session_receipt.get("binding_ref") == proof_binding.get("ref")
+                    and session_receipt.get("generation") == proof_binding.get("generation")
+                    and session_receipt.get("identity_token") == proof_binding.get("identity_token")
+                    and session_receipt.get("ownership") == proof_binding.get("ownership")
+                    for session_receipt in self.agent_session_receipts
+                )
+            )
+
+        superseded_submission_ids: set[str] = set()
+        for supersession in self.receipts:
+            if supersession.get("event") != "dispatch_superseded":
+                continue
+            proof = supersession.get("proof") or {}
+            original_id = str(proof.get("superseded_submission_receipt_id") or "")
+            replacement_id = str(proof.get("replacement_submission_receipt_id") or "")
+            original = receipt_by_id.get(original_id)
+            replacement = receipt_by_id.get(replacement_id)
+            identity_fields = (
+                "task_id", "agent", "role", "work_item_id", "dispatch_id",
+                "dispatch_generation", "dispatch_ref", "expected_refs",
+            )
+            if (
+                proof.get("kind") != "invalid_session_binding"
+                or original is None
+                or replacement is None
+                or original.get("event_sequence", 0) >= replacement.get("event_sequence", 0)
+                or replacement.get("event_sequence", 0) >= supersession.get("event_sequence", 0)
+                or any(original.get(field) != replacement.get(field) for field in identity_fields)
+                or any(original.get(field) != supersession.get(field) for field in identity_fields)
+                or not has_concrete_runtime_submission_proof(original)
+                or not has_concrete_runtime_submission_proof(replacement)
+                or str((original.get("proof") or {}).get("runtime") or "").casefold()
+                != projection_adapter.casefold()
+                or str((replacement.get("proof") or {}).get("runtime") or "").casefold()
+                != projection_adapter.casefold()
+                or (original.get("proof") or {}).get("proof_class")
+                not in {"agent_invocation", "reconciled_identity_bound_submission"}
+                or (replacement.get("proof") or {}).get("proof_class") != "agent_invocation"
+                or bound_to_provisioning(original)
+                or not bound_to_provisioning(replacement)
+            ):
+                errors.append("dispatch_superseded has invalid session-binding replacement proof")
+                continue
+            superseded_submission_ids.add(original_id)
         for receipt in submitted:
+            if str(receipt.get("receipt_id") or "") in superseded_submission_ids:
+                continue
             agent = str(receipt.get("agent") or "")
             binding = bindings.get(agent) if isinstance(bindings, dict) else None
             if not isinstance(binding, dict):
@@ -1503,18 +1694,7 @@ class TaskAudit:
                 continue
             proof = receipt.get("proof") or {}
             proof_binding = proof.get("session_binding") or {}
-            matching_historical_provisioning = any(
-                session_receipt.get("adapter") == projection_adapter
-                and session_receipt.get("task_id") == task_id
-                and session_receipt.get("agent") == agent
-                and session_receipt.get("event") == "agent_session_provisioned"
-                and session_receipt.get("binding_ref") == proof_binding.get("ref")
-                and session_receipt.get("generation") == proof_binding.get("generation")
-                and session_receipt.get("identity_token")
-                == proof_binding.get("identity_token")
-                and session_receipt.get("ownership") == proof_binding.get("ownership")
-                for session_receipt in self.agent_session_receipts
-            )
+            matching_historical_provisioning = bound_to_provisioning(receipt)
             if (
                 proof_binding.get("ref") != "agent-sessions.json"
                 or not matching_historical_provisioning
@@ -2109,7 +2289,7 @@ class TaskAudit:
                 evidence,
             )
         deterministic_errors = deterministic_receipt_ledger_errors(
-            self.receipts,
+            self.raw_receipts,
             str(self.state.get("task_id") or self.routing.get("task_id") or ""),
         )
         if deterministic_errors:
@@ -2144,6 +2324,7 @@ class TaskAudit:
                 matching = [
                     (index, receipt)
                     for index, receipt in enumerate(self.receipts)
+                    if receipt.get("event") != "dispatch_superseded"
                     if (
                         self._receipt_matches_manual_work_item(receipt, item)
                         if manual_mode
@@ -2299,6 +2480,65 @@ class TaskAudit:
         if invalid:
             return self._fail("expected_evidence", "Expected evidence exists", "Expected evidence is not valid: " + ", ".join(invalid), evidence)
         return self._pass("expected_evidence", "Expected evidence exists", "All expected evidence refs exist", refs)
+
+    def check_cost_governance(self) -> AuditItem:
+        refs = ["pricing-snapshots.json", "usage-events.jsonl", "billing-events.jsonl", "cost-budget.json", "cost-report.json"]
+        evidence = self._existing(refs)
+        if not evidence:
+            return self._skip(
+                "cost_governance",
+                "Cost reports are pricing-source and billing-evidence bound",
+                "Task does not opt into cost governance",
+                evidence,
+            )
+        required = ["pricing-snapshots.json", "usage-events.jsonl", "cost-budget.json", "cost-report.json"]
+        missing = [ref for ref in required if not (self.task_dir / ref).is_file()]
+        if missing:
+            return self._fail("cost_governance", "Cost reports are pricing-source and billing-evidence bound", "Missing cost governance records: " + ", ".join(missing), evidence)
+        pricing = self._load_json("pricing-snapshots.json")
+        budget = self._load_json("cost-budget.json")
+        report = self._load_json("cost-report.json")
+        usage = self._load_jsonl("usage-events.jsonl")
+        billing = self._load_jsonl("billing-events.jsonl") if (self.task_dir / "billing-events.jsonl").is_file() else []
+        ledger_errors = [
+            ref for ref in ("usage-events.jsonl", "billing-events.jsonl")
+            if self.jsonl_errors.get(ref)
+        ]
+        if ledger_errors:
+            return self._fail("cost_governance", "Cost reports are pricing-source and billing-evidence bound", "Malformed cost event ledger: " + ", ".join(ledger_errors), evidence)
+        task_id = str(self.state.get("task_id") or self.routing.get("task_id") or "")
+        if (
+            pricing.get("schema_version") != "valp-pricing-snapshots.v1"
+            or pricing.get("task_id") != task_id
+            or budget.get("schema_version") != "valp-cost-budget.v1"
+            or budget.get("task_id") != task_id
+        ):
+            return self._fail("cost_governance", "Cost reports are pricing-source and billing-evidence bound", "Pricing snapshot or cost budget identity is invalid", evidence)
+        try:
+            calculated = build_cost_report(
+                task_id,
+                list(pricing.get("snapshots") or []),
+                usage,
+                billing,
+                list(budget.get("planned_usage") or []),
+            )
+        except CostGovernanceError as error:
+            return self._fail("cost_governance", "Cost reports are pricing-source and billing-evidence bound", str(error), evidence)
+        if report != calculated:
+            if report.get("actual_billed") is not None and not billing:
+                message = "Actual billed cost requires billing evidence"
+            else:
+                message = "Cost report does not match deterministic event calculation"
+            return self._fail("cost_governance", "Cost reports are pricing-source and billing-evidence bound", message, evidence)
+        limit = budget.get("max_projected_official_list")
+        if limit is not None:
+            try:
+                from decimal import Decimal
+                if Decimal(calculated["projected_estimate"]["official_list"]) > Decimal(str(limit)):
+                    return self._fail("cost_governance", "Cost reports are pricing-source and billing-evidence bound", "Projected official-list estimate exceeds the task cost budget", evidence)
+            except Exception:
+                return self._fail("cost_governance", "Cost reports are pricing-source and billing-evidence bound", "Cost budget limit is invalid", evidence)
+        return self._pass("cost_governance", "Cost reports are pricing-source and billing-evidence bound", "Deterministic cost report is backed by pricing and billing evidence", evidence)
 
     def check_correction_cycle(self) -> AuditItem:
         evidence = self._existing(["correction-cycle.json", "dispatch-receipts.jsonl", "evidence-status.json"])
@@ -3279,6 +3519,8 @@ class TaskAudit:
     def _latest_receipts_by_agent(self) -> dict[str, dict[str, Any]]:
         latest: dict[str, dict[str, Any]] = {}
         for receipt in self.receipts:
+            if receipt.get("event") == "dispatch_superseded":
+                continue
             agent = receipt.get("agent")
             if agent:
                 latest[str(agent)] = receipt

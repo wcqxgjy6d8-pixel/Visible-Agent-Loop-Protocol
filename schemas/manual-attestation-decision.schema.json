@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:valp:schema:manual-attestation-decision:v1",
+  "title": "VALP Manual Attestation Decision",
+  "type": "object",
+  "required": ["schema_version", "decision_id", "decision_sequence", "prior_decision_digest", "decision_digest", "task_id", "action", "target_receipt_id", "subject_key_digest", "authority", "authority_ref", "authority_digest", "statement", "ts"],
+  "properties": {
+    "schema_version": {"const": "valp-manual-attestation-decision.v1"},
+    "decision_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "decision_sequence": {"type": "integer", "minimum": 1},
+    "prior_decision_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "decision_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "task_id": {"type": "string", "minLength": 1},
+    "action": {"enum": ["revoke", "adjudicate"]},
+    "target_receipt_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "subject_key_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "conflicting_receipt_ids": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+    "authority": {"type": "string", "minLength": 1},
+    "authority_ref": {"type": "string", "minLength": 1},
+    "authority_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "statement": {"type": "string", "minLength": 1},
+    "ts": {"type": "string", "minLength": 1}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"action": {"const": "adjudicate"}}, "required": ["action"]},
+      "then": {"required": ["conflicting_receipt_ids"]},
+      "else": {"not": {"required": ["conflicting_receipt_ids"]}}
+    }
+  ],
+  "additionalProperties": false
+}

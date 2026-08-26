@@ -2,19 +2,227 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Callable
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Any, Callable, Iterator
 
 
 RunCommand = Callable[..., dict[str, Any]]
 HERDR_PANE_LIST_STDOUT_LIMIT = 200_000
+DONE_SESSION_REPROVISION_REQUIRED = (
+    "HERDR task-owned done session requires an explicit fenced reprovision"
+)
 
 
 class HerdrSubmissionError(RuntimeError):
     pass
+
+
+class HerdrAutoVisibleWatcher:
+    """Persisted HERDR intake that publishes each source event at most once."""
+
+    _SOURCES = {
+        "issue_watcher",
+        "queue_watcher",
+        "schedule",
+        "file_watcher",
+        "runtime_api",
+    }
+    _ACTIONS = {
+        "no_valp",
+        "publish_only",
+        "validate_declared_route",
+        "validate_declared_route_and_dispatch",
+        "block_for_approval",
+    }
+
+    def __init__(
+        self,
+        workspace: Path,
+        publish: Callable[[dict[str, Any]], dict[str, Any]],
+    ):
+        self.workspace = Path(workspace).resolve()
+        self.publish = publish
+        self.records_directory = (
+            self.workspace / ".herdr-loop" / "watcher-events" / "herdr"
+        )
+
+    @staticmethod
+    def _identity(event: dict[str, Any]) -> str:
+        canonical = json.dumps(
+            {
+                "source": event["source"],
+                "source_event_id": event["source_event_id"],
+                "rule_ref": event["rule_ref"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _write_once(path: Path, value: dict[str, Any]) -> None:
+        encoded = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+        if path.exists():
+            if path.read_text(encoding="utf-8") != encoded:
+                raise HerdrSubmissionError("HERDR watcher record conflicts with source identity")
+            return
+        temporary = path.with_name(path.name + ".tmp")
+        try:
+            temporary.write_text(encoded, encoding="utf-8")
+            try:
+                os.link(temporary, path)
+            except FileExistsError:
+                if path.read_text(encoding="utf-8") != encoded:
+                    raise HerdrSubmissionError(
+                        "HERDR watcher record conflicts with source identity"
+                    )
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    @contextmanager
+    def _identity_lock(self, record_path: Path) -> Iterator[None]:
+        lock_path = record_path.with_name(record_path.name + ".lock")
+        deadline = time.monotonic() + 5.0
+        while True:
+            try:
+                lock_path.mkdir()
+                break
+            except FileExistsError:
+                if time.monotonic() >= deadline:
+                    raise HerdrSubmissionError(
+                        "HERDR watcher source identity is locked or indeterminate"
+                    )
+                time.sleep(0.01)
+        try:
+            yield
+        finally:
+            lock_path.rmdir()
+
+    def process(self, event: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(event, dict):
+            raise HerdrSubmissionError("HERDR watcher event must be an object")
+        required = {
+            "source",
+            "source_event_id",
+            "matched_signal",
+            "rule_ref",
+            "risk_classification",
+            "selected_action",
+        }
+        allowed = required | {"payload"}
+        if not required.issubset(event) or not set(event).issubset(allowed) or not all(
+            isinstance(event[field], str) and event[field].strip()
+            for field in required
+        ):
+            raise HerdrSubmissionError("HERDR watcher event fields are invalid")
+        if "payload" in event and not isinstance(event["payload"], dict):
+            raise HerdrSubmissionError("HERDR watcher event payload must be an object")
+        if event["source"] not in self._SOURCES:
+            raise HerdrSubmissionError("HERDR watcher source is unsupported")
+        if event["risk_classification"] not in {"low", "medium", "high"}:
+            raise HerdrSubmissionError("HERDR watcher risk classification is invalid")
+        if event["selected_action"] not in self._ACTIONS:
+            raise HerdrSubmissionError("HERDR watcher selected action is invalid")
+
+        identity = self._identity(event)
+        self.records_directory.mkdir(parents=True, exist_ok=True)
+        record_path = self.records_directory / (identity.removeprefix("sha256:") + ".json")
+        with self._identity_lock(record_path):
+            return self._process_locked(event, identity, record_path)
+
+    def _process_locked(
+        self,
+        event: dict[str, Any],
+        identity: str,
+        record_path: Path,
+    ) -> dict[str, Any]:
+        if record_path.is_file():
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            if record.get("source_event") != event:
+                raise HerdrSubmissionError("HERDR watcher duplicate source event conflicts")
+            return record["result"]
+
+        approval_required = event["risk_classification"] == "high"
+        selected_action = (
+            "block_for_approval" if approval_required else event["selected_action"]
+        )
+        publication = self.publish(
+            {
+                **event,
+                "deduplication_identity": identity,
+                "approval_required": approval_required,
+                "selected_action": selected_action,
+            }
+        )
+        task_id = str(publication.get("task_id") or "").strip()
+        task_directory_value = publication.get("task_directory")
+        task_directory = Path(task_directory_value) if task_directory_value else None
+        if not task_id or task_directory is None or not task_directory.is_dir():
+            raise HerdrSubmissionError("HERDR watcher publish result lacks a task directory")
+        trigger = {
+            "schema_version": "valp-trigger-policy.v1",
+            "task_id": task_id,
+            "trigger_mode": "watcher",
+            "trigger_source": event["source"],
+            "source_event_id": event["source_event_id"],
+            "matched_signal": event["matched_signal"],
+            "rule_ref": event["rule_ref"],
+            "risk_classification": event["risk_classification"],
+            "selected_action": selected_action,
+            "approval_required": approval_required,
+            "deduplication_identity": identity,
+        }
+        self._write_once(task_directory / "trigger-policy.json", trigger)
+        result = {
+            "task_id": task_id,
+            "selected_action": selected_action,
+            "approval_required": approval_required,
+            "deduplication_identity": identity,
+            "trigger_policy_ref": "trigger-policy.json",
+        }
+        self._write_once(record_path, {
+            "schema_version": "valp-herdr-auto-visible-watcher-record.v1",
+            "source_event": event,
+            "result": result,
+        })
+        return result
+
+
+def binding_has_verified_bootstrap_lifecycle(binding: dict[str, Any] | None) -> bool:
+    if not isinstance(binding, dict) or binding.get("lifecycle") != "bootstrap_ready":
+        return False
+    verification = binding.get("bootstrap_verification")
+    identity = binding.get("runtime_identity")
+    evidence_ref = str((verification or {}).get("evidence_ref") or "")
+    posix_ref = PurePosixPath(evidence_ref)
+    windows_ref = PureWindowsPath(evidence_ref)
+    return bool(
+        isinstance(verification, dict)
+        and isinstance(identity, dict)
+        and verification.get("status") == "verified"
+        and evidence_ref.strip()
+        and not posix_ref.is_absolute()
+        and not windows_ref.is_absolute()
+        and "\\" not in evidence_ref
+        and ":" not in evidence_ref
+        and all(part not in {"", ".", ".."} for part in evidence_ref.split("/"))
+        and verification.get("generation") == binding.get("generation")
+        and str(verification.get("pane_id") or "").strip()
+        == str(identity.get("pane_id") or "").strip()
+        and str(verification.get("native_session_id") or "").strip()
+        and verification.get("expected_response") == "BOOTSTRAP_READY"
+        and verification.get("actual_response") == "BOOTSTRAP_READY"
+        and "native_turn_error" in verification
+        and verification.get("native_turn_error") is None
+        and verification.get("session_identity_status") == "known"
+        and verification.get("model_probe_status") == "observed"
+        and "consumed_by_dispatch_receipt_id" not in verification
+    )
 
 
 def opaque_process_generation(process_group: str | int) -> str:
@@ -44,6 +252,24 @@ def detect_herdr_session_provisioning_capability(
         _command_text(pane_help),
         "herdr pane move",
     )
+    if not agent_start and _help_lists_subcommand(_command_text(agent_help), "start"):
+        agent_start = _nested_help_has_usage(
+            run_command([herdr, "agent", "start", "--help"], timeout=5.0),
+            "herdr agent start",
+        )
+    if not workspace_create and _help_lists_subcommand(
+        _command_text(workspace_help),
+        "create",
+    ):
+        workspace_create = _nested_help_has_usage(
+            run_command([herdr, "workspace", "create", "--help"], timeout=5.0),
+            "herdr workspace create",
+        )
+    if not pane_move and _help_lists_subcommand(_command_text(pane_help), "move"):
+        pane_move = _nested_help_has_usage(
+            run_command([herdr, "pane", "move", "--help"], timeout=5.0),
+            "herdr pane move",
+        )
     available = agent_start and workspace_create and pane_move
     missing = [
         command
@@ -88,6 +314,7 @@ def provision_herdr_agent_session(
     existing_binding: dict[str, Any] | None,
     run_command: RunCommand,
     allow_launch_argv_change: bool = False,
+    allow_done_session_reprovision: bool = False,
     readiness_attempts: int = 5,
     readiness_interval_seconds: float = 0.2,
 ) -> dict[str, Any]:
@@ -220,7 +447,9 @@ def provision_herdr_agent_session(
             }
             reported_cwd = str(matching_pane.get("cwd") or "").strip()
             reported_agent = str(matching_pane.get("agent") or "").strip()
-            reported_label = _pane_session_label(matching_pane)
+            # HERDR 0.8 pane metadata omits the Agent name/label; the bound
+            # pane identity and matching Agent are the durable reuse proof.
+            reported_label = _pane_session_label(matching_pane) or session_name
             if (
                 expected_identity != recorded_identity
                 or reported_label != session_name
@@ -229,11 +458,52 @@ def provision_herdr_agent_session(
                 or reported_agent != agent
             ):
                 raise HerdrSubmissionError("HERDR task-owned session runtime identity conflicts")
-            return {
-                **existing_binding,
-                "lifecycle": "reused",
-                "dispatch_eligible": True,
-            }
+            runtime_status = str(
+                matching_pane.get("agent_status") or ""
+            ).strip().lower()
+            if (
+                runtime_status in {"idle", "done"}
+                and binding_has_verified_bootstrap_lifecycle(existing_binding)
+            ):
+                return dict(existing_binding)
+            if runtime_status == "done":
+                if not allow_done_session_reprovision:
+                    raise HerdrSubmissionError(DONE_SESSION_REPROVISION_REQUIRED)
+                close_result = run_command(
+                    [herdr, "workspace", "close", workspace_id],
+                    timeout=10.0,
+                )
+                _require_success(close_result, "HERDR task-owned done session fenced reprovision")
+                verification = run_command(
+                    [herdr, "pane", "list", "--workspace", workspace_id],
+                    timeout=5.0,
+                    stdout_limit=HERDR_PANE_LIST_STDOUT_LIMIT,
+                )
+                verification_payload = _json_stdout(verification)
+                if verification.get("ok") is not True:
+                    try:
+                        verification_payload = json.loads(
+                            str(verification.get("stderr") or "")
+                        )
+                    except (TypeError, ValueError):
+                        verification_payload = {}
+                verification_error = verification_payload.get("error") if isinstance(verification_payload, dict) else {}
+                if verification.get("ok") is True or not (
+                    isinstance(verification_error, dict)
+                    and verification_error.get("code") == "workspace_not_found"
+                ):
+                    raise HerdrSubmissionError(
+                        "HERDR fenced reprovision could not prove the done task workspace is closed"
+                    )
+                matching_pane = None
+            elif runtime_status == "idle" and existing_binding.get("lifecycle") == "provisioned":
+                return dict(existing_binding)
+            else:
+                return {
+                    **existing_binding,
+                    "lifecycle": "reused",
+                    "dispatch_eligible": True,
+                }
         if launch_changed and not allow_launch_argv_change:
             raise HerdrSubmissionError(
                 "HERDR task-owned session launch argv changed while the bound session is absent"
@@ -276,64 +546,106 @@ def provision_herdr_agent_session(
         )
 
     agent_help = run_command([herdr, "agent", "--help"], timeout=5.0)
-    if agent_help.get("ok") is not True or not _help_has_command(
-        _command_text(agent_help),
+    agent_help_text = _command_text(agent_help)
+    agent_start_available = agent_help.get("ok") is True and _help_has_command(
+        agent_help_text,
         "herdr agent start",
-    ):
+    )
+    if not agent_start_available and _help_lists_subcommand(agent_help_text, "start"):
+        nested_agent_help = run_command(
+            [herdr, "agent", "start", "--help"], timeout=5.0
+        )
+        agent_start_available = _nested_help_has_usage(
+            nested_agent_help, "herdr agent start"
+        )
+        if agent_start_available:
+            agent_help_text = _command_text(nested_agent_help)
+    if not agent_start_available:
         raise HerdrSubmissionError(
             "HERDR cannot provision a project/task-owned Agent session: "
             "`herdr agent start` is unavailable"
         )
-    result = run_command(
-        [
-            herdr,
-            "agent",
-            "start",
-            session_name,
-            "--cwd",
-            str(root),
-            "--workspace",
-            workspace_id,
-            "--split",
-            "down",
-            "--no-focus",
-            "--env",
-            f"VALP_AGENT_BINDING_GENERATION={generation}",
-            "--",
-            *launch_argv,
-        ],
-        timeout=10.0,
-    )
+    initial_pane_id = ""
+    if "--pane" in agent_help_text and "--kind" in agent_help_text:
+        pane_list_result = run_command(
+            [herdr, "pane", "list", "--workspace", workspace_id], timeout=5.0
+        )
+        _require_success(pane_list_result, "HERDR task-owned Agent pane discovery")
+        pane_list_payload = _json_stdout(pane_list_result)
+        pane_list_record = (
+            pane_list_payload.get("result")
+            if isinstance(pane_list_payload.get("result"), dict)
+            else pane_list_payload
+        )
+        panes = pane_list_record.get("panes") if isinstance(pane_list_record, dict) else []
+        candidate_panes = [
+            pane for pane in panes or []
+            if isinstance(pane, dict)
+            and str(pane.get("workspace_id") or "") == workspace_id
+            and not str(pane.get("agent") or "").strip()
+        ]
+        if len(candidate_panes) != 1:
+            raise HerdrSubmissionError(
+                "HERDR task-owned workspace did not expose exactly one empty pane"
+            )
+        initial_pane_id = str(candidate_panes[0].get("pane_id") or "").strip()
+        if not initial_pane_id:
+            raise HerdrSubmissionError(
+                "HERDR task-owned workspace pane returned no identity"
+            )
+        requested_agent_args = launch_argv[1:]
+        start_command = [
+            herdr, "agent", "start", session_name,
+            "--kind", agent, "--pane", initial_pane_id, "--timeout", "30000",
+            "--", *requested_agent_args,
+        ]
+    else:
+        requested_agent_args = launch_argv
+        start_command = [
+            herdr, "agent", "start", session_name,
+            "--cwd", str(root), "--workspace", workspace_id, "--split", "down",
+            "--no-focus", "--env", f"VALP_AGENT_BINDING_GENERATION={generation}",
+            "--", *launch_argv,
+        ]
+    result: dict[str, Any] = {}
+    for start_attempt in range(1, readiness_attempts + 1):
+        result = run_command(start_command, timeout=40.0)
+        if (
+            result.get("ok") is not True
+            and "agent_pane_busy" in _command_text(result)
+            and start_attempt < readiness_attempts
+        ):
+            if readiness_interval_seconds:
+                time.sleep(readiness_interval_seconds)
+            continue
+        break
     _require_success(result, "HERDR task-owned Agent session provisioning")
     payload = _json_stdout(result)
     started = payload.get("result") if isinstance(payload.get("result"), dict) else payload
     runtime_agent = started.get("agent") if isinstance(started.get("agent"), dict) else {}
-    actual_argv = started.get("argv")
-    if started.get("type") != "agent_started" or actual_argv != launch_argv:
+    actual_argv = list(started.get("argv") or [])
+    argv_matches = actual_argv in (launch_argv, requested_agent_args) or (
+        actual_argv
+        and len(actual_argv) == len(launch_argv)
+        and Path(str(actual_argv[0])).name == Path(str(launch_argv[0])).name
+        and actual_argv[1:] == launch_argv[1:]
+    )
+    if started.get("type") != "agent_started" or not argv_matches:
         raise HerdrSubmissionError(
             "HERDR task-owned Agent session provisioning returned an invalid launch receipt"
         )
-    initial_pane_id = str(runtime_agent.get("pane_id") or "").strip()
+    initial_pane_id = str(runtime_agent.get("pane_id") or initial_pane_id).strip()
     if not initial_pane_id:
         raise HerdrSubmissionError(
             "HERDR task-owned Agent session provisioning returned no pane identity"
         )
-    move_result = run_command(
-        [
-            herdr,
-            "pane",
-            "move",
-            initial_pane_id,
-            "--new-tab",
-            "--workspace",
-            workspace_id,
-            "--label",
-            session_name,
-            "--no-focus",
-        ],
-        timeout=10.0,
-    )
-    _require_success(move_result, "HERDR task-owned Agent tab isolation")
+    if "--pane" not in agent_help_text or "--kind" not in agent_help_text:
+        move_result = run_command(
+            [herdr, "pane", "move", initial_pane_id, "--new-tab", "--workspace", workspace_id,
+             "--label", session_name, "--no-focus"],
+            timeout=10.0,
+        )
+        _require_success(move_result, "HERDR task-owned Agent tab isolation")
     required_identity = ("pane_id", "terminal_id", "workspace_id", "tab_id")
     runtime_agent = {}
     last_status = "unknown"
@@ -355,6 +667,22 @@ def provision_herdr_agent_session(
                 else pane_result_record
             )
             runtime_agent = observed_agent if isinstance(observed_agent, dict) else {}
+            if "--pane" in agent_help_text and "--kind" in agent_help_text:
+                agent_result = run_command(
+                    [herdr, "agent", "get", initial_pane_id], timeout=5.0
+                )
+                if agent_result.get("ok") is True:
+                    agent_payload = _json_stdout(agent_result)
+                    agent_record = (
+                        agent_payload.get("result")
+                        if isinstance(agent_payload.get("result"), dict)
+                        else agent_payload
+                    )
+                    agent_info = agent_record.get("agent") if isinstance(agent_record, dict) else {}
+                    if isinstance(agent_info, dict):
+                        for key in ("agent", "name", "label", "agent_status"):
+                            if key in agent_info and key not in runtime_agent:
+                                runtime_agent[key] = agent_info[key]
             missing_identity = any(
                 not str(runtime_agent.get(key) or "").strip()
                 for key in required_identity
@@ -429,6 +757,7 @@ def provision_herdr_agent_session(
     identity_digest = hashlib.sha256(
         json.dumps(runtime_identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+    provisioned_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     return {
         "agent": agent,
         "session_name": session_name,
@@ -451,6 +780,7 @@ def provision_herdr_agent_session(
             **runtime_identity,
             "token": f"sha256:{identity_digest}",
         },
+        "provisioned_at": provisioned_at,
         "lifecycle": "provisioned",
         "dispatch_eligible": True,
     }
@@ -489,7 +819,10 @@ def provision_herdr_leader_session(
     ).hexdigest()
     safe_agent = re.sub(r"[^a-z0-9]+", "-", agent.lower()).strip("-")[:20] or "agent"
     workspace_label = f"valp-leader-{owner_digest[:16]}-g{generation}"
-    session_name = f"valp-leader-{safe_agent}-{owner_digest[:12]}-g{generation}"
+    session_suffix = f"-g{generation}"
+    session_base = f"valp-leader-{safe_agent}-{owner_digest[:12]}"
+    session_name = f"{session_base[:32 - len(session_suffix)].rstrip('-')}{session_suffix}"
+    caller_workspace_id = _focused_herdr_workspace_id(herdr, run_command)
 
     workspace_result = run_command(
         [
@@ -526,61 +859,167 @@ def provision_herdr_leader_session(
         )
 
     agent_help = run_command([herdr, "agent", "--help"], timeout=5.0)
-    if agent_help.get("ok") is not True or not _help_has_command(
-        _command_text(agent_help),
+    agent_help_text = _command_text(agent_help)
+    agent_start_available = agent_help.get("ok") is True and _help_has_command(
+        agent_help_text,
         "herdr agent start",
-    ):
+    )
+    if not agent_start_available and _help_lists_subcommand(agent_help_text, "start"):
+        nested_agent_help = run_command(
+            [herdr, "agent", "start", "--help"],
+            timeout=5.0,
+        )
+        agent_start_available = _nested_help_has_usage(
+            nested_agent_help,
+            "herdr agent start",
+        )
+        if agent_start_available:
+            agent_help_text = _command_text(nested_agent_help)
+    if not agent_start_available:
         raise HerdrSubmissionError(
             "HERDR cannot provision the installation-owned Leader: `herdr agent start` is unavailable"
         )
-    start_result = run_command(
-        [
-            herdr,
-            "agent",
-            "start",
-            session_name,
-            "--cwd",
-            str(root),
-            "--workspace",
-            workspace_id,
-            "--split",
-            "down",
-            "--no-focus",
-            "--",
-            *launch_argv,
-        ],
-        timeout=10.0,
+    pane_list_result = run_command(
+        [herdr, "pane", "list", "--workspace", workspace_id], timeout=5.0
     )
-    _require_success(start_result, "HERDR installation-owned Leader session provisioning")
-    start_payload = _json_stdout(start_result)
-    started = start_payload.get("result") if isinstance(start_payload.get("result"), dict) else start_payload
-    runtime_agent = started.get("agent") if isinstance(started.get("agent"), dict) else {}
-    if started.get("type") != "agent_started" or started.get("argv") != launch_argv:
+    _require_success(pane_list_result, "HERDR Leader pane discovery")
+    pane_list_payload = _json_stdout(pane_list_result)
+    pane_list_record = (
+        pane_list_payload.get("result")
+        if isinstance(pane_list_payload.get("result"), dict)
+        else pane_list_payload
+    )
+    panes = pane_list_record.get("panes") if isinstance(pane_list_record, dict) else []
+    candidate_panes = [
+        pane for pane in panes or []
+        if isinstance(pane, dict)
+        and str(pane.get("workspace_id") or "") == workspace_id
+        and not str(pane.get("agent") or "").strip()
+    ]
+    if len(candidate_panes) != 1:
         raise HerdrSubmissionError(
-            "HERDR installation-owned Leader returned an invalid launch receipt"
+            "HERDR installation-owned Leader workspace did not expose exactly one empty pane"
         )
+    pane_id = str(candidate_panes[0].get("pane_id") or "").strip()
+    if not pane_id:
+        raise HerdrSubmissionError("HERDR installation-owned Leader pane returned no identity")
+    if "--pane" in agent_help_text and "--kind" in agent_help_text:
+        requested_agent_args = launch_argv[1:]
+        start_command = [
+            herdr, "agent", "start", session_name,
+            "--kind", agent, "--pane", pane_id, "--timeout", "30000",
+            "--", *requested_agent_args,
+        ]
+    else:
+        requested_agent_args = launch_argv
+        start_command = [
+            herdr, "agent", "start", session_name,
+            "--cwd", str(root), "--workspace", workspace_id, "--no-focus",
+            "--", *launch_argv,
+        ]
+    start_result: dict[str, Any] = {}
+    for start_attempt in range(1, readiness_attempts + 1):
+        start_result = run_command(start_command, timeout=40.0)
+        if (
+            start_result.get("ok") is not True
+            and "agent_pane_busy" in _command_text(start_result)
+            and start_attempt < readiness_attempts
+        ):
+            if readiness_interval_seconds:
+                time.sleep(readiness_interval_seconds)
+            continue
+        break
+    reused_existing = False
+    if start_result.get("ok") is not True and "agent_name_taken" in _command_text(start_result):
+        existing_result = run_command([herdr, "agent", "get", session_name], timeout=5.0)
+        _require_success(existing_result, "HERDR existing Leader session discovery")
+        existing_payload = _json_stdout(existing_result)
+        existing_record = (
+            existing_payload.get("result")
+            if isinstance(existing_payload.get("result"), dict)
+            else existing_payload
+        )
+        runtime_agent = (
+            existing_record.get("agent")
+            if isinstance(existing_record.get("agent"), dict)
+            else {}
+        )
+        workspace_id = str(runtime_agent.get("workspace_id") or "").strip()
+        existing_workspace_result = run_command(
+            [herdr, "workspace", "get", workspace_id],
+            timeout=5.0,
+        )
+        _require_success(existing_workspace_result, "HERDR existing Leader workspace discovery")
+        existing_workspace_payload = _json_stdout(existing_workspace_result)
+        existing_workspace_record = (
+            existing_workspace_payload.get("result")
+            if isinstance(existing_workspace_payload.get("result"), dict)
+            else existing_workspace_payload
+        )
+        existing_workspace = (
+            existing_workspace_record.get("workspace")
+            if isinstance(existing_workspace_record.get("workspace"), dict)
+            else {}
+        )
+        if (
+            str(runtime_agent.get("name") or "").strip() != session_name
+            or str(runtime_agent.get("agent") or "").strip() != agent
+            or str(runtime_agent.get("cwd") or "").strip() != str(root)
+            or runtime_agent.get("focused") is not False
+            or not workspace_id
+            or str(existing_workspace.get("workspace_id") or "").strip() != workspace_id
+            or str(existing_workspace.get("label") or "").strip() != workspace_label
+            or existing_workspace.get("focused") is not False
+        ):
+            raise HerdrSubmissionError(
+                "HERDR existing Leader name is owned by a conflicting runtime session"
+            )
+        reused_existing = True
+    else:
+        _require_success(start_result, "HERDR installation-owned Leader session provisioning")
+        start_payload = _json_stdout(start_result)
+        started = start_payload.get("result") if isinstance(start_payload.get("result"), dict) else start_payload
+        runtime_agent = started.get("agent") if isinstance(started.get("agent"), dict) else {}
+        actual_argv = list(started.get("argv") or [])
+        argv_matches = actual_argv in (launch_argv, requested_agent_args) or (
+            len(actual_argv) == len(launch_argv)
+            and Path(str(actual_argv[0])).name == Path(str(launch_argv[0])).name
+            and actual_argv[1:] == launch_argv[1:]
+        )
+        if started.get("type") != "agent_started" or not argv_matches:
+            raise HerdrSubmissionError(
+                "HERDR installation-owned Leader returned an invalid launch receipt"
+            )
     pane_id = str(runtime_agent.get("pane_id") or "").strip()
     if not pane_id:
         raise HerdrSubmissionError(
             "HERDR installation-owned Leader returned no pane identity"
         )
 
-    move_result = run_command(
-        [
-            herdr,
-            "pane",
-            "move",
-            pane_id,
-            "--new-tab",
-            "--workspace",
-            workspace_id,
-            "--label",
-            session_name,
-            "--no-focus",
-        ],
-        timeout=10.0,
-    )
-    _require_success(move_result, "HERDR installation-owned Leader tab isolation")
+    if not reused_existing:
+        move_result = run_command(
+            [
+                herdr,
+                "pane",
+                "move",
+                pane_id,
+                "--new-tab",
+                "--workspace",
+                workspace_id,
+                "--label",
+                session_name,
+                "--no-focus",
+            ],
+            timeout=10.0,
+        )
+        _require_success(move_result, "HERDR installation-owned Leader tab isolation")
+        focus_result = run_command(
+            [herdr, "workspace", "focus", caller_workspace_id], timeout=5.0
+        )
+        _require_success(
+            focus_result,
+            "HERDR installation-owned Leader caller-focus restoration",
+        )
     required_identity = ("pane_id", "terminal_id", "workspace_id", "tab_id")
     observations: list[dict[str, Any]] = []
     pane: dict[str, Any] = {}
@@ -615,7 +1054,10 @@ def provision_herdr_leader_session(
                 if not str(pane.get(key) or "").strip()
             ]
             reported_cwd = str(pane.get("cwd") or "").strip()
-            reported_label = _pane_session_label(pane)
+            # HERDR 0.8 pane metadata omits the Agent name/label. The
+            # installation-owned workspace and bound pane identity remain
+            # independently validated below, so retain the requested name.
+            reported_label = _pane_session_label(pane) or session_name
             reported_agent = str(pane.get("agent") or "").strip()
             if missing_identity or not reported_cwd or not reported_label or not reported_agent:
                 attempt_record["status"] = "incomplete_identity"
@@ -648,7 +1090,35 @@ def provision_herdr_leader_session(
                     process_payload = _json_stdout(process_result)
                     process_info = (process_payload.get("result") or {}).get("process_info") or {}
                     process_group = process_info.get("foreground_process_group_id")
-                    if not isinstance(process_group, (str, int)) or not str(process_group).strip():
+                    processes = process_info.get("foreground_processes")
+                    matching_processes = [
+                        process
+                        for process in processes or []
+                        if isinstance(process, dict)
+                        and (
+                            list(process.get("argv") or []) == launch_argv
+                            or (
+                                len(list(process.get("argv") or [])) == len(launch_argv)
+                                and Path(str((process.get("argv") or [""])[0])).name
+                                == Path(str(launch_argv[0])).name
+                                and list(process.get("argv") or [])[1:] == launch_argv[1:]
+                            )
+                        )
+                    ]
+                    if (
+                        not isinstance(process_group, (str, int))
+                        or not str(process_group).strip()
+                        or (
+                            reused_existing
+                            and (
+                                len(matching_processes) != 1
+                                or str(matching_processes[0].get("pid") or "").strip()
+                                != str(process_group).strip()
+                                or Path(str(matching_processes[0].get("cwd") or "")).resolve()
+                                != root
+                            )
+                        )
+                    ):
                         attempt_record["status"] = "process_identity_unproven"
                     else:
                         attempt_record["status"] = "pass"
@@ -732,6 +1202,7 @@ def open_herdr_leader_session(
     runtime_identity = binding.get("runtime_identity") if isinstance(binding.get("runtime_identity"), dict) else {}
     pane_id = str(runtime_identity.get("pane_id") or runtime_identity.get("session_id") or "").strip()
     workspace_id = str(runtime_identity.get("workspace_id") or "").strip()
+    tab_id = str(runtime_identity.get("tab_id") or "").strip()
     if not pane_id or not workspace_id:
         raise HerdrSubmissionError("HERDR Leader attachment identity is incomplete")
 
@@ -766,12 +1237,15 @@ def open_herdr_leader_session(
         raise HerdrSubmissionError("HERDR Leader attachment Agent identity changed")
 
     agent_help = run_command([herdr, "agent", "--help"], timeout=5.0)
-    if agent_help.get("ok") is not True or not _help_has_command(
+    if agent_help.get("ok") is True and _help_has_command(
         _command_text(agent_help),
         "herdr agent focus",
     ):
-        raise HerdrSubmissionError("HERDR cannot open the existing Leader attachment: `herdr agent focus` is unavailable")
-    focus_result = run_command([herdr, "agent", "focus", pane_id], timeout=5.0)
+        focus_result = run_command([herdr, "agent", "focus", pane_id], timeout=5.0)
+    elif tab_id:
+        focus_result = run_command([herdr, "tab", "focus", tab_id], timeout=5.0)
+    else:
+        raise HerdrSubmissionError("HERDR cannot open the existing Leader attachment: no supported focus target is available")
     _require_success(focus_result, "HERDR Leader attachment focus")
     return {
         "status": "opened",
@@ -866,6 +1340,19 @@ def recover_herdr_leader_session(
                 else pane_result_record
             )
             pane = observed_pane if isinstance(observed_pane, dict) else {}
+            agent_result = run_command([herdr, "agent", "get", session_id], timeout=5.0)
+            if agent_result.get("ok") is True:
+                agent_payload = _json_stdout(agent_result)
+                agent_record = (
+                    agent_payload.get("result")
+                    if isinstance(agent_payload.get("result"), dict)
+                    else agent_payload
+                )
+                agent_info = agent_record.get("agent") if isinstance(agent_record, dict) else {}
+                if isinstance(agent_info, dict):
+                    for key in ("agent", "name", "label", "agent_status"):
+                        if key in agent_info and key not in pane:
+                            pane[key] = agent_info[key]
             missing_identity = [
                 key for key in required_identity if not str(pane.get(key) or "").strip()
             ]
@@ -981,7 +1468,13 @@ def recover_herdr_leader_session(
                                 observations.append(attempt_record)
                             else:
                                 process = processes[0]
-                                if process.get("argv") != launch_argv:
+                                observed_argv = list(process.get("argv") or [])
+                                argv_matches = observed_argv == launch_argv or (
+                                    len(observed_argv) == len(launch_argv)
+                                    and Path(str(observed_argv[0])).name == Path(str(launch_argv[0])).name
+                                    and observed_argv[1:] == launch_argv[1:]
+                                )
+                                if not argv_matches:
                                     raise HerdrSubmissionError(
                                         "HERDR Leader recovery launch argv differs from the selected passport"
                                     )
@@ -1100,9 +1593,41 @@ def detect_herdr_submission_capability(
             "--timeout",
         )
     )
+    if (
+        not atomic_prompt
+        and _help_lists_subcommand(agent_text, "get")
+        and _help_lists_subcommand(agent_text, "prompt")
+    ):
+        get_help = run_command([herdr, "agent", "get", "--help"], timeout=5.0)
+        prompt_help = run_command([herdr, "agent", "prompt", "--help"], timeout=5.0)
+        atomic_prompt = _nested_help_has_usage(
+            get_help,
+            "herdr agent get",
+        ) and _nested_help_has_usage(
+            prompt_help,
+            "herdr agent prompt",
+            "--wait",
+            "--until",
+            "--timeout",
+        )
     pane_send_text = pane_help.get("ok") is True and _help_has_command(pane_text, "herdr pane send-text")
     pane_send_keys = pane_help.get("ok") is True and _help_has_command(pane_text, "herdr pane send-keys")
     agent_wait = agent_help.get("ok") is True and _help_has_command(agent_text, "herdr agent wait")
+    if not pane_send_text and _help_lists_subcommand(pane_text, "send-text"):
+        pane_send_text = _nested_help_has_usage(
+            run_command([herdr, "pane", "send-text", "--help"], timeout=5.0),
+            "herdr pane send-text",
+        )
+    if not pane_send_keys and _help_lists_subcommand(pane_text, "send-keys"):
+        pane_send_keys = _nested_help_has_usage(
+            run_command([herdr, "pane", "send-keys", "--help"], timeout=5.0),
+            "herdr pane send-keys",
+        )
+    if not agent_wait and _help_lists_subcommand(agent_text, "wait"):
+        agent_wait = _nested_help_has_usage(
+            run_command([herdr, "agent", "wait", "--help"], timeout=5.0),
+            "herdr agent wait",
+        )
     if atomic_prompt:
         mode = "agent_prompt"
         status = "pass"
@@ -1364,6 +1889,91 @@ def submit_herdr_dispatch(
     }
 
 
+def observe_herdr_terminal(
+    herdr: str,
+    *,
+    task_id: str,
+    target: str,
+    pane_id: str,
+    submission_proof: dict[str, Any],
+    run_command: Callable[..., dict[str, Any]],
+    timeout_seconds: float = 5.0,
+    poll_interval_seconds: float = 0.1,
+) -> dict[str, Any]:
+    """Observe one identity-bound HERDR terminal state after atomic submission."""
+
+    if (
+        submission_proof.get("runtime") != "HERDR"
+        or submission_proof.get("proof_class") != "agent_invocation"
+        or submission_proof.get("agent_ref") != target
+        or submission_proof.get("pane_id") != pane_id
+    ):
+        raise HerdrSubmissionError("HERDR terminal observation lacks exact submission proof")
+    submitted = submission_proof.get("submission_proof") or {}
+    identity = submitted.get("identity") or {}
+    submission_sequence = submitted.get("state_change_seq")
+    runtime_target = str(submission_proof.get("runtime_target") or "")
+    if (
+        not runtime_target
+        or type(submission_sequence) is not int
+        or not all(str(identity.get(field) or "") for field in (
+            "terminal_id", "agent", "pane_id"
+        ))
+    ):
+        raise HerdrSubmissionError("HERDR terminal observation submission identity is incomplete")
+    if not herdr:
+        raise HerdrSubmissionError("HERDR command is unavailable for terminal observation")
+    if timeout_seconds < 0 or poll_interval_seconds < 0:
+        raise HerdrSubmissionError("HERDR terminal observation timing must be non-negative")
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        observed_result = run_command(
+            [herdr, "agent", "get", runtime_target],
+            timeout=5.0,
+        )
+        _require_success(observed_result, "HERDR Agent terminal observation")
+        observed = _herdr_agent_response(
+            observed_result,
+            expected_type="agent_info",
+            action="HERDR Agent terminal observation",
+        )["agent"]
+        if (
+            observed["terminal_id"] != identity["terminal_id"]
+            or observed["agent"] != identity["agent"]
+            or observed["pane_id"] != identity["pane_id"]
+        ):
+            raise HerdrSubmissionError(
+                "HERDR terminal state changed the submitted Agent identity"
+            )
+        if (
+            observed["state_change_seq"] > submission_sequence
+            and observed["agent_status"] in {"idle", "blocked"}
+        ):
+            break
+        if time.monotonic() >= deadline:
+            raise HerdrSubmissionError(
+                "HERDR terminal observation timed out before a later idle or blocked state"
+            )
+        time.sleep(min(poll_interval_seconds, max(0.0, deadline - time.monotonic())))
+    status = "blocked" if observed["agent_status"] == "blocked" else "completed"
+    proof = {
+        "schema_version": "valp-herdr-terminal-observation.v1",
+        "runtime": "HERDR",
+        "proof_class": "agent_terminal_observation",
+        "task_id": task_id,
+        "agent": target,
+        "terminal_id": observed["terminal_id"],
+        "pane_id": observed["pane_id"],
+        "submission_state_change_seq": submission_sequence,
+        "state_change_seq": observed["state_change_seq"],
+        "status": status,
+        "acknowledged": True,
+    }
+    if status == "blocked":
+        proof["failure_code"] = "herdr_agent_blocked"
+    return proof
+
+
 def _command_text(result: dict[str, Any]) -> str:
     return "\n".join((str(result.get("stdout") or ""), str(result.get("stderr") or ""))).lower()
 
@@ -1376,9 +1986,48 @@ def _json_stdout(result: dict[str, Any]) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _focused_herdr_workspace_id(herdr: str, run_command: RunCommand) -> str:
+    """Return the one caller workspace that must regain focus after launch."""
+
+    result = run_command([herdr, "workspace", "list"], timeout=5.0)
+    _require_success(result, "HERDR caller workspace discovery")
+    payload = _json_stdout(result)
+    record = payload.get("result") if isinstance(payload.get("result"), dict) else payload
+    workspaces = record.get("workspaces") if isinstance(record, dict) else []
+    focused = [
+        str(workspace.get("workspace_id") or "").strip()
+        for workspace in workspaces or []
+        if isinstance(workspace, dict) and workspace.get("focused") is True
+    ]
+    if len(focused) != 1 or not focused[0]:
+        raise HerdrSubmissionError(
+            "HERDR Leader provisioning requires exactly one focused caller workspace"
+        )
+    return focused[0]
+
+
 def _help_has_command(help_text: str, command: str) -> bool:
     pattern = rf"(?m)^\s*{re.escape(command.lower())}(?:\s|$)"
     return re.search(pattern, help_text) is not None
+
+
+def _help_lists_subcommand(help_text: str, subcommand: str) -> bool:
+    pattern = rf"(?m)^\s*{re.escape(subcommand.lower())}(?:\s|$)"
+    return re.search(pattern, help_text) is not None
+
+
+def _nested_help_has_usage(
+    result: dict[str, Any],
+    command: str,
+    *options: str,
+) -> bool:
+    if result.get("ok") is not True:
+        return False
+    help_text = _command_text(result)
+    usage = rf"(?m)^\s*usage:\s*{re.escape(command.lower())}(?:\s|$)"
+    return re.search(usage, help_text) is not None and all(
+        option.lower() in help_text for option in options
+    )
 
 
 def _help_command_has_options(

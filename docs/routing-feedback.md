@@ -8,6 +8,11 @@ can use that record as a prior, while still running fresh scans for runtime
 status, tools, skills, permissions, model identity, and context. Feedback may
 inform a Leader; it cannot assign an Agent.
 
+This is the reference CLI's executable feedback path: validated task-local
+records may be indexed in `routing-feedback.jsonl`, resolved back to their
+source, and then used as a bounded routing prior. The prior never replaces a
+current scan or the Leader's visible assignment decision.
+
 ## When To Write Feedback
 
 Write routing feedback for:
@@ -95,6 +100,18 @@ evidence-backed observations and proposed updates. Proposed updates are not
 automatically applied to protocol files, local overlays, skills, memory, or
 runtime adapter configuration.
 
+The two records have deliberately different authority:
+
+| Record | Role | May directly change routing state? |
+|---|---|---|
+| `routing-feedback.json` (and its validated workspace index) | Historical task outcome used as a bounded prior by the reference CLI | Only as input to candidate scoring after task-local gate and evidence checks; it cannot assign an Agent or bypass fresh scans |
+| `learning-feedback.json` | Evidence-backed observation, proposal, and disposition for compound engineering | No; registry/passport/protocol/schema/overlay/skill/memory/adapter changes require the relevant review, approval, and change-control path |
+
+If a learning item is accepted, record the disposition and create the
+separately scoped change task where required. Do not treat writing the learning
+record, dispatch submission, or a runtime completion marker as proof that the
+proposed change has been applied.
+
 ## Learning Rule
 
 Feedback may adjust future local capability profiles, but it cannot override:
@@ -108,6 +125,11 @@ approval gates
 receipt gates
 expected evidence gates
 ```
+
+The current runtime, provider, tool, permission, and context state is scanned
+again for each task. Historical feedback is retained for reuse only when its
+evidence and bindings remain valid; changed or missing current capabilities
+invalidate the relevant positive prior.
 
 ## Failure Patterns To Preserve
 

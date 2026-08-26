@@ -7,8 +7,6 @@ Agent says done. VALP asks for proof.
 ![License](https://img.shields.io/github/license/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 
-![VALP complete engineering architecture overview](docs/assets/valp-complete-engineering-overview.gif)
-
 VALP is an open protocol and reference CLI for visible, evidence-backed
 autonomous and multi-agent work. It catches false completion by checking
 automation policy, dispatch receipts, expected evidence, review/approval gates,
@@ -21,6 +19,7 @@ git clone https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol.git
 cd Visible-Agent-Loop-Protocol
 python -m pip install -r requirements-dev.txt
 bin/valp audit examples/minimal-task
+bin/valp graph examples/full-mode-task --format all
 ```
 
 ![VALP audit demo: PASS to FAIL to PASS](docs/assets/valp-audit-demo.svg)
@@ -40,11 +39,47 @@ The protocol is designed for terminal-based AI coding agents, review agents,
 research agents, prototype agents, and coordinator agents. It is not tied to a
 single project, operating system, terminal emulator, or model provider.
 
+## How VALP Closes The Loop
+
+```text
+Doctor observes current capability truth
+  -> user explicitly selects the Installation Leader
+  -> user publishes a task
+  -> Leader declares WorkItems and role-to-Agent assignments
+  -> VALP validates capabilities, context, skills, permissions, and evidence contracts
+  -> runtime adapter preflight, Worker-session binding, and visible dispatch
+  -> submission receipt -> Worker execution -> completion receipt + expected evidence
+  -> verification -> independent review -> bounded fix/review loop
+  -> recommendation resolution -> approval gate -> final synthesis + feedback
+  -> valp audit -> PASS / WARN / FAIL
+  -> separately gated task lifecycle -> Done / Blocked / Failed
+  -> optional deterministic single-task Task Graph projection
+```
+
+![VALP 0.3 Doctor to Audit workflow](docs/assets/valp-v03-open-core-overview.gif)
+
+The animation is an explanatory map, not runtime or release proof. The
+[visual timeline](docs/visual-flow.md) defines each handoff, while the
+[public process proof](docs/case-studies/visible-dispatch-process-proof.md)
+shows machine-checkable excerpts from a real publish-and-dispatch run.
+
+The Task Graph is a read-only view of one task's existing receipts, evidence,
+and audit summary. It never creates proof or changes audit state. Neo4j is not
+implemented, required, or included in this candidate. A later version may use
+it only as an optional ontology projection; it must remain downstream of the
+task ledger and can never become routing, evidence, or audit authority.
+
 ## Current Status
 
-VALP is a `0.2.0` open protocol release plus an MIT-licensed reference CLI. It
-is not a mature hosted platform and should not be described as production-ready
-by itself.
+VALP source defines the `0.3.0` protocol candidate and an MIT-licensed
+`0.3.0rc1` reference CLI. Evaluate it only from a candidate branch at its exact
+SHA. It is not a stable release until the RFC-required real non-HERDR E2E,
+profile-specific conformance, required checks, external review, merge,
+immutable tag, release metadata, and post-release smoke checks are complete.
+The `v0.2.0` release remains available as legacy reproduction and migration
+history. See [versioning and compatibility](docs/versioning-and-compatibility.md).
+It is not a mature hosted platform and should not be described as
+production-ready by itself.
 
 What this repository proves today:
 
@@ -59,12 +94,37 @@ What this repository proves today:
   preserves runtime success with missing evidence, repair, independent review,
   and a final `fail_count=0` audit.
 
-What it does not prove yet:
+Evidence boundary for public claims:
 
-- a production-hosted LangGraph or agent-provider deployment;
-- deterministic coordinator auto-continuation across runtime restart;
-- native Full Mode guarantees on every local operating system;
-- production deployment reliability for a third-party runtime.
+- hosted LangGraph, hosted agent-provider operation, and third-party production
+  reliability require their own runtime evidence package;
+- deterministic coordinator auto-continuation across runtime restart requires a
+  provider-consumed continuation ledger through `resume_consumed` plus injected
+  post-consumption/pre-receipt crash evidence showing restart reconciliation and
+  duplicate suppression;
+- native Full Mode support on each operating system is claimed only when that
+  platform has its own adapter evidence and post-merge smoke result;
+- evidence outside the repository examples and linked case studies is not
+  implied by the protocol version number.
+
+## Open Core And Commercial Delivery
+
+This repository is the MIT-licensed open core: the protocol, reference CLI,
+schemas, adapter contracts, examples, and tests are public for inspection and
+self-hosted use. Enterprise installation and migration, private integrations,
+hosted operation, monitoring, compliance work, and support are separate
+commercial delivery layers and are not bundled with this repository. No
+customer data, credentials, local control roots, or deployment secrets belong
+here. See the [open-core and commercial boundary](docs/open-source-commercial-boundary.md)
+for the exact boundary.
+
+The practical value is not a claim that VALP bundles 223 skills. Skills come
+from the connected Agent/runtime environment. Doctor inventories which skills
+each Agent can actually reach; the user-selected Leader assigns work; VALP
+matches relevant skills to each work item and gives each Worker a filtered
+dispatch slice; the Worker then loads, uses, or explicitly declines the skill
+and returns evidence. Read [how skill discovery and Worker use work](docs/skill-recommendation.md)
+for the complete chain.
 
 HERDR is the current reference runtime for the automated path. It has a public
 source repository, currently documented at
@@ -72,20 +132,21 @@ source repository, currently documented at
 depend on HERDR specifically. See [docs/project-status.md](docs/project-status.md)
 for the current evidence and gap matrix.
 
-## v0.3 Draft Implementation
+## v0.3.0 Protocol Candidate And Reference CLI
 
-The current stable release remains `0.2.0`. RFC 0001 remains incomplete for
-`0.3.0`, but its first executable installation-control-plane
-slice is now implemented in the reference CLI. Read the [implementation guide](docs/v0.3-implementation.md)
-and the [full draft](docs/rfcs/0001-v0.3-installation-control-plane.md).
+The protocol wire/version target is `0.3.0`; the current reference CLI package
+is `0.3.0rc1`. RFC 0001 semantics are incorporated into `SPEC.md`, schemas, and
+the reference CLI, but its stable-version Done Criteria are not yet closed.
+Read the [implementation guide](docs/v0.3-implementation.md) and the
+[accepted RFC](docs/rfcs/0001-v0.3-installation-control-plane.md).
 
 In Software 3.0 terms, VALP is control-plane code around work driven by prompts,
 tools, and agents. It does not make a model smarter. It makes control decisions
-and completion claims inspectable. `0.2.0` does that at the task level; the v0.3
-RFC asks how the installation-wide control plane itself can become restart-safe,
-provider-neutral, and testable.
+and completion claims inspectable. `0.2.0` established the task-level evidence
+discipline; `0.3.0` extends it to a restart-safe, provider-neutral, testable
+installation control plane.
 
-The implemented draft core adds:
+The `0.3.0` core adds:
 
 - a user-selected **Installation Leader**, constrained by a deterministic core
   and fenced leader epochs rather than a hard-coded universal coordinator;
@@ -97,16 +158,12 @@ The implemented draft core adds:
 - provider-neutral plugin manifest validation, explicit legacy migration plans,
   and a core conformance runner with negative and recovery tests.
 
-The proposal deliberately keeps the proof bar ahead of the release label.
-Before stable `0.3.0`, the RFC must be accepted and incorporated into
-`SPEC.md`; the remaining task reducer, production adapter restart proof, plugin
-execution isolation, and deterministic cross-runtime continuation still need
-stronger evidence. The draft core is shipped for evaluation, not as a stable
-platform claim.
+Candidate status applies to the protocol and reference CLI. No runtime,
+provider, platform, production, or stable-release reliability is implied.
 
 Read the [full RFC](docs/rfcs/0001-v0.3-installation-control-plane.md) and the
 [current evidence matrix](docs/project-status.md) side by side: one describes
-the proposed contract, and the other describes what this repository proves now.
+the accepted contract, and the other describes what this repository proves now.
 
 ## Why VALP?
 
@@ -137,7 +194,7 @@ Choose the path that matches why you are here:
 | Goal | Start here | Runtime required? |
 |---|---|---|
 | Understand the protocol | Read [SPEC.md](SPEC.md) and audit `examples/minimal-task/` | No |
-| Try the v0.3 draft installation control plane | Read [the implementation guide](docs/v0.3-implementation.md) | No |
+| Try the v0.3.0 installation control plane | Read [the implementation guide](docs/v0.3-implementation.md) | No |
 | Review the v0.3 installation control plane | Read [RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md) | No |
 | Understand the automation and learning principles | Read [Compound Learning Loop](docs/compound-learning-loop.md) | No |
 | See the shortest public demo | Read [When Agent "Done" Is Not Done](docs/when-agent-done-is-not-done.md) | No |
@@ -197,13 +254,17 @@ Expected result:
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0
+Summary: pass=14 warn=0 fail=0
 ```
 
 To see the audit fail when expected evidence is removed, run the
 [minimal audit demo](docs/minimal-audit-demo.md). This is the fastest way to
 understand the protocol's acceptance-system behavior before trying a live
 runtime.
+
+The Task Graph is a user-facing projection of task-local receipts and evidence;
+it does not replace `valp audit` or turn a missing artifact into proof. See the
+[Task Graph and Ontology boundary](docs/task-graph.md) for the distinction.
 
 For a shorter public-facing explanation, read
 [When Agent "Done" Is Not Done](docs/when-agent-done-is-not-done.md).
@@ -227,6 +288,15 @@ python -m pip install --upgrade pip setuptools
 python -m pip install -e ".[dev]"
 valp audit examples/minimal-task
 ```
+
+The candidate distribution contract is explicit: an exact-SHA source checkout
+or release source archive is the complete protocol bundle containing `SPEC.md`,
+schemas, docs, examples, tests, and the reference CLI. The Python wheel is a
+CLI-only artifact. It intentionally does not invent Git provenance or replace
+the public protocol bundle. `scripts/verify-wheel.sh` builds that wheel, checks
+its contents and version, installs it in isolation, and runs the currently
+implemented profile-scoped smoke checks. Full RFC profile conformance remains a
+separate stable-release gate.
 
 Reference-runtime trial:
 
@@ -278,17 +348,16 @@ work silently.
 ```text
 Doctor capability passports
   -> user-selected Leader
-  -> user request
-  -> VALP task folder
-  -> Leader assignment declaration
-  -> VALP declaration validation
-  -> reference CLI or compatible runtime adapter
-  -> agent sessions, queues, hosted runs, or manual handoffs
-  -> dispatch receipts
-  -> expected evidence
-  -> verification/review/approval gates
-  -> final synthesis
-  -> valp audit
+  -> task publication
+  -> Leader-declared WorkItems and role-to-Agent assignments
+  -> VALP capability/context/skill/evidence validation
+  -> adapter preflight, Worker binding, and visible dispatch
+  -> adapter-backed submission/completion receipts + Worker evidence
+  -> verification -> independent review -> bounded correction loop
+  -> recommendation resolution -> approval -> synthesis + feedback
+  -> valp audit: PASS / WARN / FAIL
+  -> separately gated lifecycle state: Done / Blocked / Failed
+  -> optional read-only Task Graph
 ```
 
 HERDR is the current reference runtime for the automated path. It is not the
@@ -436,7 +505,7 @@ The repository includes five self-verifying task examples:
 | `examples/headless-queue-task/` | Synthetic Full Mode queue fixture passes without pane or terminal-size fields | `PASS`, `pass=22 warn=0 fail=0` |
 | `examples/real-doc-calibration-task/` | Sanitized real Manual Mode documentation calibration case study | `PASS`, `pass=15 warn=0 fail=0` |
 | `examples/langgraph-false-done/` | Real non-HERDR LangGraph false-done, repair, and independent review case | `PASS`, `pass=28 warn=0 fail=0` |
-| `docs/case-studies/visible-dispatch-process-proof.md` | Short public video of a real VALP/HERDR publish-and-dispatch process; not a standalone Full Mode completion case study | Process proof only |
+| `docs/case-studies/visible-dispatch-process-proof.md` | Sanitized ledger of a real VALP/HERDR publish-and-dispatch process; not a standalone Full Mode completion case study | Process proof only |
 
 Run the complete smoke check:
 
@@ -681,6 +750,7 @@ Visible-Agent-Loop-Protocol/
 
 ## Status
 
-Open protocol draft with reference CLI version `0.2.0`. The protocol draft is
-released as `v0.2.0`; HERDR remains the current reference runtime, not a
-protocol requirement.
+Protocol target `0.3.0` and reference CLI `0.3.0rc1` are publication
+candidates; external review, same-commit CI, merge, tag, release, and
+post-release smoke remain pending. HERDR remains the current reference runtime,
+not a protocol requirement.

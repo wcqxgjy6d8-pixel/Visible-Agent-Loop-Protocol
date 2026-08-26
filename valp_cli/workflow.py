@@ -10,6 +10,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from datetime import datetime, timedelta, timezone
@@ -24,14 +25,28 @@ from .control_contract import (
     validate_control_contract,
     validate_control_slice,
 )
+from .continuation import (
+    ContinuationError,
+    ContinuationStore,
+    HerdrCoordinatorContinueAdapter,
+    HerdrUnixSocketRpcClient,
+    build_envelope,
+    file_digest,
+    persist_content_addressed_evidence,
+)
+from .control_plane import InstallationCore, leader_installation_root
+from .cost_governance import enforce_cost_budget
 from .delegation import build_delegation_policy, validate_delegation_policy
 from .herdr_adapter import (
+    DONE_SESSION_REPROVISION_REQUIRED,
     HERDR_PANE_LIST_STDOUT_LIMIT,
     HerdrSubmissionError,
+    binding_has_verified_bootstrap_lifecycle,
     describe_herdr_submission,
     detect_herdr_session_provisioning_capability,
     detect_herdr_submission_capability,
     opaque_process_generation,
+    observe_herdr_terminal,
     provision_herdr_agent_session,
     submit_herdr_dispatch,
 )
@@ -41,6 +56,7 @@ from .model_identity import (
     model_evidence_score,
     model_identity_for,
     model_selection_for,
+    observation_freshness,
 )
 from .risk import classify_approval_risks
 from .submission import (
@@ -350,11 +366,79 @@ def read_json_lines_strict(path: Path) -> list[dict[str, Any]]:
 
 
 def load_dispatch_receipts(directory: Path, task_id: str) -> list[dict[str, Any]]:
+    adopted = [
+        adapter_id
+        for adapter_id in ("herdr", "queue", "manual", "langgraph")
+        if (directory / "runtime" / adapter_id / "adoption.json").is_file()
+    ]
+    if len(adopted) > 1:
+        raise SystemExit("Invalid dispatch receipt ledger: multiple runtime adoption markers")
+    if adopted:
+        try:
+            if adopted[0] == "langgraph":
+                from .langgraph_adapter import load_langgraph_v3_receipts
+
+                return load_langgraph_v3_receipts(directory)
+            from .runtime_adapters import load_runtime_v3_receipts, manual_effective_receipt_ids
+
+            receipts = load_runtime_v3_receipts(directory, adopted[0])
+            if adopted[0] == "manual":
+                manual_effective_receipt_ids(directory, task_id)
+            return receipts
+        except Exception as error:
+            raise SystemExit(f"Invalid adopted {adopted[0]} v3 receipt ledger: {error}") from error
     receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
     errors = deterministic_receipt_ledger_errors(receipts, task_id)
     if errors:
         raise SystemExit("Invalid dispatch receipt ledger: " + "; ".join(errors[:5]))
     return receipts
+
+
+def runtime_receipt_is_effective(
+    directory: Path,
+    task_id: str,
+    receipt: dict[str, Any],
+) -> bool:
+    if (
+        receipt.get("event") not in {
+            "manual_dispatch_written", "manual_delivery_attested",
+            "manual_result_attested", "manual_blocked",
+        }
+        or not (directory / "runtime" / "manual" / "adoption.json").is_file()
+    ):
+        return True
+    from .runtime_adapters import manual_receipt_is_effective
+
+    try:
+        return manual_receipt_is_effective(
+            directory, task_id, str(receipt.get("receipt_id") or "")
+        )
+    except Exception as error:
+        raise SystemExit(f"Invalid adopted manual v3 effective state: {error}") from error
+
+
+def runtime_v3_identity_available(directory: Path) -> bool:
+    try:
+        workspace = directory.resolve().parents[2]
+        installation = read_json(workspace / ".valp" / "installation.json")
+        state = read_json(workspace / ".valp" / "state.json")
+        policy = read_json(directory / "automation-policy.json")
+    except (IndexError, OSError):
+        return False
+    installation_id = installation.get("installation_id")
+    epoch = state.get("active_leader_epoch")
+    return bool(
+        installation.get("schema_version") == "valp-installation.v1"
+        and state.get("schema_version") == "valp-executable-state.v1"
+        and isinstance(installation_id, str)
+        and installation_id
+        and state.get("installation_id") == installation_id
+        and type(epoch) is int
+        and epoch >= 1
+        and installation.get("active_leader_epoch") == epoch
+        and policy.get("schema_version") == "valp-automation-policy.v1"
+        and policy.get("approval_required") is False
+    )
 
 
 def read_json_strict(path: Path) -> dict[str, Any]:
@@ -945,6 +1029,7 @@ def scan_workspace(
     capabilities = load_local_capabilities(root)
     overlay = load_local_overlay(root)
     agents = capabilities.get("agents") or {}
+    capabilities["agents"] = agents
     launch_argv_by_agent = capability_runtime_argv_by_agent(agents, "launch_argv")
     version_command_by_agent = capability_runtime_argv_by_agent(agents, "version_command")
     capabilities["runtime_preflight"] = collect_runtime_preflight(
@@ -960,10 +1045,68 @@ def scan_workspace(
     if overlay:
         write_json(root / ".herdr-loop" / "local-overlay.json", overlay)
     if task_id:
-        state_path = task_dir(root, task_id) / "state.json"
+        directory = task_dir(root, task_id)
+        state_path = directory / "state.json"
         state = read_json(state_path)
         if state:
-            state["status"] = "scanning_capabilities"
+            routing_path = directory / "routing.json"
+            routing = read_json(routing_path)
+            current_status = str(state.get("status") or "")
+            routed_task = bool(
+                state.get("selected_agents")
+                and routing
+            )
+            if current_status in {"new", "published"}:
+                state["status"] = "scanning_capabilities"
+            elif current_status == "scanning_capabilities" and routed_task:
+                state["status"] = "dispatching"
+            if routed_task:
+                selected_agents = [
+                    str(agent)
+                    for agent in routing.get("selected_agents") or []
+                    if str(agent).strip()
+                ]
+                session_projection = read_json(directory / "agent-sessions.json")
+                session_bindings = targeted_session_bindings(
+                    session_projection,
+                    selected_agents,
+                )
+                existing_matrix = routing.get("provider_matrix")
+                if (
+                    selected_agents
+                    and set(session_bindings) == set(selected_agents)
+                    and isinstance(existing_matrix, dict)
+                ):
+                    task_preflight = collect_runtime_preflight(
+                        selected_agents,
+                        runtime=runtime,
+                        session_bindings=session_bindings,
+                        launch_argv_by_agent=launch_argv_by_agent,
+                        version_command_by_agent=version_command_by_agent,
+                    )
+                    evaluated_at = now_iso()
+                    refreshed_matrix = provider_matrix_for(
+                        selected_agents,
+                        agents,
+                        overlay,
+                        task_preflight,
+                        evaluated_at=evaluated_at,
+                        dynamic_discovery_required=bool(
+                            (existing_matrix.get("model_awareness") or {}).get(
+                                "dynamic_discovery_required",
+                                resolve_runtime(runtime) != "manual",
+                            )
+                        ),
+                    )
+                    historical_preflight = (
+                        existing_matrix.get("runtime_preflight")
+                        or (routing.get("runtime_adapter") or {}).get("preflight")
+                        or read_json(directory / "runtime-preflight.json")
+                    )
+                    if historical_preflight:
+                        refreshed_matrix["runtime_preflight"] = historical_preflight
+                    routing["provider_matrix"] = refreshed_matrix
+                    write_json(routing_path, routing)
             state["source_provenance"] = refresh_source_provenance(
                 state,
                 invoked_entrypoint,
@@ -1059,7 +1202,7 @@ def _dispatch_usage_from_receipts(
     task_id: str,
 ) -> dict[str, int]:
     budgets = routing.get("dispatch_payload_budgets") or {}
-    records = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
+    records = load_dispatch_receipts(directory, task_id)
     submitted = [
         (line_number, record)
         for line_number, record in enumerate(records, 1)
@@ -1334,7 +1477,7 @@ def late_owned_session_model_readiness_recovery_pending(
     target_work_items = {f"{role}:{agent}" for agent, role in phases}
     target_agents = {agent for agent, _role in phases}
     try:
-        dispatch_receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
+        dispatch_receipts = load_dispatch_receipts(directory, task_id)
         session_receipts = read_json_lines_strict(directory / "agent-session-receipts.jsonl")
         timeline_events = read_json_lines_strict(directory / "timeline.jsonl")
     except SystemExit:
@@ -1417,9 +1560,56 @@ def runtime_dispatch_retry_pending(
     phases: list[tuple[str, str]] | None = None,
 ) -> bool:
     budget = read_json(directory / "iteration-budget.json")
+    if (
+        runtime_kind == "herdr"
+        and state.get("status") == "blocked"
+        and budget.get("status") == "blocked"
+        and int((budget.get("usage") or {}).get("dispatches") or 0) == 0
+        and not any(
+            receipt.get("event") in DELIVERY_RECEIPT_EVENTS
+            for receipt in load_dispatch_receipts(
+                directory,
+                str(state.get("task_id") or directory.name),
+            )
+        )
+    ):
+        recorded_preflight = read_json(directory / "runtime-preflight.json")
+        routed_preflight = (
+            (read_json(directory / "routing.json").get("runtime_adapter") or {}).get(
+                "preflight"
+            )
+            or {}
+        )
+        state_preflight = (
+            (state.get("runtime_adapter") or {}).get("preflight") or {}
+        )
+        preflight_statuses = {
+            recorded_preflight.get("status"),
+            routed_preflight.get("status"),
+            state_preflight.get("status"),
+        }
+        blocking_gate_values = {"blocked", "failed", "needs_approval"}
+        orphaned_pre_delivery_block = (
+            budget.get("stop_reason") == "task status is blocked"
+            and "pass" not in preflight_statuses
+            and "warn" in preflight_statuses
+            and not set((state.get("gates") or {}).values()).intersection(
+                blocking_gate_values
+            )
+            and not state.get("capabilities_missing")
+            and read_json(directory / "assignment-validation.json").get("status")
+            == "pass"
+        )
+        if (
+            recorded_preflight.get("status") == "fail"
+            or routed_preflight.get("status") == "fail"
+            or state_preflight.get("status") == "fail"
+            or orphaned_pre_delivery_block
+        ):
+            return True
     if not (
         runtime_kind == "herdr"
-        and state.get("status") == "dispatching"
+        and state.get("status") in {"dispatching", "executing"}
         and budget.get("status") == "blocked"
     ):
         return False
@@ -1469,7 +1659,7 @@ def owned_session_launch_replacement_pending(
     agent, role = phases[0]
     work_item_id = f"{role}:{agent}"
     try:
-        receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
+        receipts = load_dispatch_receipts(directory, str(state.get("task_id") or directory.name))
         timeline = read_json_lines_strict(directory / "timeline.jsonl")
     except SystemExit:
         return False
@@ -1508,12 +1698,20 @@ def resume_runtime_dispatch_retry(
     with task_state_lock(directory):
         state = read_json(directory / "state.json")
         budget = read_json(directory / "iteration-budget.json")
+        pre_delivery_route_recovery = (
+            state.get("status") == "blocked"
+            and runtime_dispatch_retry_pending(directory, state, "herdr", phases)
+        )
         retry_state_matches = (
             budget.get("status") == "blocked"
             and budget.get("stop_reason") == expected_stop_reason
         ) if expected_stop_reason else runtime_dispatch_retry_pending(directory, state, "herdr")
         if not retry_state_matches:
             raise SystemExit("Runtime dispatch retry state changed before recovery")
+        if pre_delivery_route_recovery:
+            state["status"] = "dispatching"
+            state["updated_at"] = now_iso()
+            write_json(directory / "state.json", state)
         budget["status"] = "active"
         budget["stop_reason"] = None
         write_json(directory / "iteration-budget.json", budget)
@@ -1527,6 +1725,720 @@ def resume_runtime_dispatch_retry(
         return budget
 
 
+def record_verified_bootstrap_lifecycle(
+    directory: Path,
+    agent: str,
+    evidence_ref: str,
+) -> dict[str, Any]:
+    relative_ref = Path(evidence_ref)
+    if relative_ref.is_absolute() or ".." in relative_ref.parts:
+        raise HerdrSubmissionError("Bootstrap verification evidence must be task-local")
+    evidence_path = (directory / relative_ref).resolve()
+    try:
+        evidence_path.relative_to(directory.resolve())
+    except ValueError as exc:
+        raise HerdrSubmissionError("Bootstrap verification evidence must be task-local") from exc
+
+    with task_state_lock(directory):
+        projection = read_json_strict(directory / "agent-sessions.json")
+        bindings = projection.get("bindings")
+        binding = bindings.get(agent) if isinstance(bindings, dict) else None
+        task_id = str(projection.get("task_id") or "").strip()
+        if (
+            projection.get("schema_version") != "valp-agent-sessions.v1"
+            or projection.get("adapter") != "herdr"
+            or projection.get("status") != "ready"
+            or not task_id
+            or not isinstance(binding, dict)
+            or binding.get("agent") != agent
+            or binding.get("lifecycle") != "provisioned"
+            or binding.get("dispatch_eligible") is not True
+            or ((binding.get("ownership") or {}).get("task_id") != task_id)
+        ):
+            raise HerdrSubmissionError("Bootstrap verification has no eligible task-owned session")
+
+        evidence = read_json_strict(evidence_path)
+        target = evidence.get("target") if isinstance(evidence.get("target"), dict) else {}
+        native_turn = (
+            evidence.get("native_turn")
+            if isinstance(evidence.get("native_turn"), dict)
+            else {}
+        )
+        runtime_after = (
+            evidence.get("runtime_after")
+            if isinstance(evidence.get("runtime_after"), dict)
+            else {}
+        )
+        structured_observation = (
+            evidence.get("structured_observation")
+            if isinstance(evidence.get("structured_observation"), dict)
+            else {}
+        )
+        response_proof = (
+            evidence.get("response_proof")
+            if isinstance(evidence.get("response_proof"), dict)
+            else {}
+        )
+        runtime_before = (
+            evidence.get("runtime_before")
+            if isinstance(evidence.get("runtime_before"), dict)
+            else {}
+        )
+        pane_id = str(((binding.get("runtime_identity") or {}).get("pane_id")) or "")
+        native_session_id = str(target.get("native_session_id") or "").strip()
+        task_complete_timestamps = structured_observation.get("task_complete_timestamps")
+        normalized_response_proof = _normalize_herdr_bootstrap_response(
+            response_proof.get("raw_matched_line")
+        )
+        renderer_response_proof = (
+            normalized_response_proof is not None
+            and normalized_response_proof[0] == native_turn.get("actual_response")
+            and normalized_response_proof[1] == response_proof.get("renderer_envelope")
+        )
+        idle_native_completion = (
+            runtime_after.get("agent_status") == "idle"
+            and isinstance(task_complete_timestamps, list)
+            and bool(task_complete_timestamps)
+            and all(
+                isinstance(timestamp, str) and bool(timestamp.strip())
+                for timestamp in task_complete_timestamps
+            )
+            and native_turn.get("completed_turn_count") == len(task_complete_timestamps)
+            and native_turn.get("aborted_turn_count") == 0
+            and structured_observation.get("session_id") == native_session_id
+            and all(
+                _concrete_bootstrap_model_value(value)
+                for value in (
+                    native_turn.get("model"),
+                    native_turn.get("provider"),
+                    native_turn.get("reasoning_mode"),
+                    structured_observation.get("model_id"),
+                    structured_observation.get("provider"),
+                    structured_observation.get("reasoning_mode"),
+                )
+            )
+            and structured_observation.get("model_id") == native_turn.get("model")
+            and structured_observation.get("provider") == native_turn.get("provider")
+            and structured_observation.get("reasoning_mode")
+            == native_turn.get("reasoning_mode")
+        )
+        atomic_idle_completion = (
+            runtime_after.get("agent_status") == "idle"
+            and response_proof.get("authority") == "response_only_not_identity_or_model"
+            and renderer_response_proof
+            and type(runtime_before.get("state_change_seq")) is int
+            and type(runtime_after.get("state_change_seq")) is int
+            and runtime_after["state_change_seq"] > runtime_before["state_change_seq"]
+            and native_turn.get("completed_turn_count") == 1
+            and native_turn.get("aborted_turn_count") == 0
+            and structured_observation.get("session_id") == native_session_id
+            and all(
+                _concrete_bootstrap_model_value(value)
+                for value in (
+                    native_turn.get("model"),
+                    native_turn.get("provider"),
+                    native_turn.get("reasoning_mode"),
+                    structured_observation.get("model_id"),
+                    structured_observation.get("provider"),
+                    structured_observation.get("reasoning_mode"),
+                )
+            )
+            and structured_observation.get("model_id") == native_turn.get("model")
+            and structured_observation.get("provider") == native_turn.get("provider")
+            and structured_observation.get("reasoning_mode")
+            == native_turn.get("reasoning_mode")
+        )
+        valid = all(
+            (
+                evidence.get("schema_version") == "valp-bootstrap-probe-result.v1",
+                evidence.get("task_id") == task_id,
+                evidence.get("classification") == "non_task_bootstrap_probe",
+                evidence.get("accepted") is True,
+                evidence.get("formal_dispatch_count") == 0,
+                target.get("agent") == agent,
+                target.get("generation") == binding.get("generation"),
+                target.get("pane_id") == pane_id,
+                bool(native_session_id),
+                native_turn.get("expected_response") == "BOOTSTRAP_READY",
+                native_turn.get("actual_response") == "BOOTSTRAP_READY",
+                "error" in native_turn and native_turn.get("error") is None,
+                runtime_after.get("agent_status") == "done"
+                or idle_native_completion
+                or atomic_idle_completion,
+                runtime_after.get("readiness_status") == "ready",
+                runtime_after.get("prompt_eligible") is True,
+                runtime_after.get("session_identity_status") == "known",
+                runtime_after.get("model_probe_status") == "observed",
+            )
+        )
+        if not valid:
+            raise HerdrSubmissionError(
+                "Bootstrap verification evidence does not match the exact task-owned session"
+            )
+
+        verification = {
+            "status": "verified",
+            "evidence_ref": evidence_ref,
+            "generation": binding["generation"],
+            "pane_id": pane_id,
+            "native_session_id": native_session_id,
+            "expected_response": "BOOTSTRAP_READY",
+            "actual_response": "BOOTSTRAP_READY",
+            "native_turn_error": None,
+            "session_identity_status": "known",
+            "model_probe_status": "observed",
+        }
+        binding["lifecycle"] = "bootstrap_ready"
+        binding["bootstrap_verification"] = verification
+        projection["updated_at"] = now_iso()
+        write_json(directory / "agent-sessions.json", projection)
+
+        receipts_path = directory / "agent-session-receipts.jsonl"
+        receipts = read_json_lines_strict(receipts_path)
+        sequence = max(
+            (
+                int(record.get("event_sequence"))
+                for record in receipts
+                if type(record.get("event_sequence")) is int
+            ),
+            default=0,
+        )
+        append_json_line_durable(
+            receipts_path,
+            {
+                "schema_version": "valp-agent-session-receipt.v1",
+                "adapter": "herdr",
+                "task_id": task_id,
+                "event_sequence": sequence + 1,
+                "ts": now_iso(),
+                "agent": agent,
+                "event": "agent_session_bootstrap_verified",
+                "binding_ref": "agent-sessions.json",
+                "generation": binding["generation"],
+                "identity_token": (binding.get("runtime_identity") or {}).get("token"),
+                "evidence_ref": evidence_ref,
+                "native_session_id": native_session_id,
+            },
+        )
+        return projection
+
+
+def _bootstrap_readiness(
+    herdr: str,
+    pane_id: str,
+    run_command_fn: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    result = run_command_fn(
+        [herdr, "agent", "readiness", pane_id],
+        timeout=5.0,
+    )
+    response = parse_json_stdout(result)
+    payload = response.get("result") if isinstance(response, dict) else None
+    readiness = payload.get("readiness") if isinstance(payload, dict) else None
+    if not (
+        result.get("ok") is True
+        and isinstance(payload, dict)
+        and payload.get("type") == "agent_readiness"
+        and isinstance(readiness, dict)
+        and readiness.get("schema_version") == "valp-named-agent-readiness.v1"
+        and type(readiness.get("state_change_seq")) is int
+    ):
+        raise HerdrSubmissionError("HERDR bootstrap readiness response is unavailable or malformed")
+    return dict(readiness)
+
+
+def _bootstrap_agent_info(
+    result: dict[str, Any],
+    *,
+    expected_type: str,
+    action: str,
+) -> dict[str, Any]:
+    response = parse_json_stdout(result)
+    payload = response.get("result") if isinstance(response, dict) else None
+    agent_info = payload.get("agent") if isinstance(payload, dict) else None
+    if not (
+        result.get("ok") is True
+        and isinstance(payload, dict)
+        and payload.get("type") == expected_type
+        and isinstance(agent_info, dict)
+        and all(
+            isinstance(agent_info.get(field), str) and bool(agent_info[field].strip())
+            for field in ("terminal_id", "name", "agent", "pane_id", "agent_status")
+        )
+        and type(agent_info.get("state_change_seq")) is int
+    ):
+        raise HerdrSubmissionError(f"{action} response is unavailable or malformed")
+    return dict(agent_info)
+
+
+HERDR_BOOTSTRAP_RESPONSE_REGEX = r"^(?:BOOTSTRAP_READY|• BOOTSTRAP_READY|⏺ BOOTSTRAP_READY)$"
+HERDR_BOOTSTRAP_RESPONSE_ENVELOPES = {
+    "BOOTSTRAP_READY": "bare",
+    "• BOOTSTRAP_READY": "codex_list_marker",
+    "⏺ BOOTSTRAP_READY": "claude_action_marker",
+}
+HERDR_BOOTSTRAP_MODEL_PLACEHOLDERS = {
+    "none",
+    "null",
+    "unavailable",
+    "unknown",
+    "unsupported",
+}
+
+
+def _normalize_herdr_bootstrap_response(line: object) -> tuple[str, str] | None:
+    if not isinstance(line, str):
+        return None
+    envelope = HERDR_BOOTSTRAP_RESPONSE_ENVELOPES.get(line)
+    if envelope is None:
+        return None
+    return "BOOTSTRAP_READY", envelope
+
+
+def _concrete_bootstrap_model_value(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and value.strip().lower() not in HERDR_BOOTSTRAP_MODEL_PLACEHOLDERS
+    )
+
+
+def bootstrap_task_owned_herdr_session(
+    directory: Path,
+    task_id: str,
+    agent: str,
+    binding: dict[str, Any],
+    *,
+    herdr: str = "herdr",
+    run_command_fn: Callable[..., dict[str, Any]] = run_command,
+    timeout_seconds: float = 30.0,
+    poll_interval_seconds: float = 0.25,
+) -> dict[str, Any]:
+    """Bootstrap native session/model evidence without producing formal dispatch evidence."""
+
+    if agent not in {"codex", "claude", "hermes"}:
+        raise HerdrSubmissionError("HERDR bootstrap probe is unsupported for this Agent")
+    if timeout_seconds < 0 or poll_interval_seconds < 0:
+        raise HerdrSubmissionError("HERDR bootstrap probe timing must be non-negative")
+
+    projection = read_json_strict(directory / "agent-sessions.json")
+    bindings = projection.get("bindings")
+    projected = bindings.get(agent) if isinstance(bindings, dict) else None
+    if (
+        projection.get("schema_version") != "valp-agent-sessions.v1"
+        or projection.get("task_id") != task_id
+        or projection.get("adapter") != "herdr"
+        or projection.get("status") != "ready"
+        or not isinstance(projected, dict)
+        or projected != binding
+    ):
+        raise HerdrSubmissionError("HERDR bootstrap binding projection is missing or changed")
+    if binding_has_verified_bootstrap_lifecycle(projected):
+        evidence_ref = str((projected.get("bootstrap_verification") or {}).get("evidence_ref") or "")
+        if not evidence_ref or not (directory / evidence_ref).is_file():
+            raise HerdrSubmissionError("Verified HERDR bootstrap evidence is missing")
+        return projection
+
+    identity = projected.get("runtime_identity")
+    ownership = projected.get("ownership")
+    runtime_scope = projected.get("runtime_scope")
+    generation = projected.get("generation")
+    pane_id = str((identity or {}).get("pane_id") or "").strip()
+    if (
+        projected.get("agent") != agent
+        or projected.get("lifecycle") != "provisioned"
+        or projected.get("dispatch_eligible") is not True
+        or type(generation) is not int
+        or generation < 1
+        or not isinstance(ownership, dict)
+        or ownership.get("scope") != "task"
+        or ownership.get("task_id") != task_id
+        or not isinstance(identity, dict)
+        or not pane_id
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(identity.get("token") or ""))
+        or (
+            isinstance(runtime_scope, dict)
+            and runtime_scope.get("ownership") != "task"
+        )
+    ):
+        raise HerdrSubmissionError("HERDR bootstrap has no exact eligible task-owned binding")
+
+    contract_path = directory / CONTROL_CONTRACT_REF
+    contract = read_json_strict(contract_path)
+    contract_errors = validate_control_contract(contract, task_id)
+    digest = control_contract_digest(contract, contract_path.read_bytes())
+    slice_path = directory / "control-slices" / f"{agent}.json"
+    control_slice = read_json_strict(slice_path)
+    work_item_ids = control_slice.get("work_item_ids")
+    if not isinstance(work_item_ids, list):
+        work_item_ids = []
+    slice_errors = validate_control_slice(
+        control_slice,
+        task_id,
+        agent,
+        work_item_ids,
+        digest,
+    )
+    if contract_errors or slice_errors:
+        raise HerdrSubmissionError(
+            "HERDR bootstrap control contract or slice is invalid: "
+            + "; ".join(contract_errors + slice_errors)
+        )
+
+    receipts = read_json_lines_strict(directory / "dispatch-receipts.jsonl")
+    current_generation_receipts = []
+    for receipt in receipts:
+        if receipt.get("event") not in DELIVERY_RECEIPT_EVENTS:
+            continue
+        if receipt.get("agent") != agent:
+            if not isinstance(receipt.get("agent"), str):
+                raise HerdrSubmissionError(
+                    "HERDR bootstrap cannot classify an unbound formal delivery receipt"
+                )
+            continue
+        proof = receipt.get("proof") if isinstance(receipt.get("proof"), dict) else {}
+        session_binding = (
+            proof.get("session_binding")
+            if isinstance(proof.get("session_binding"), dict)
+            else {}
+        )
+        receipt_generation = session_binding.get("generation")
+        if type(receipt_generation) is not int:
+            raise HerdrSubmissionError(
+                "HERDR bootstrap cannot classify a formal delivery receipt without binding generation"
+            )
+        if receipt_generation == generation:
+            current_generation_receipts.append(receipt)
+    if current_generation_receipts:
+        raise HerdrSubmissionError(
+            "HERDR bootstrap cannot follow a formal delivery receipt for the current binding generation"
+        )
+    formal_dispatch_count = len(current_generation_receipts)
+
+    evidence_ref = f"evidence/bootstrap-probe-{agent}-g{generation}.json"
+    evidence_path = directory / evidence_ref
+    if evidence_path.exists():
+        raise HerdrSubmissionError("HERDR bootstrap probe was already attempted without verification")
+
+    readiness_before = _bootstrap_readiness(herdr, pane_id, run_command_fn)
+    session_before = readiness_before.get("session_identity")
+    session_before_identity = (
+        session_before.get("identity")
+        if isinstance(session_before, dict)
+        and isinstance(session_before.get("identity"), dict)
+        else {}
+    )
+    native_session_before = str(session_before_identity.get("value") or "").strip()
+    common_ready = (
+        readiness_before.get("addressable") is True
+        and readiness_before.get("detected_agent") == agent
+        and readiness_before.get("agent_status") in {"idle", "done"}
+        and readiness_before.get("interactive_ready") is True
+    )
+    codex_bootstrap_ready = (
+        agent == "codex"
+        and common_ready
+        and readiness_before.get("ready") is False
+        and readiness_before.get("reason_code") == "session_identity_unknown"
+        and readiness_before.get("prompt_eligible") is False
+        and isinstance(session_before, dict)
+        and session_before.get("status") == "unknown"
+        and not session_before.get("identity")
+    )
+    hermes_bootstrap_ready = (
+        agent == "hermes"
+        and common_ready
+        and readiness_before.get("ready") is False
+        and readiness_before.get("reason_code") == "session_identity_unknown"
+        and readiness_before.get("prompt_eligible") is False
+        and isinstance(session_before, dict)
+        and session_before.get("status") == "unknown"
+        and not session_before.get("identity")
+    )
+    model_observation_bootstrap_ready = (
+        agent == "claude"
+        and common_ready
+        and readiness_before.get("ready") is True
+        and readiness_before.get("reason_code") == "ready"
+        and readiness_before.get("prompt_eligible") is True
+        and isinstance(session_before, dict)
+        and session_before.get("status") == "known"
+        and session_before_identity.get("source") == "herdr:claude"
+        and session_before_identity.get("agent") == "claude"
+        and session_before_identity.get("kind") == "id"
+        and bool(native_session_before)
+    )
+    if not (
+        codex_bootstrap_ready
+        or hermes_bootstrap_ready
+        or model_observation_bootstrap_ready
+    ):
+        raise HerdrSubmissionError("HERDR bootstrap readiness is not the exact session_identity_unknown state")
+
+    if agent in {"claude", "hermes"}:
+        model_before = herdr_model_probe_with_runner(
+            herdr,
+            pane_id,
+            run_command_fn,
+        )
+        if (
+            model_before.get("status") != "unsupported"
+            or any(
+                field in model_before
+                for field in ("model", "session_identity", "observed_at")
+            )
+        ):
+            raise HerdrSubmissionError(
+                "HERDR model bootstrap requires an unobserved pre-turn model state"
+            )
+
+    baseline_result = run_command_fn(
+        [herdr, "agent", "get", pane_id],
+        timeout=5.0,
+    )
+    baseline = _bootstrap_agent_info(
+        baseline_result,
+        expected_type="agent_info",
+        action="HERDR bootstrap baseline",
+    )
+    bound_terminal_id = str(identity.get("terminal_id") or "").strip()
+    if (
+        baseline.get("pane_id") != pane_id
+        or baseline.get("agent") != agent
+        or baseline.get("agent_status") not in {"idle", "done"}
+        or baseline.get("state_change_seq") != readiness_before.get("state_change_seq")
+        or (bound_terminal_id and baseline.get("terminal_id") != bound_terminal_id)
+    ):
+        raise HerdrSubmissionError("HERDR bootstrap baseline does not match the bound settled session")
+
+    prior_output = run_command_fn(
+        [herdr, "pane", "read", pane_id, "--source", "recent-unwrapped", "--lines", "200"],
+        timeout=5.0,
+        stdout_limit=32768,
+    )
+    if prior_output.get("ok") is not True:
+        raise HerdrSubmissionError("HERDR bootstrap could not inspect pre-existing pane output")
+    if any(
+        _normalize_herdr_bootstrap_response(line) is not None
+        for line in str(prior_output.get("stdout") or "").splitlines()
+    ):
+        raise HerdrSubmissionError("HERDR bootstrap rejects a pre-existing BOOTSTRAP_READY response")
+
+    compact_slice = json.dumps(
+        control_slice,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    prompt = (
+        "[VALP CONTROL SLICE]\n"
+        + compact_slice
+        + "\n[/VALP CONTROL SLICE]\n"
+        "This is a one-time non-task bootstrap probe. Do not perform task work.\n"
+        "Resolve control_contract_ref relative to this task directory: "
+        + str(directory.resolve())
+        + "\n"
+        "Load and honor the control slice, then respond with exactly BOOTSTRAP_READY and nothing else.\n"
+    )
+    write_json(
+        evidence_path,
+        {
+            "schema_version": "valp-bootstrap-probe-result.v1",
+            "task_id": task_id,
+            "target": {"agent": agent, "pane_id": pane_id, "generation": generation},
+            "classification": "non_task_bootstrap_probe",
+            "formal_dispatch_count": formal_dispatch_count,
+            "accepted": False,
+            "status": "attempt_recorded",
+            "control_contract": {"ref": CONTROL_CONTRACT_REF, "digest": digest},
+            "control_slice_ref": f"control-slices/{agent}.json",
+        },
+    )
+
+    timeout_ms = max(1, int(timeout_seconds * 1000))
+    prompt_result = run_command_fn(
+        [
+            herdr,
+            "agent",
+            "prompt",
+            pane_id,
+            prompt,
+            "--wait",
+            "--until",
+            "done",
+            "--until",
+            "idle",
+            "--timeout",
+            str(timeout_ms),
+        ],
+        timeout=max(5.0, timeout_seconds + 1.0),
+    )
+    prompted = _bootstrap_agent_info(
+        prompt_result,
+        expected_type="agent_prompted",
+        action="atomic HERDR bootstrap prompt",
+    )
+    if (
+        any(prompted.get(field) != baseline.get(field) for field in ("terminal_id", "name", "agent", "pane_id"))
+        or prompted.get("agent_status") not in {"idle", "done"}
+        or prompted.get("state_change_seq") <= baseline.get("state_change_seq")
+    ):
+        raise HerdrSubmissionError("Atomic HERDR bootstrap prompt did not settle on the bound advanced session")
+
+    response_result = run_command_fn(
+        [
+            herdr,
+            "pane",
+            "wait-output",
+            pane_id,
+            "--regex",
+            HERDR_BOOTSTRAP_RESPONSE_REGEX,
+            "--source",
+            "recent-unwrapped",
+            "--lines",
+            "200",
+            "--timeout",
+            str(timeout_ms),
+        ],
+        timeout=max(5.0, timeout_seconds + 1.0),
+        stdout_limit=32768,
+    )
+    response = parse_json_stdout(response_result)
+    response_payload = response.get("result") if isinstance(response, dict) else None
+    matched_line = response_payload.get("matched_line") if isinstance(response_payload, dict) else None
+    normalized_response = _normalize_herdr_bootstrap_response(matched_line)
+    if not (
+        response_result.get("ok") is True
+        and isinstance(response_payload, dict)
+        and response_payload.get("type") == "output_matched"
+        and normalized_response is not None
+        and response_payload.get("pane_id") in {None, pane_id}
+    ):
+        raise HerdrSubmissionError("HERDR bootstrap exact response was not proven")
+    normalized_line, renderer_envelope = normalized_response
+
+    deadline = time.monotonic() + timeout_seconds
+    readiness_after: dict[str, Any] | None = None
+    model_probe: dict[str, Any] | None = None
+    native_session_id = ""
+    while True:
+        candidate_readiness = _bootstrap_readiness(herdr, pane_id, run_command_fn)
+        candidate_session = candidate_readiness.get("session_identity")
+        candidate_identity = (
+            candidate_session.get("identity")
+            if isinstance(candidate_session, dict)
+            and isinstance(candidate_session.get("identity"), dict)
+            else {}
+        )
+        candidate_native_id = str(candidate_identity.get("value") or "").strip()
+        candidate_probe = herdr_model_probe_with_runner(
+            herdr,
+            pane_id,
+            run_command_fn,
+        )
+        probe_session = candidate_probe.get("session_identity")
+        probe_freshness, _probe_age = observation_freshness(
+            candidate_probe.get("observed_at"),
+            evaluated_at=now_iso(),
+            ttl_seconds=bounded_observation_ttl(candidate_probe.get("ttl_seconds")),
+        )
+        native_session_digest = hashlib.sha256(
+            candidate_native_id.encode("utf-8")
+        ).hexdigest()
+        same_session = (
+            isinstance(probe_session, dict)
+            and probe_session.get("status") == "known"
+            and probe_session.get("token") == f"sha256:{native_session_digest}"
+            and probe_session.get("generation")
+            == f"session:{native_session_digest[:16]}"
+        )
+        same_native_session = (
+            not native_session_before or candidate_native_id == native_session_before
+        )
+        if (
+            candidate_readiness.get("ready") is True
+            and candidate_readiness.get("reason_code") == "ready"
+            and candidate_readiness.get("addressable") is True
+            and candidate_readiness.get("detected_agent") == agent
+            and candidate_readiness.get("agent_status") in {"idle", "done"}
+            and candidate_readiness.get("interactive_ready") is True
+            and candidate_readiness.get("prompt_eligible") is True
+            and isinstance(candidate_session, dict)
+            and candidate_session.get("status") == "known"
+            and candidate_native_id
+            and candidate_readiness.get("state_change_seq") > baseline.get("state_change_seq")
+            and candidate_probe.get("status") == "observed"
+            and probe_freshness == "current"
+            and same_session
+            and same_native_session
+        ):
+            readiness_after = candidate_readiness
+            model_probe = candidate_probe
+            native_session_id = candidate_native_id
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise HerdrSubmissionError("HERDR bootstrap did not produce matching native session and model evidence")
+        time.sleep(min(poll_interval_seconds, remaining))
+
+    model = model_probe.get("model") if isinstance(model_probe.get("model"), dict) else {}
+    if not all(
+        _concrete_bootstrap_model_value(model.get(field))
+        for field in ("model_id", "provider", "reasoning_mode")
+    ):
+        raise HerdrSubmissionError("HERDR bootstrap structured model observation is incomplete")
+    evidence = {
+        "schema_version": "valp-bootstrap-probe-result.v1",
+        "task_id": task_id,
+        "target": {
+            "agent": agent,
+            "pane_id": pane_id,
+            "generation": generation,
+            "native_session_id": native_session_id,
+        },
+        "classification": "non_task_bootstrap_probe",
+        "control_contract": {"ref": CONTROL_CONTRACT_REF, "digest": digest},
+        "control_slice_ref": f"control-slices/{agent}.json",
+        "native_turn": {
+            "expected_response": "BOOTSTRAP_READY",
+            "actual_response": normalized_line,
+            "error": None,
+            "model": model["model_id"],
+            "provider": model["provider"],
+            "reasoning_mode": model["reasoning_mode"],
+            "completed_turn_count": 1,
+            "aborted_turn_count": 0,
+        },
+        "response_proof": {
+            "source": "HERDR pane wait-output renderer-aware anchored exact-line match",
+            "authority": "response_only_not_identity_or_model",
+            "raw_matched_line": matched_line,
+            "renderer_envelope": renderer_envelope,
+        },
+        "runtime_before": readiness_before,
+        "runtime_after": {
+            "agent_status": readiness_after["agent_status"],
+            "readiness_status": readiness_after["reason_code"],
+            "prompt_eligible": readiness_after["prompt_eligible"],
+            "session_identity_status": readiness_after["session_identity"]["status"],
+            "state_change_seq": readiness_after["state_change_seq"],
+            "model_probe_status": model_probe["status"],
+        },
+        "structured_observation": {
+            "session_id": native_session_id,
+            "model_id": model["model_id"],
+            "provider": model["provider"],
+            "reasoning_mode": model["reasoning_mode"],
+            "observed_at": model_probe.get("observed_at"),
+            "task_complete_timestamps": [],
+        },
+        "formal_dispatch_count": formal_dispatch_count,
+        "accepted": True,
+    }
+    write_json(evidence_path, evidence)
+    return record_verified_bootstrap_lifecycle(directory, agent, evidence_ref)
+
+
 def await_owned_session_model_preflight(
     agent_names: list[str],
     runtime_kind: str,
@@ -1534,36 +2446,64 @@ def await_owned_session_model_preflight(
     initial_preflight: dict[str, Any],
     *,
     version_command_by_agent: dict[str, list[str]] | None = None,
-    max_attempts: int = 20,
+    max_attempts: int | None = None,
     interval_seconds: float = 0.25,
+    timeout_seconds: float = 30.0,
 ) -> dict[str, Any]:
+    def with_task_owned_launch_observations(preflight_record: dict[str, Any]) -> dict[str, Any]:
+        records = preflight_record.get("agents") or {}
+        for agent in agent_names:
+            record = records.get(agent) if isinstance(records, dict) else None
+            binding = session_bindings.get(agent)
+            if not isinstance(record, dict) or not isinstance(binding, dict):
+                continue
+            attestation = launch_attestation_from_task_owned_binding(
+                agent,
+                binding,
+                record.get("model_probe"),
+            )
+            if attestation is not None:
+                record["launch_attestation"] = attestation
+        return preflight_record
+
     def pending_agents(preflight_record: dict[str, Any]) -> list[str]:
         pending: list[str] = []
         for agent in agent_names:
             agent_record = ((preflight_record.get("agents") or {}).get(agent) or {})
             probe = agent_record.get("model_probe") or {}
             agent_status = str(agent_record.get("agent_status") or "unknown").strip().lower()
+            accepted_status = agent_status in {"idle", "working"} or (
+                agent_status == "done"
+                and binding_has_verified_bootstrap_lifecycle(session_bindings.get(agent))
+            )
             if (
                 probe.get("status") != "observed"
                 or (probe.get("session_identity") or {}).get("status") != "known"
-                or agent_status not in {"idle", "working"}
+                or not accepted_status
             ):
                 pending.append(agent)
         return pending
 
-    preflight = initial_preflight
+    preflight = with_task_owned_launch_observations(initial_preflight)
     attempts = 1
-    while attempts < max_attempts:
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
         pending = pending_agents(preflight)
         if not pending:
             break
-        time.sleep(interval_seconds)
+        if max_attempts is not None and attempts >= max_attempts:
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(interval_seconds, remaining))
         preflight = collect_runtime_preflight(
             agent_names,
             runtime=runtime_kind,
             session_bindings=session_bindings,
             version_command_by_agent=version_command_by_agent,
         )
+        preflight = with_task_owned_launch_observations(preflight)
         attempts += 1
     pending = pending_agents(preflight)
     preflight.setdefault("checks", {})["owned_session_model_readiness"] = {
@@ -1572,6 +2512,18 @@ def await_owned_session_model_preflight(
         "pending_agents": pending,
     }
     return preflight
+
+
+def targeted_session_bindings(
+    session_projection: dict[str, Any],
+    targets: list[str],
+) -> dict[str, Any]:
+    bindings = session_projection.get("bindings") or {}
+    return {
+        agent: bindings[agent]
+        for agent in targets
+        if isinstance(bindings.get(agent), dict)
+    }
 
 
 def merge_task_owned_runtime_preflight(
@@ -3124,7 +4076,12 @@ def route_task(
     routing["dispatch_payload_budgets"] = dispatch_payload_budgets
     write_json(directory / "routing.json", routing)
     refresh_iteration_budget(directory, routing, iteration_budget, reroute_count)
-    append_dispatch_written_receipts(directory, selected_agents, expected_by_agent)
+    append_dispatch_written_receipts(
+        directory,
+        selected_agents,
+        expected_by_agent,
+        runtime_adapter_id=str((routing.get("runtime_adapter") or {}).get("id") or ""),
+    )
     state.update(
         {
             "profile": profile,
@@ -3485,6 +4442,7 @@ def ensure_herdr_agent_sessions(
     capabilities: dict[str, Any],
     *,
     allow_launch_argv_change: bool = False,
+    allow_done_session_reprovision: bool = False,
 ) -> dict[str, Any]:
     herdr = shutil.which("herdr")
     if not herdr:
@@ -3531,6 +4489,7 @@ def ensure_herdr_agent_sessions(
             if record.get("event") not in {
                 "agent_session_provisioned",
                 "agent_session_reused",
+                "agent_session_bootstrap_verified",
             }:
                 receipt_errors.append(f"line {index} has an invalid event")
             if record.get("binding_ref") != "agent-sessions.json":
@@ -3542,7 +4501,10 @@ def ensure_herdr_agent_sessions(
                 str(record.get("identity_token") or ""),
             ):
                 receipt_errors.append(f"line {index} has an invalid identity token")
-            if record.get("focused_at_provisioning") is not False:
+            if (
+                record.get("event") != "agent_session_bootstrap_verified"
+                and record.get("focused_at_provisioning") is not False
+            ):
                 receipt_errors.append(
                     f"line {index} does not prove non-focused provisioning"
                 )
@@ -3607,6 +4569,33 @@ def ensure_herdr_agent_sessions(
                 receipt_errors.append(
                     f"{agent}: current binding has no matching provisioning receipt"
                 )
+            elif binding.get("provisioned_at") and (
+                current_provisioning_receipt.get("ts") != binding.get("provisioned_at")
+            ):
+                receipt_errors.append(
+                    f"{agent}: provisioning timestamp does not match the immutable receipt"
+                )
+            if binding.get("lifecycle") == "bootstrap_ready":
+                verification = binding.get("bootstrap_verification") or {}
+                bootstrap_receipts = [
+                    record
+                    for record in receipts
+                    if record.get("agent") == agent
+                    and record.get("event") == "agent_session_bootstrap_verified"
+                    and record.get("generation") == generation
+                ]
+                if (
+                    not binding_has_verified_bootstrap_lifecycle(binding)
+                    or len(bootstrap_receipts) != 1
+                    or bootstrap_receipts[0].get("identity_token") != identity.get("token")
+                    or bootstrap_receipts[0].get("evidence_ref")
+                    != verification.get("evidence_ref")
+                    or bootstrap_receipts[0].get("native_session_id")
+                    != verification.get("native_session_id")
+                ):
+                    receipt_errors.append(
+                        f"{agent}: verified bootstrap lifecycle has no matching receipt"
+                    )
         if receipt_errors:
             raise HerdrSubmissionError(
                 "HERDR task-owned session receipt ledger conflicts: "
@@ -3635,11 +4624,23 @@ def ensure_herdr_agent_sessions(
                 existing_binding=(projection.get("bindings") or {}).get(agent),
                 run_command=run_command,
                 allow_launch_argv_change=allow_launch_argv_change,
+                allow_done_session_reprovision=allow_done_session_reprovision,
             )
             projection["bindings"][agent] = binding
             projection["status"] = "provisioning"
             projection["updated_at"] = now_iso()
             write_json(projection_path, projection)
+            if binding["lifecycle"] == "bootstrap_ready":
+                continue
+            if binding["lifecycle"] == "provisioned" and any(
+                record.get("agent") == agent
+                and record.get("event") == "agent_session_provisioned"
+                and record.get("generation") == binding.get("generation")
+                and record.get("identity_token")
+                == (binding.get("runtime_identity") or {}).get("token")
+                for record in receipts
+            ):
+                continue
             sequence += 1
             append_json_line_durable(
                 receipts_path,
@@ -3648,7 +4649,11 @@ def ensure_herdr_agent_sessions(
                     "adapter": "herdr",
                     "task_id": task_id,
                     "event_sequence": sequence,
-                    "ts": now_iso(),
+                    "ts": (
+                        binding["provisioned_at"]
+                        if binding["lifecycle"] == "provisioned"
+                        else now_iso()
+                    ),
                     "agent": agent,
                     "event": f"agent_session_{binding['lifecycle']}",
                     "binding_ref": "agent-sessions.json",
@@ -3820,6 +4825,146 @@ def model_probe_from_runtime_metadata(
     }
 
 
+def launch_attestation_from_task_owned_binding(
+    agent: str,
+    binding: dict[str, Any] | None,
+    adapter_probe: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Record launch intent without promoting it to runtime model observation."""
+    probe = adapter_probe if isinstance(adapter_probe, dict) else {}
+    if probe.get("status") != "unsupported" or not isinstance(binding, dict):
+        return None
+    ownership = binding.get("ownership") if isinstance(binding.get("ownership"), dict) else {}
+    identity = binding.get("runtime_identity") if isinstance(binding.get("runtime_identity"), dict) else {}
+    launch = binding.get("launch") if isinstance(binding.get("launch"), dict) else {}
+    argv = launch.get("argv") if isinstance(launch.get("argv"), list) else []
+    if (
+        binding.get("agent") != agent
+        or binding.get("dispatch_eligible") is not True
+        or ownership.get("scope") != "task"
+        or not str(ownership.get("task_id") or "").strip()
+        or not all(str(identity.get(key) or "").strip() for key in ("pane_id", "terminal_id", "workspace_id", "tab_id"))
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(identity.get("token") or ""))
+        or not argv
+        or not all(isinstance(value, str) and value.strip() for value in argv)
+    ):
+        return None
+    provisioned_at = str(binding.get("provisioned_at") or "").strip()
+    freshness, age_seconds = observation_freshness(
+        provisioned_at,
+        evaluated_at=now_iso(),
+        ttl_seconds=3600,
+    )
+    if freshness == "unknown":
+        return None
+
+    model_ids: list[str] = []
+    reasoning_modes: list[str] = []
+    for index, argument in enumerate(argv):
+        if argument in {"--model", "--model-id", "-m"} and index + 1 < len(argv):
+            model_ids.append(argv[index + 1])
+        elif argument.startswith("--model=") or argument.startswith("--model-id="):
+            model_ids.append(argument.split("=", 1)[1])
+        elif argument in {"--reasoning", "--reasoning-effort"} and index + 1 < len(argv):
+            reasoning_modes.append(argv[index + 1])
+        elif argument.startswith("--reasoning=") or argument.startswith("--reasoning-effort="):
+            reasoning_modes.append(argument.split("=", 1)[1])
+        elif argument == "-c" and index + 1 < len(argv):
+            config = argv[index + 1]
+            if config.startswith("model_reasoning_effort="):
+                reasoning_modes.append(config.split("=", 1)[1].strip("\"'"))
+
+    unique_models = list(dict.fromkeys(value.strip() for value in model_ids if value.strip()))
+    unique_reasoning = list(dict.fromkeys(value.strip() for value in reasoning_modes if value.strip()))
+    if len(unique_models) != 1 or len(unique_reasoning) > 1:
+        return None
+
+    return {
+        "schema_version": "valp-launch-attestation.v1",
+        "status": "launch_attested",
+        "source": "task-owned provisioning launch receipt",
+        "attested_at": provisioned_at,
+        "ttl_seconds": 3600,
+        "freshness": freshness,
+        "age_seconds": age_seconds,
+        "model": {
+            "model_id": unique_models[0],
+            "provider": "unknown",
+            "reasoning_mode": unique_reasoning[0] if unique_reasoning else "unknown",
+            "confidence": "low",
+        },
+        "session_identity": {
+            "status": "known",
+            "token": identity["token"],
+            "source": "task-owned provisioning receipt",
+            "generation": str(binding.get("generation") or "unknown"),
+        },
+    }
+
+
+def task_owned_runtime_binding_errors(
+    agent: str,
+    binding: dict[str, Any] | None,
+    readiness: dict[str, Any] | None,
+    probe: dict[str, Any] | None,
+) -> list[str]:
+    """Require current public runtime evidence to agree with a task binding."""
+    if not isinstance(binding, dict):
+        return ["task-owned binding is missing"]
+    readiness = readiness if isinstance(readiness, dict) else {}
+    probe = probe if isinstance(probe, dict) else {}
+    launch = binding.get("launch") if isinstance(binding.get("launch"), dict) else {}
+    argv = launch.get("argv") if isinstance(launch.get("argv"), list) else []
+    bootstrap = binding.get("bootstrap_verification")
+    bootstrap = bootstrap if isinstance(bootstrap, dict) else {}
+    # Older generic bindings did not establish a model-bearing bootstrap contract.
+    if not argv or not bootstrap:
+        return []
+    errors: list[str] = []
+    readiness_identity = readiness.get("session_identity")
+    readiness_identity = readiness_identity if isinstance(readiness_identity, dict) else {}
+    native_identity = readiness_identity.get("identity")
+    native_identity = native_identity if isinstance(native_identity, dict) else {}
+    readiness_status = readiness.get("agent_status")
+    accepted_readiness = readiness_status == "idle" or (
+        readiness_status == "done"
+        and binding_has_verified_bootstrap_lifecycle(binding)
+    )
+    if readiness.get("ready") is not True or not accepted_readiness:
+        errors.append("public readiness is not ready and idle")
+    if readiness_identity.get("status") != "known" or not str(native_identity.get("value") or "").strip():
+        errors.append("native session identity is unknown")
+    elif str(bootstrap.get("native_session_id") or "").strip() != str(native_identity.get("value") or "").strip():
+        errors.append("native session identity does not match the task-owned binding")
+
+    model = probe.get("model") if isinstance(probe.get("model"), dict) else {}
+    session = probe.get("session_identity") if isinstance(probe.get("session_identity"), dict) else {}
+    freshness, _ = observation_freshness(
+        probe.get("observed_at"),
+        evaluated_at=now_iso(),
+        ttl_seconds=bounded_observation_ttl(probe.get("ttl_seconds")),
+    )
+    if probe.get("status") != "observed" or session.get("status") != "known" or freshness != "current":
+        errors.append("current structured model observation is unavailable or stale")
+
+    expected_model = None
+    expected_reasoning = None
+    for index, argument in enumerate(argv):
+        if argument in {"--model", "--model-id", "-m"} and index + 1 < len(argv):
+            expected_model = argv[index + 1]
+        elif argument.startswith("--model=") or argument.startswith("--model-id="):
+            expected_model = argument.split("=", 1)[1]
+        elif argument == "-c" and index + 1 < len(argv):
+            config = argv[index + 1]
+            if config.startswith("model_reasoning_effort="):
+                expected_reasoning = config.split("=", 1)[1].strip("\"'")
+    if expected_model and str(model.get("model_id") or "").strip() != expected_model:
+        errors.append("current structured model observation does not match the task-owned binding")
+    if expected_reasoning and str(model.get("reasoning_mode") or "").strip() != expected_reasoning:
+        errors.append("current structured model observation does not match the task-owned binding")
+    return list(dict.fromkeys(errors))
+
+
 def collect_manual_preflight(agent_names: list[str] | None = None) -> dict[str, Any]:
     agents = {
         agent: {
@@ -3959,13 +5104,25 @@ def task_owned_agent_state_observation(
     }
 
 
+def activated_herdr_executable() -> str | None:
+    invoked = Path(sys.argv[0]).expanduser()
+    if not invoked.is_absolute():
+        resolved_invoked = shutil.which(str(invoked))
+        if resolved_invoked:
+            invoked = Path(resolved_invoked)
+    sibling = invoked.parent / "herdr"
+    if sibling.is_file() and os.access(sibling, os.X_OK):
+        return str(sibling)
+    return shutil.which("herdr")
+
+
 def collect_herdr_preflight(
     agent_names: list[str] | None = None,
     session_bindings: dict[str, Any] | None = None,
     launch_argv_by_agent: dict[str, list[str]] | None = None,
     version_command_by_agent: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
-    herdr = shutil.which("herdr")
+    herdr = activated_herdr_executable()
     preflight: dict[str, Any] = {
         "generated_at": now_iso(),
         "runtime": "HERDR",
@@ -4097,18 +5254,35 @@ def collect_herdr_preflight(
             ((binding or {}).get("launch") or {}).get("argv")
             or (launch_argv_by_agent or {}).get(agent)
         )
-        runtime_metadata = dict(pane or {})
-        if pane:
-            pane_id = str(pane.get("pane_id"))
-            runtime_metadata["session_id"] = pane_id
-            process_result = run_command([herdr, "pane", "process-info", "--pane", pane_id], timeout=5.0)
-            process_json = parse_json_stdout(process_result)
-            process_info = (process_json.get("result") or {}).get("process_info") or {}
-            process_group = process_info.get("foreground_process_group_id")
-            if isinstance(process_group, (str, int)) and str(process_group).strip():
-                session_generation = opaque_process_generation(process_group)
-                runtime_metadata["session_change_token"] = session_generation
-                runtime_metadata["session_generation"] = session_generation
+        adapter_model_probe = (
+            herdr_model_probe(herdr, str((pane or {}).get("pane_id") or ""))
+            if pane
+            else {
+                "schema_version": "valp-model-probe.v1",
+                "status": "unavailable",
+                "source": "HERDR agent.model_probe public runtime API",
+                "observed_at": None,
+                "ttl_seconds": 3600,
+                "model": None,
+                "session_identity": None,
+            }
+        )
+        adapter_readiness = (
+            herdr_named_agent_readiness(herdr, str((pane or {}).get("pane_id") or ""))
+            if pane
+            else {
+                "schema_version": "valp-named-agent-readiness.v1",
+                "ready": False,
+                "reason_code": "agent_not_addressable",
+                "addressable": False,
+                "detected_agent": None,
+                "agent_status": None,
+                "interactive_ready": False,
+                "prompt_eligible": False,
+                "session_identity": {"status": "unknown", "identity": None},
+                "state_change_seq": 0,
+            }
+        )
         agent_record = {
             "status": "warn",
             "session_id": str((pane or {}).get("pane_id") or "unknown"),
@@ -4122,13 +5296,17 @@ def collect_herdr_preflight(
                 launch_argv=launch_argv,
                 version_command=(version_command_by_agent or {}).get(agent),
             ),
-            "model_probe": model_probe_from_runtime_metadata(
-                agent,
-                runtime_metadata,
-                source="HERDR pane adapter structured metadata",
-            ),
+            "model_probe": adapter_model_probe,
+            "readiness": adapter_readiness,
             "notes": [],
         }
+        launch_attestation = launch_attestation_from_task_owned_binding(
+            agent,
+            binding,
+            adapter_model_probe,
+        )
+        if launch_attestation is not None:
+            agent_record["launch_attestation"] = launch_attestation
         if session_bindings is not None:
             agent_record["session_binding"] = {
                 "status": "bound" if binding_error is None else "conflict",
@@ -4141,6 +5319,13 @@ def collect_herdr_preflight(
             agent_record["status"] = "fail"
             agent_record["notes"].append(binding_error)
             return agent_record
+        if adapter_readiness.get("ready") is not True:
+            agent_record["status"] = "fail"
+            agent_record["notes"].append(
+                "HERDR named-Agent readiness is not ready: "
+                + str(adapter_readiness.get("reason_code") or "unavailable")
+            )
+            return agent_record
         if not pane:
             agent_record["status"] = "warn"
             agent_record["model_probe"]["status"] = "unavailable"
@@ -4152,6 +5337,17 @@ def collect_herdr_preflight(
         state_observation = task_owned_agent_state_observation(pane, binding)
         agent_record["agent_status"] = state_observation["state"]
         agent_record["agent_status_observation"] = state_observation
+        if session_bindings is not None:
+            binding_errors = task_owned_runtime_binding_errors(
+                agent,
+                binding,
+                adapter_readiness,
+                adapter_model_probe,
+            )
+            if binding_errors:
+                agent_record["status"] = "fail"
+                agent_record["notes"].extend(binding_errors)
+                return agent_record
         layout_result = run_command([herdr, "pane", "layout", "--pane", pane_id], timeout=5.0)
         layout_json = parse_json_stdout(layout_result)
         rect = pane_rect_from_layout(layout_json, pane_id)
@@ -4175,7 +5371,13 @@ def collect_herdr_preflight(
                 "Task-owned structured Agent state conflicts with the accepted binding: "
                 + ", ".join(state_observation.get("conflicts") or [])
             )
-        elif session_bindings is not None and agent_status not in {"idle", "working"}:
+        elif session_bindings is not None and not (
+            agent_status in {"idle", "working"}
+            or (
+                agent_status == "done"
+                and binding_has_verified_bootstrap_lifecycle(binding)
+            )
+        ):
             agent_record["status"] = "fail"
             agent_record["notes"].append(
                 "Task-owned session has no structured idle/working Agent state."
@@ -4188,7 +5390,11 @@ def collect_herdr_preflight(
             agent_record["status"] = "pass"
         return agent_record
 
-    for agent in agent_names or sorted(panes_by_agent):
+    if session_bindings is None:
+        agents_to_report = sorted(set(agent_names or []) | set(panes_by_agent))
+    else:
+        agents_to_report = list(agent_names or [])
+    for agent in agents_to_report:
         binding = session_bindings.get(agent) if isinstance(session_bindings, dict) else None
         if session_bindings is None:
             session_records = [
@@ -4196,10 +5402,17 @@ def collect_herdr_preflight(
                 for pane in session_panes_by_agent.get(agent, [])
             ]
             if session_records:
-                agent_record = dict(session_records[0])
+                status_rank = {"pass": 0, "warn": 1, "fail": 2}
+                representative = min(
+                    session_records,
+                    key=lambda record: (
+                        status_rank.get(str(record.get("status") or "warn"), 1),
+                        (record.get("readiness") or {}).get("ready") is not True,
+                        (record.get("model_probe") or {}).get("status") != "observed",
+                    ),
+                )
+                agent_record = dict(representative)
                 agent_record["sessions"] = session_records
-                statuses = {str(record.get("status") or "warn") for record in session_records}
-                agent_record["status"] = "fail" if "fail" in statuses else "warn" if "warn" in statuses else "pass"
             else:
                 agent_record = build_agent_record(agent, None, None, None)
         else:
@@ -4218,6 +5431,84 @@ def collect_herdr_preflight(
     elif any(record.get("status") == "warn" for record in preflight["agents"].values()):
         preflight["status"] = "warn"
     return preflight
+
+
+def herdr_model_probe(
+    herdr: str,
+    pane_id: str,
+) -> dict[str, Any]:
+    return herdr_model_probe_with_runner(herdr, pane_id, run_command)
+
+
+def herdr_model_probe_with_runner(
+    herdr: str,
+    pane_id: str,
+    run_command_fn: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    result = run_command_fn(
+        [herdr, "agent", "model-probe", pane_id, "--json"],
+        timeout=5.0,
+    )
+    response = parse_json_stdout(result)
+    payload = response.get("result") if isinstance(response, dict) else None
+    probe = payload.get("probe") if isinstance(payload, dict) else None
+    if (
+        result.get("ok") is True
+        and isinstance(payload, dict)
+        and payload.get("type") == "agent_model_probe"
+        and isinstance(probe, dict)
+        and probe.get("schema_version") == "valp-model-probe.v1"
+        and probe.get("status") in {"observed", "unsupported"}
+    ):
+        return dict(probe)
+    return {
+        "schema_version": "valp-model-probe.v1",
+        "status": "unavailable",
+        "source": "HERDR agent.model_probe public runtime API",
+        "observed_at": None,
+        "ttl_seconds": 3600,
+        "model": None,
+        "session_identity": None,
+    }
+
+
+def herdr_named_agent_readiness(herdr: str, pane_id: str) -> dict[str, Any]:
+    unavailable = {
+        "schema_version": "valp-named-agent-readiness.v1",
+        "ready": False,
+        "reason_code": "unavailable",
+        "addressable": False,
+        "detected_agent": None,
+        "agent_status": None,
+        "interactive_ready": False,
+        "prompt_eligible": False,
+        "session_identity": {"status": "unknown", "identity": None},
+        "state_change_seq": 0,
+    }
+    result = run_command([herdr, "agent", "readiness", pane_id], timeout=5.0)
+    response = parse_json_stdout(result)
+    payload = response.get("result") if isinstance(response, dict) else None
+    readiness = payload.get("readiness") if isinstance(payload, dict) else None
+    if not (
+        result.get("ok") is True
+        and isinstance(payload, dict)
+        and payload.get("type") == "agent_readiness"
+        and isinstance(readiness, dict)
+        and readiness.get("schema_version") == "valp-named-agent-readiness.v1"
+        and readiness.get("ready") is True
+        and readiness.get("reason_code") == "ready"
+        and readiness.get("addressable") is True
+        and isinstance(readiness.get("detected_agent"), str)
+        and isinstance(readiness.get("agent_status"), str)
+        and readiness.get("interactive_ready") is True
+        and readiness.get("prompt_eligible") is True
+        and isinstance(readiness.get("session_identity"), dict)
+        and readiness["session_identity"].get("status") == "known"
+        and isinstance(readiness.get("state_change_seq"), int)
+        and not isinstance(readiness.get("state_change_seq"), bool)
+    ):
+        return unavailable
+    return dict(readiness)
 
 
 def pane_rect_from_layout(layout_json: dict[str, Any], pane_id: str) -> dict[str, Any]:
@@ -4421,6 +5712,7 @@ def write_dispatches(
             f"- `{relative_ref(directory / ref, root)}`"
             for ref in task_refs
         )
+        compact_task_refs = "\n".join(f"- `{ref}`" for ref in task_refs)
         expected = "\n".join(f"- `{ref}`" for ref in expected_by_agent.get(agent, []))
         exact_evidence = "\n".join(f"- `{relative_ref(directory / ref, root)}`" for ref in expected_by_agent.get(agent, []))
         skill_source = skill_recommendations if is_coordinator else compact_skill_slice(task_id, agent, skill_recommendations)
@@ -4447,6 +5739,13 @@ def write_dispatches(
         )
         attention_slice = attention_slice_for_agent(agent, visible_attention)
         budget = dispatch_budget_for_agent(agent, routing.get("role_assignments") or {})
+        permission_boundary = (
+            "- Read-only review: do not edit files, source, configuration, or runtime; "
+            "the coordinator records the response.\n- Cite task-local evidence and honor gates."
+            if budget["role"] == "reviewer"
+            else "- Honor gates; write only expected evidence unless source edits are permitted. "
+            "Cite runtime proof."
+        )
 
         def render_dispatch(brief: str, attention: str, skill_text: str, actual_chars: int) -> str:
             return f"""# Dispatch: {agent}
@@ -4489,7 +5788,7 @@ The coordinator/leader owns dispatch precision. Load:
 
 ## Permission Boundary
 
-- Honor gates; write only expected evidence unless edits are permitted. Cite runtime proof.
+{permission_boundary}
 - Do not write skills, plugins, memory, MCP configuration, or agent configuration while delegated.
 
 ## Expected Evidence
@@ -4499,6 +5798,66 @@ The coordinator/leader owns dispatch precision. Load:
 ## Recommended Skills
 
 {skill_text}
+
+## Required Response
+
+Include blockers, confidence, `## Recommendations`, and:
+
+```text
+control_contract_ref: control-contract.json
+control_contract_digest: {contract_record.get('digest')}
+control_contract_status: honored
+```
+"""
+
+        def render_compact_dispatch(actual_chars: int) -> str:
+            return f"""# Dispatch: {agent}
+
+Task: {task_id} | Profile: {profile}
+Payload budget: {actual_chars}/{budget['max_chars']} chars.
+
+## VALP Control Contract (Load First)
+
+Task dir: `{task_directory_ref}`. In it, load `control-contract.json`, then `{control_slice_ref}`; mismatch blocks.
+
+{compact_control_slice}
+
+## Project Root
+
+`cd "{root}"`
+
+## Role
+
+`{budget['role']}`; see task-dir `routing.json`.
+
+## Task Brief
+
+See task-dir `task.md`.
+
+## Task References
+
+All refs below are task-dir relative:
+
+{compact_task_refs}
+- `visible-routing.md`
+- `iteration-budget.json`, `submission-dependencies.json`, `delegation-policy.json`
+
+## Visible Attention Slice
+
+- See task-dir `visible-routing.md` and `context-pack.json`.
+
+## Permission Boundary
+
+{permission_boundary}
+- Do not write skills, plugins, memory, MCP configuration, or agent configuration while delegated.
+
+## Expected Evidence
+
+{expected or '- See task.md.'}
+
+## Recommended Skills
+
+{minimal_skills}
 
 ## Required Response
 
@@ -4544,6 +5903,18 @@ control_contract_status: honored
             if len(candidate) <= budget["max_chars"] and reference_tokens <= budget["max_reference_tokens"]:
                 dispatch = candidate
                 break
+        if not dispatch:
+            actual_chars = 0
+            for _ in range(4):
+                candidate = render_compact_dispatch(actual_chars)
+                next_chars = len(candidate)
+                if next_chars == actual_chars:
+                    break
+                actual_chars = next_chars
+            candidate = render_compact_dispatch(actual_chars)
+            reference_tokens = (len(candidate) + 3) // 4
+            if len(candidate) <= budget["max_chars"] and reference_tokens <= budget["max_reference_tokens"]:
+                dispatch = candidate
         if not dispatch:
             raise SystemExit(f"Dispatch payload exceeds role budget for {agent}")
 
@@ -4653,7 +6024,15 @@ def skill_visible_to_agent(agent: str, path: str) -> bool:
     return any(marker in normalized for marker in allowed)
 
 
-def append_dispatch_written_receipts(directory: Path, selected_agents: list[str], expected_by_agent: dict[str, list[str]]) -> None:
+def append_dispatch_written_receipts(
+    directory: Path,
+    selected_agents: list[str],
+    expected_by_agent: dict[str, list[str]],
+    *,
+    runtime_adapter_id: str = "",
+) -> None:
+    if runtime_adapter_id in {"herdr", "queue", "manual", "langgraph"} and runtime_v3_identity_available(directory):
+        return
     receipts_path = directory / "dispatch-receipts.jsonl"
     existing = receipts_path.read_text(encoding="utf-8").splitlines() if receipts_path.exists() else []
     existing_keys = set()
@@ -4686,8 +6065,6 @@ def write_queue_submission(
     role: str,
     expected: list[str],
 ) -> dict[str, Any]:
-    queue_id = f"{task_id}-{target}-{role}"
-    worker_id = f"worker-{target}-{role}"
     dependency_document = read_json(directory / "submission-dependencies.json")
     identity = next(
         (
@@ -4699,6 +6076,26 @@ def write_queue_submission(
         ),
         work_item_identity(task_id, target, role),
     )
+    if runtime_v3_identity_available(directory):
+        from .runtime_adapters import RuntimeAdapterError, record_queue_acceptance
+
+        try:
+            queue_record, _, _ = record_queue_acceptance(
+                directory,
+                task_id,
+                agent=target,
+                role=role,
+                work_item_id=str(identity["work_item_id"]),
+                dispatch_id=str(identity["dispatch_id"]),
+                dispatch_generation=int(identity["dispatch_generation"]),
+                dispatch_ref=f"agents/{target}/dispatch.md",
+                expected_refs=expected,
+            )
+        except RuntimeAdapterError as error:
+            raise SystemExit(f"Queue v3 submission failed: {error}") from error
+        return queue_record
+    queue_id = f"{task_id}-{target}-{role}"
+    worker_id = f"worker-{target}-{role}"
     queue_record = {
         "schema_version": "valp-queue-dispatch.v1",
         "task_id": task_id,
@@ -4829,6 +6226,25 @@ def write_herdr_transport_receipt(
         ),
         work_item_identity(task_id, target, role),
     )
+    if runtime_v3_identity_available(directory):
+        from .runtime_adapters import RuntimeAdapterError, record_herdr_transport
+
+        try:
+            receipt, _ = record_herdr_transport(
+                directory,
+                task_id,
+                agent=target,
+                role=role,
+                work_item_id=str(identity["work_item_id"]),
+                dispatch_id=str(identity["dispatch_id"]),
+                dispatch_generation=int(identity["dispatch_generation"]),
+                dispatch_ref=f"agents/{target}/dispatch.md",
+                expected_refs=expected,
+                proof=proof,
+            )
+        except RuntimeAdapterError as error:
+            raise SystemExit(f"HERDR transport v3 receipt failed: {error}") from error
+        return receipt
     with task_state_lock(directory):
         existing_receipts = load_dispatch_receipts(directory, task_id)
         logical_receipts = [
@@ -4888,6 +6304,78 @@ def write_herdr_transport_receipt(
         return receipt
 
 
+def consume_verified_bootstrap_lifecycle(
+    directory: Path,
+    task_id: str,
+    target: str,
+    proof: dict[str, Any],
+    submission_receipt_id: str,
+) -> None:
+    proof_binding = proof.get("session_binding") or {}
+    if proof_binding.get("ref") != "agent-sessions.json":
+        return
+    projection_path = directory / "agent-sessions.json"
+    receipts_path = directory / "agent-session-receipts.jsonl"
+    if not projection_path.is_file():
+        return
+    with task_state_lock(directory):
+        projection = read_json_strict(projection_path)
+        binding = ((projection.get("bindings") or {}).get(target) or {})
+        identity = binding.get("runtime_identity") or {}
+        if not binding_has_verified_bootstrap_lifecycle(binding):
+            return
+        if any(
+            (
+                projection.get("schema_version") != "valp-agent-sessions.v1",
+                projection.get("task_id") != task_id,
+                projection.get("adapter") != "herdr",
+                proof_binding.get("generation") != binding.get("generation"),
+                proof_binding.get("identity_token") != identity.get("token"),
+                proof_binding.get("ownership") != binding.get("ownership"),
+            )
+        ):
+            raise SystemExit(
+                "HERDR submission proof cannot consume a different bootstrap lifecycle"
+            )
+        binding["lifecycle"] = "reused"
+        binding["bootstrap_verification"][
+            "consumed_by_dispatch_receipt_id"
+        ] = submission_receipt_id
+        projection["updated_at"] = now_iso()
+        write_json(projection_path, projection)
+        receipts = read_json_lines_strict(receipts_path)
+        sequence = max(
+            (
+                int(record.get("event_sequence"))
+                for record in receipts
+                if type(record.get("event_sequence")) is int
+            ),
+            default=0,
+        )
+        append_json_line_durable(
+            receipts_path,
+            {
+                "schema_version": "valp-agent-session-receipt.v1",
+                "adapter": "herdr",
+                "task_id": task_id,
+                "event_sequence": sequence + 1,
+                "ts": now_iso(),
+                "agent": target,
+                "event": "agent_session_reused",
+                "binding_ref": "agent-sessions.json",
+                "generation": binding["generation"],
+                "identity_token": identity["token"],
+                "ownership": binding["ownership"],
+                "context": binding["context"],
+                "launch": binding["launch"],
+                "focused_at_provisioning": binding["focused_at_provisioning"],
+                "runtime_scope": binding["runtime_scope"],
+                "runtime_identity": identity,
+                "submission_receipt_id": submission_receipt_id,
+            },
+        )
+
+
 def write_herdr_submission_receipt(
     directory: Path,
     task_id: str,
@@ -4896,11 +6384,16 @@ def write_herdr_submission_receipt(
     expected: list[str],
     proof: dict[str, Any],
     recovery: dict[str, Any] | None = None,
+    expected_evidence_baseline: dict[str, str | None] | None = None,
 ) -> dict[str, Any]:
     if proof.get("runtime") != "HERDR" or proof.get("proof_class") != "agent_invocation":
         raise SystemExit(
             "HERDR dispatch_submitted requires independent Agent invocation proof"
         )
+    if expected_evidence_baseline is not None:
+        if set(expected_evidence_baseline) != set(expected):
+            raise SystemExit("HERDR expected evidence baseline does not match the dispatch")
+        proof = {**proof, "expected_evidence_baseline": expected_evidence_baseline}
     dependency_document = read_json(directory / "submission-dependencies.json")
     identity = next(
         (
@@ -4927,6 +6420,35 @@ def write_herdr_submission_receipt(
                 "control_contract_digest": recovery["control_contract_digest"],
             },
         }
+    if runtime_v3_identity_available(directory):
+        if recovery is not None:
+            raise SystemExit("HERDR v3 recovery requires exact Attempt resume, not v2 retry generation")
+        from .runtime_adapters import RuntimeAdapterError, record_herdr_submission
+
+        try:
+            receipt, _ = record_herdr_submission(
+                directory,
+                task_id,
+                agent=target,
+                role=role,
+                work_item_id=str(identity["work_item_id"]),
+                dispatch_id=str(identity["dispatch_id"]),
+                dispatch_generation=int(identity["dispatch_generation"]),
+                dispatch_ref=f"agents/{target}/dispatch.md",
+                expected_refs=expected,
+                proof=proof,
+            )
+        except RuntimeAdapterError as error:
+            raise SystemExit(f"HERDR v3 submission receipt failed: {error}") from error
+        consume_verified_bootstrap_lifecycle(
+            directory,
+            task_id,
+            target,
+            proof,
+            str(receipt["receipt_id"]),
+        )
+        return receipt
+    receipt: dict[str, Any]
     with task_state_lock(directory):
         existing_receipts = load_dispatch_receipts(directory, task_id)
         logical_receipts = [
@@ -4956,54 +6478,186 @@ def write_herdr_submission_receipt(
                 for receipt in matching
             ) or len({str(receipt.get("receipt_id")) for receipt in matching}) != 1:
                 raise SystemExit("Existing HERDR submission receipt conflicts with the routed work item")
-            return matching[0]
-        event_sequence = max(
-            [
-                int(record["event_sequence"])
-                for record in existing_receipts
-                if record.get("schema_version") == "valp-dispatch-receipt.v2"
-                and type(record.get("event_sequence")) is int
-            ],
-            default=0,
-        ) + 1
-        receipt_id = (
-            f"{task_id}:{identity['work_item_id']}:{identity['dispatch_id']}:"
-            f"{identity['dispatch_generation']}:dispatch_submitted"
-        )
-        if retry_generation is not None:
+            receipt = matching[0]
+        else:
+            event_sequence = max(
+                [
+                    int(record["event_sequence"])
+                    for record in existing_receipts
+                    if record.get("schema_version") == "valp-dispatch-receipt.v2"
+                    and type(record.get("event_sequence")) is int
+                ],
+                default=0,
+            ) + 1
             receipt_id = (
                 f"{task_id}:{identity['work_item_id']}:{identity['dispatch_id']}:"
-                f"{identity['dispatch_generation']}:retry:{retry_generation}:dispatch_submitted"
+                f"{identity['dispatch_generation']}:dispatch_submitted"
             )
-        receipt = {
+            if retry_generation is not None:
+                receipt_id = (
+                    f"{task_id}:{identity['work_item_id']}:{identity['dispatch_id']}:"
+                    f"{identity['dispatch_generation']}:retry:{retry_generation}:dispatch_submitted"
+                )
+            receipt = {
+                "schema_version": "valp-dispatch-receipt.v2",
+                "receipt_id": receipt_id,
+                "task_id": task_id,
+                "event_sequence": event_sequence,
+                "ts": now_iso(),
+                "agent": target,
+                "role": role,
+                "work_item_id": identity["work_item_id"],
+                "dispatch_id": identity["dispatch_id"],
+                "dispatch_generation": identity["dispatch_generation"],
+                "event": "dispatch_submitted",
+                "dispatch_ref": f"agents/{target}/dispatch.md",
+                "expected_refs": expected,
+                "proof": proof,
+                "summary": (
+                    "The packaged HERDR adapter submitted the dispatch with runtime proof. "
+                    "Completion still requires expected evidence."
+                ),
+            }
+            if retry_generation is not None:
+                receipt["retry_generation"] = retry_generation
+            append_json_line_durable(directory / "dispatch-receipts.jsonl", receipt)
+    consume_verified_bootstrap_lifecycle(
+        directory,
+        task_id,
+        target,
+        proof,
+        str(receipt["receipt_id"]),
+    )
+    return receipt
+
+
+def write_herdr_invalid_session_binding_supersession(
+    directory: Path,
+    task_id: str,
+    superseded_submission_receipt_id: str,
+    replacement_submission_receipt_id: str,
+) -> dict[str, Any]:
+    """Append a narrow provenance repair without changing either submission."""
+    with task_state_lock(directory):
+        receipts = load_dispatch_receipts(directory, task_id)
+        submitted = {
+            str(receipt.get("receipt_id") or ""): receipt
+            for receipt in receipts
+            if receipt.get("event") == "dispatch_submitted"
+        }
+        original = submitted.get(superseded_submission_receipt_id)
+        replacement = submitted.get(replacement_submission_receipt_id)
+        if not original or not replacement:
+            raise SystemExit("HERDR supersession requires exact existing submission receipts")
+        identity_fields = (
+            "task_id", "agent", "role", "work_item_id", "dispatch_id",
+            "dispatch_generation", "dispatch_ref", "expected_refs",
+        )
+        if (
+            original.get("event_sequence", 0) >= replacement.get("event_sequence", 0)
+            or any(original.get(field) != replacement.get(field) for field in identity_fields)
+            or not has_concrete_runtime_submission_proof(original)
+            or not has_concrete_runtime_submission_proof(replacement)
+            or (original.get("proof") or {}).get("runtime") != "HERDR"
+            or (replacement.get("proof") or {}).get("runtime") != "HERDR"
+            or (original.get("proof") or {}).get("proof_class")
+            not in {"agent_invocation", "reconciled_identity_bound_submission"}
+            or (replacement.get("proof") or {}).get("proof_class") != "agent_invocation"
+        ):
+            raise SystemExit(
+                "HERDR supersession requires concrete submission proof and exact work-item identity"
+            )
+        projection = read_json_strict(directory / "agent-sessions.json")
+        session_receipts = read_json_lines_strict(
+            directory / "agent-session-receipts.jsonl"
+        )
+        adapter = projection.get("adapter")
+
+        def provisioned(receipt: dict[str, Any]) -> bool:
+            proof_binding = ((receipt.get("proof") or {}).get("session_binding") or {})
+            return bool(
+                proof_binding.get("ref") == "agent-sessions.json"
+                and any(
+                    item.get("adapter") == adapter
+                    and item.get("task_id") == task_id
+                    and item.get("agent") == receipt.get("agent")
+                    and item.get("event") == "agent_session_provisioned"
+                    and item.get("binding_ref") == proof_binding.get("ref")
+                    and item.get("generation") == proof_binding.get("generation")
+                    and item.get("identity_token") == proof_binding.get("identity_token")
+                    and item.get("ownership") == proof_binding.get("ownership")
+                    for item in session_receipts
+                )
+            )
+
+        if provisioned(original) or not provisioned(replacement):
+            raise SystemExit(
+                "HERDR supersession requires an invalid original and valid replacement binding"
+            )
+        proof = {
+            "kind": "invalid_session_binding",
+            "superseded_submission_receipt_id": superseded_submission_receipt_id,
+            "replacement_submission_receipt_id": replacement_submission_receipt_id,
+        }
+        receipt_id = "sha256:" + hashlib.sha256(
+            json.dumps({"task_id": task_id, **proof}, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        existing = [receipt for receipt in receipts if receipt.get("receipt_id") == receipt_id]
+        if existing:
+            return existing[0]
+        event_sequence = max(
+            (int(receipt.get("event_sequence") or 0) for receipt in receipts),
+            default=0,
+        ) + 1
+        supersession = {
             "schema_version": "valp-dispatch-receipt.v2",
             "receipt_id": receipt_id,
             "task_id": task_id,
             "event_sequence": event_sequence,
             "ts": now_iso(),
-            "agent": target,
-            "role": role,
-            "work_item_id": identity["work_item_id"],
-            "dispatch_id": identity["dispatch_id"],
-            "dispatch_generation": identity["dispatch_generation"],
-            "event": "dispatch_submitted",
-            "dispatch_ref": f"agents/{target}/dispatch.md",
-            "expected_refs": expected,
+            "agent": original["agent"],
+            "role": original["role"],
+            "work_item_id": original["work_item_id"],
+            "dispatch_id": original["dispatch_id"],
+            "dispatch_generation": original["dispatch_generation"],
+            "event": "dispatch_superseded",
+            "dispatch_ref": original["dispatch_ref"],
+            "expected_refs": original["expected_refs"],
             "proof": proof,
             "summary": (
-                "The packaged HERDR adapter submitted the dispatch with runtime proof. "
-                "Completion still requires expected evidence."
+                "Append-only repair: invalid task-owned session binding "
+                "superseded by a later valid submission."
             ),
         }
-        if retry_generation is not None:
-            receipt["retry_generation"] = retry_generation
-        append_json_line_durable(directory / "dispatch-receipts.jsonl", receipt)
-        return receipt
+        append_json_line_durable(directory / "dispatch-receipts.jsonl", supersession)
+        return supersession
+
+
+def expected_evidence_snapshot(directory: Path, expected: list[str]) -> dict[str, str | None]:
+    """Capture the exact pre-submission evidence state for a dispatch."""
+    snapshot: dict[str, str | None] = {}
+    for ref in expected:
+        if not safe_task_evidence_ref(ref):
+            snapshot[ref] = None
+            continue
+        path = (directory / ref).resolve()
+        try:
+            path.relative_to(directory.resolve())
+        except ValueError:
+            snapshot[ref] = None
+            continue
+        snapshot[ref] = (
+            "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+            if path.is_file()
+            else None
+        )
+    return snapshot
 
 
 def herdr_expected_ref_status(
     directory: Path,
     expected: list[str],
+    baseline: dict[str, str | None] | None = None,
 ) -> tuple[bool, list[str], list[str]]:
     existing: list[str] = []
     missing: list[str] = []
@@ -5017,10 +6671,16 @@ def herdr_expected_ref_status(
         except ValueError:
             missing.append(ref)
             continue
+        current_digest = (
+            "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+            if path.is_file()
+            else None
+        )
         if (
             path.is_file()
             and path.stat().st_size > 0
             and work_item_evidence_is_valid(directory, {"expected_refs": [ref]})
+            and (baseline is None or current_digest != baseline.get(ref))
         ):
             existing.append(ref)
         else:
@@ -5032,11 +6692,12 @@ def wait_for_herdr_expected_refs(
     directory: Path,
     expected: list[str],
     wait_seconds: float | None,
+    baseline: dict[str, str | None] | None = None,
 ) -> tuple[bool, list[str], list[str]]:
     timeout_seconds = 60.0 if wait_seconds is None else wait_seconds
     deadline = time.monotonic() + max(timeout_seconds, 0.0)
     while True:
-        completed, existing, missing = herdr_expected_ref_status(directory, expected)
+        completed, existing, missing = herdr_expected_ref_status(directory, expected, baseline)
         if completed:
             return completed, existing, missing
         if time.monotonic() >= deadline:
@@ -5049,7 +6710,22 @@ def write_herdr_completion_receipt(
     task_id: str,
     submission: dict[str, Any],
     existing_refs: list[str],
+    terminal_proof: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if (directory / "runtime" / "herdr" / "adoption.json").is_file():
+        from .runtime_adapters import RuntimeAdapterError, record_herdr_completion
+
+        try:
+            if terminal_proof is None:
+                raise RuntimeAdapterError(
+                    "adopted HERDR completion requires an identity-bound terminal observation"
+                )
+            receipt, _ = record_herdr_completion(
+                directory, task_id, submission, existing_refs, terminal_proof
+            )
+        except RuntimeAdapterError as error:
+            raise SystemExit(f"HERDR v3 completion receipt failed: {error}") from error
+        return receipt
     suspension_epoch = _herdr_suspension_epoch(directory)
     identity = {
         "task_id": task_id,
@@ -5356,6 +7032,7 @@ def wait_receipt_event_error(
     previous_suspension: dict[str, Any] | None,
     receipts: list[dict[str, Any]],
     task_id: str,
+    directory: Path | None = None,
 ) -> str | None:
     event_name = str(event.get("event") or "")
     wake_reason = str(event.get("wake_reason") or "")
@@ -5383,6 +7060,8 @@ def wait_receipt_event_error(
     if receipt_index < 1 or receipt_index > len(receipts):
         return "Wait event receipt ref does not exist"
     receipt = receipts[receipt_index - 1]
+    if directory is not None and not runtime_receipt_is_effective(directory, task_id, receipt):
+        return "Wait event receipt was revoked or not selected by Manual adjudication"
     qualifying_receipt_id = str(receipt.get("receipt_id") or receipt_ref)
     if event.get("qualifying_receipt_id") != qualifying_receipt_id:
         return "Wait event qualifying receipt ID does not match its ledger ref"
@@ -5508,6 +7187,7 @@ def validated_wait_events(directory: Path, task_id: str) -> list[dict[str, Any]]
                 previous_suspension,
                 receipts,
                 task_id,
+                directory,
             )
             if receipt_error:
                 raise SystemExit(receipt_error)
@@ -5577,6 +7257,60 @@ def exact_state_revision(state: dict[str, Any]) -> int:
 def recover_wait_projection(directory: Path, state: dict[str, Any]) -> dict[str, Any]:
     task_id = str(state.get("task_id") or "")
     events = validated_wait_events(directory, task_id)
+    kernel_binding_path = directory / "runtime" / "kernel" / "workflow-binding.json"
+    if kernel_binding_path.is_file():
+        try:
+            from .kernel_store import KernelStore
+
+            kernel_state = KernelStore(directory / "runtime" / "kernel").recover().replay.state
+            kernel_binding = read_json_strict(kernel_binding_path)
+        except Exception as error:
+            raise SystemExit(f"Kernel wait recovery failed: {error}") from error
+        if kernel_state.suspension is None:
+            raise SystemExit("Kernel wait binding exists without Kernel suspension truth")
+        if kernel_state.suspension.status.value != kernel_binding.get("status"):
+            raise SystemExit("Kernel wait binding status conflicts with recovered Kernel State")
+        if not events and kernel_binding.get("status") == "waiting":
+            workflow_suspension = kernel_binding.get("workflow_suspension")
+            if not isinstance(workflow_suspension, dict):
+                raise SystemExit("Kernel wait binding lacks workflow suspension projection")
+            recovered = dict(state)
+            recovered["status"] = "suspended"
+            recovered["suspension"] = workflow_suspension
+            recovered["updated_at"] = now_iso()
+            commit_wait_state(
+                directory,
+                recovered,
+                "coordinator_suspended",
+                "Recovered coordinator suspension from durable Kernel truth",
+                kernel_recovered=True,
+            )
+            return recovered
+        if kernel_binding.get("status") == "resumed" and (
+            not events or events[-1]["projection"]["suspension"].get("status") == "waiting"
+        ):
+            projection = kernel_binding.get("workflow_wake_projection")
+            if not isinstance(projection, dict) or not isinstance(projection.get("suspension"), dict):
+                raise SystemExit("Kernel resumed without a recoverable workflow wake projection")
+            recovered = dict(state)
+            recovered["status"] = projection["status"]
+            recovered["suspension"] = projection["suspension"]
+            recovered["updated_at"] = projection["updated_at"]
+            accepted = projection["suspension"].get("accepted_wake") or {}
+            commit_wait_state(
+                directory,
+                recovered,
+                "coordinator_resumed",
+                "Recovered coordinator wake from durable Kernel truth",
+                resume_event=projection["suspension"].get("resume_event"),
+                resume_ref=projection["suspension"].get("resume_ref"),
+                wake_reason=accepted.get("wake_reason"),
+                wake_id=accepted.get("wake_id"),
+                result_ref=projection.get("result_ref"),
+                qualifying_receipt_id=None,
+                kernel_recovered=True,
+            )
+            return recovered
     if not events:
         return state
     latest = events[-1]
@@ -6048,6 +7782,15 @@ def observe_expected_evidence_completions(
     present_at_entry = {
         str(ref) for ref in suspension.get("evidence_refs_present_at_entry") or []
     }
+    adopted = [
+        adapter_id
+        for adapter_id in ("herdr", "queue", "manual", "langgraph")
+        if (directory / "runtime" / adapter_id / "adoption.json").is_file()
+    ]
+    if adopted:
+        # Adopted runtimes require their explicit terminal observer. File
+        # presence cannot manufacture Full or Manual terminal proof.
+        return 0
     receipts = load_dispatch_receipts(directory, task_id)
     existing_ids = {
         str(receipt.get("receipt_id"))
@@ -6256,6 +7999,16 @@ def suspend_task(root: Path, task_id: str, timeout_seconds: float | None = None)
             ),
             "allowed_resume_events": sorted(SUSPENSION_RESUME_EVENTS),
         }
+        if any(
+            (directory / "runtime" / adapter_id / "adoption.json").is_file()
+            for adapter_id in ("herdr", "queue", "langgraph")
+        ):
+            from .kernel_runtime import KernelRuntimeError, start_kernel_suspension
+
+            try:
+                start_kernel_suspension(directory, task_id, suspension, receipts)
+            except KernelRuntimeError as error:
+                raise SystemExit(f"Kernel suspension persistence failed: {error}") from error
         state["status"] = "suspended"
         state["suspension"] = suspension
         state["updated_at"] = now_iso()
@@ -6481,6 +8234,10 @@ def resume_suspended_task(
             if receipt_index <= int(suspension.get("receipt_count_at_entry") or 0):
                 raise SystemExit("Dispatch receipt predates suspension")
             receipt = receipts[receipt_index - 1]
+            if not runtime_receipt_is_effective(directory, task_id, receipt):
+                raise SystemExit(
+                    "Dispatch receipt was revoked or not selected by Manual adjudication"
+                )
             if receipt.get("event") not in TERMINAL_WORKER_RECEIPT_EVENTS:
                 raise SystemExit("Dispatch receipt is not a terminal worker receipt")
             strict_identity = bool(suspension.get("strict_identity"))
@@ -6515,6 +8272,16 @@ def resume_suspended_task(
             if receipt_event in {"dispatch_completed", "manual_result_attested"}:
                 if not work_item_evidence_is_valid(directory, item):
                     raise SystemExit("Completion receipt expected evidence is missing or invalid")
+                if (
+                    receipt_event == "dispatch_completed"
+                    and (directory / "runtime" / "kernel" / "genesis.json").is_file()
+                ):
+                    from .kernel_runtime import KernelRuntimeError, record_kernel_completion
+
+                    try:
+                        record_kernel_completion(directory, task_id, receipt)
+                    except KernelRuntimeError as error:
+                        raise SystemExit(f"Kernel Work Item completion failed: {error}") from error
                 completed = list(suspension.get("completed_work_item_ids") or [])
                 pending = list(suspension.get("pending_work_item_ids") or [])
                 if pending == [work_item_id]:
@@ -6633,6 +8400,37 @@ def resume_suspended_task(
                 raise SystemExit("Pre-existing wake result conflicts with the pending commit")
         else:
             write_json(result_path, wake_result)
+        if (
+            wake_reason == "dependency_ready"
+            and (directory / "runtime" / "kernel" / "genesis.json").is_file()
+        ):
+            from .kernel_runtime import KernelRuntimeError, accept_kernel_wake
+
+            try:
+                accept_kernel_wake(
+                    directory,
+                    task_id,
+                    wake_id,
+                    workflow_projection={
+                        "status": state["status"],
+                        "suspension": suspension,
+                        "updated_at": state["updated_at"],
+                        "result_ref": result_ref,
+                    },
+                )
+            except KernelRuntimeError as error:
+                raise SystemExit(f"Kernel dependency wake failed: {error}") from error
+        continuation_status = "not_available"
+        if wake_reason == "dependency_ready":
+            from .continuation import ContinuationError, prepare_wake_continuation
+
+            try:
+                continuation = prepare_wake_continuation(
+                    directory, task_id, suspension, wake_result
+                )
+            except ContinuationError as error:
+                raise SystemExit(f"Coordinator continuation preparation failed: {error}") from error
+            continuation_status = str(continuation.get("status") or "unknown")
         event_details = {
             "resume_event": resume_event,
             "resume_ref": resume_ref,
@@ -6640,6 +8438,7 @@ def resume_suspended_task(
             "wake_id": wake_id,
             "result_ref": result_ref,
             "qualifying_receipt_id": qualifying_receipt_id,
+            "continuation_status": continuation_status,
         }
         if external_event is not None:
             event_details["external_event"] = external_event
@@ -6651,6 +8450,130 @@ def resume_suspended_task(
             **event_details,
         )
         return suspension
+
+
+def continue_accepted_dependency_ready_wake(
+    root: Path,
+    task_id: str,
+    *,
+    socket_path: Path | str,
+    provider_id: str,
+    timeout_seconds: float = 30.0,
+    approval_granted: bool = False,
+) -> dict[str, Any]:
+    """Invoke the active HERDR Leader only for a committed dependency-ready wake."""
+    if not provider_id.strip():
+        raise SystemExit("HERDR continuation requires an explicit provider identity")
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise SystemExit("HERDR continuation timeout must be a finite positive number")
+    if type(approval_granted) is not bool:
+        raise SystemExit("HERDR continuation approval must be a boolean")
+    root = workspace_root(root)
+    directory = task_dir(root, task_id)
+    state = read_json_strict(directory / "state.json")
+    suspension = state.get("suspension") if isinstance(state.get("suspension"), dict) else {}
+    accepted = suspension.get("accepted_wake") if isinstance(suspension.get("accepted_wake"), dict) else {}
+    if (
+        state.get("status") != "executing"
+        or suspension.get("status") != "resumed"
+        or accepted.get("wake_reason") != "dependency_ready"
+    ):
+        raise SystemExit("HERDR continuation requires an accepted dependency-ready wake")
+
+    control_root = leader_installation_root(root)
+    try:
+        leader = InstallationCore(control_root).status()
+    except Exception as exc:
+        raise SystemExit(f"HERDR continuation cannot load the active Leader: {exc}") from exc
+    binding = leader.get("leader_session") if isinstance(leader.get("leader_session"), dict) else {}
+    runtime_identity = binding.get("runtime_identity") if isinstance(binding.get("runtime_identity"), dict) else {}
+    target = str(runtime_identity.get("session_id") or runtime_identity.get("pane_id") or "")
+    if leader.get("state", {}).get("status") != "active" or not target:
+        raise SystemExit("HERDR continuation requires an active Leader session binding")
+
+    rpc_client = HerdrUnixSocketRpcClient(socket_path, timeout=timeout_seconds + 5.0)
+    try:
+        agent_response = rpc_client.call("agent.get", {"target": target})
+    except Exception as exc:
+        raise SystemExit(f"HERDR continuation cannot resolve the active Leader identity: {exc}") from exc
+    agent_result = agent_response.get("result") if isinstance(agent_response, dict) else None
+    runtime_agent = agent_result.get("agent") if isinstance(agent_result, dict) else None
+    agent_session = runtime_agent.get("agent_session") if isinstance(runtime_agent, dict) else None
+    coordinator_id = str(runtime_agent.get("name") or "") if isinstance(runtime_agent, dict) else ""
+    runtime_session_id = str(agent_session.get("value") or "") if isinstance(agent_session, dict) else ""
+    expected_terminal_id = str(runtime_identity.get("terminal_id") or "")
+    if (
+        not isinstance(agent_result, dict)
+        or agent_result.get("type") != "agent_info"
+        or not isinstance(runtime_agent, dict)
+        or runtime_agent.get("pane_id") != target
+        or runtime_agent.get("agent") != "codex"
+        or not coordinator_id
+        or not runtime_session_id
+        or (expected_terminal_id and runtime_agent.get("terminal_id") != expected_terminal_id)
+    ):
+        raise SystemExit("HERDR continuation active Leader identity is incomplete or mismatched")
+
+    identity = {
+        "schema_version": "valp-herdr-continuation-identity.v1",
+        "leader_binding_digest": binding.get("binding_digest"),
+        "leader_epoch": binding.get("leader_epoch"),
+        "durable_boundary_ref": target,
+        "coordinator_id": coordinator_id,
+        "session_id": runtime_session_id,
+        "terminal_id": runtime_agent.get("terminal_id"),
+        "provider_id": provider_id,
+    }
+    dedup = {
+        "schema_version": "valp-herdr-continuation-dedup.v1",
+        "mechanism": "wake-bound VALP invocation key plus HERDR idempotency_key",
+    }
+    identity_ref = persist_content_addressed_evidence(
+        directory,
+        "continuation-herdr-identity",
+        identity,
+    )
+    dedup_ref = persist_content_addressed_evidence(
+        directory,
+        "continuation-herdr-dedup",
+        dedup,
+    )
+    adapter = HerdrCoordinatorContinueAdapter(
+        coordinator_target=target,
+        runtime_coordinator_id=coordinator_id,
+        runtime_session_id=runtime_session_id,
+        provider_id=provider_id,
+        rpc_call=rpc_client.call,
+        identity_evidence_ref=identity_ref,
+        duplicate_suppression_evidence_ref=dedup_ref,
+        timeout_ms=max(1, int(timeout_seconds * 1000)),
+        approval_granted=approval_granted,
+    )
+    payload = {"accepted_wake": accepted}
+    try:
+        envelope = build_envelope(
+            task_id=task_id,
+            suspension_id=str(suspension.get("suspension_id") or ""),
+            suspension_epoch=int(suspension.get("suspension_epoch") or 0),
+            wake_id=str(accepted.get("wake_id") or ""),
+            wake_event_id=str(accepted.get("wake_event_id") or ""),
+            wake_reason="dependency_ready",
+            accepted_state_revision=int(accepted.get("resulting_state_revision") or 0),
+            control_contract_ref=CONTROL_CONTRACT_REF,
+            control_contract_digest=file_digest(directory / CONTROL_CONTRACT_REF),
+            payload=payload,
+            coordinator_agent="codex",
+            adapter_id=adapter.adapter_id,
+            provider_id=provider_id,
+            durable_boundary_ref=target,
+        )
+        store = ContinuationStore(directory, task_id)
+        store.register_capability(adapter.capability())
+        store.pending(envelope, payload)
+        store.receive(envelope, payload)
+        return store.consume_with_adapter(envelope, payload, adapter)
+    except ContinuationError as exc:
+        raise SystemExit(f"HERDR continuation failed closed: {exc}") from exc
 
 
 def wait_for_task(
@@ -6702,6 +8625,8 @@ def wait_for_task(
             if str(record.get("agent")) not in waiting_for_agents:
                 continue
             if record.get("event") not in TERMINAL_WORKER_RECEIPT_EVENTS:
+                continue
+            if not runtime_receipt_is_effective(directory, task_id, record):
                 continue
             strict_identity = bool(current.get("strict_identity"))
             if not any(
@@ -6810,6 +8735,11 @@ def dependency_ready_frontier(
 ) -> tuple[list[tuple[str, str]], list[str]]:
     ready: list[tuple[str, str]] = []
     blocked: list[str] = []
+    receipts = [
+        receipt
+        for receipt in receipts
+        if runtime_receipt_is_effective(directory, task_id, receipt)
+    ]
     evidence_status = read_json(directory / "evidence-status.json")
     for phase in phases:
         latest_event = latest_phase_delivery_event(
@@ -6936,30 +8866,48 @@ def incomplete_submission_recovery_context(
         raise SystemExit(
             "Incomplete submission recovery requires exactly one concrete identity-bound HERDR submission"
         )
-    complete, existing_refs, _missing_refs = herdr_expected_ref_status(directory, expected)
+    completion_submission = originating[0]
+    if prior_retries:
+        expected_recovery_proof = {
+            "kind": "incomplete_submission",
+            "retry_generation": retry_generation,
+            "originating_submission_receipt_id": originating[0]["receipt_id"],
+            "control_contract_digest": digest,
+        }
+        retry_submissions = [
+            receipt
+            for receipt in prior_retries
+            if receipt.get("event") == "dispatch_submitted"
+            and receipt.get("retry_generation") == retry_generation
+            and has_concrete_runtime_submission_proof(receipt)
+            and (receipt.get("proof") or {}).get("runtime") == "HERDR"
+            and (receipt.get("proof") or {}).get("recovery") == expected_recovery_proof
+        ]
+        if len(prior_retries) != 1 or len(retry_submissions) != 1:
+            raise SystemExit(
+                "Incomplete submission recovery found conflicting retry receipt identity"
+            )
+        completion_submission = retry_submissions[0]
+
+    baseline_value = (completion_submission.get("proof") or {}).get(
+        "expected_evidence_baseline"
+    )
+    baseline: dict[str, str | None] | None = None
+    if baseline_value is not None:
+        if (
+            not isinstance(baseline_value, dict)
+            or set(baseline_value) != set(expected)
+            or any(value is not None and not isinstance(value, str) for value in baseline_value.values())
+        ):
+            raise SystemExit("Incomplete submission recovery expected-evidence baseline is invalid")
+        baseline = {str(ref): value for ref, value in baseline_value.items()}
+
+    complete, existing_refs, _missing_refs = herdr_expected_ref_status(
+        directory,
+        expected,
+        baseline,
+    )
     if complete:
-        completion_submission = originating[0]
-        if prior_retries:
-            expected_recovery_proof = {
-                "kind": "incomplete_submission",
-                "retry_generation": retry_generation,
-                "originating_submission_receipt_id": originating[0]["receipt_id"],
-                "control_contract_digest": digest,
-            }
-            retry_submissions = [
-                receipt
-                for receipt in prior_retries
-                if receipt.get("event") == "dispatch_submitted"
-                and receipt.get("retry_generation") == retry_generation
-                and has_concrete_runtime_submission_proof(receipt)
-                and (receipt.get("proof") or {}).get("runtime") == "HERDR"
-                and (receipt.get("proof") or {}).get("recovery") == expected_recovery_proof
-            ]
-            if len(prior_retries) != 1 or len(retry_submissions) != 1:
-                raise SystemExit(
-                    "Incomplete submission recovery found conflicting retry receipt identity"
-                )
-            completion_submission = retry_submissions[0]
         return {
             "action": "reconcile_completion",
             "originating_submission": completion_submission,
@@ -6993,6 +8941,7 @@ def dispatch_task(
     recover_incomplete: bool = False,
     retry_generation: int | None = None,
     replace_owned_session_launch: bool = False,
+    reprovision_done_session: bool = False,
 ) -> list[str]:
     for label, value in (
         ("Evidence wait", wait_seconds),
@@ -7017,6 +8966,13 @@ def dispatch_task(
         raise SystemExit(
             "--replace-owned-session-launch requires --submit, one explicit --agent and --role, "
             "and cannot be combined with --recover-incomplete"
+        )
+    if reprovision_done_session and (
+        not submit or agent == "all" or role is None or recover_incomplete or replace_owned_session_launch
+    ):
+        raise SystemExit(
+            "--reprovision-done-session requires --submit, one explicit --agent and --role, "
+            "and cannot be combined with --recover-incomplete or --replace-owned-session-launch"
         )
     root = workspace_root(root)
     directory = task_dir(root, task_id)
@@ -7054,6 +9010,15 @@ def dispatch_task(
     state = read_json(directory / "state.json")
     if not state:
         raise SystemExit(f"Missing state.json for task {task_id}")
+    if reprovision_done_session:
+        prior_delivery = [
+            receipt for receipt in load_dispatch_receipts(directory, task_id)
+            if receipt.get("event") in DELIVERY_RECEIPT_EVENTS
+            and receipt.get("agent") == agent
+            and receipt.get("role") == role
+        ]
+        if prior_delivery:
+            raise SystemExit("Fenced done-session reprovision is blocked after delivery receipt")
 
     expected_submission_marker = {"status": "recorded", "ref": "submission-dependencies.json"}
     routing_submission_marker = routing.get("submission_dependencies") or {}
@@ -7120,6 +9085,12 @@ def dispatch_task(
                 f"Translated {translated} existing legacy runtime receipt(s) before dependency evaluation",
             )
         receipts = load_dispatch_receipts(directory, task_id)
+        if manual_mode:
+            receipts = [
+                receipt
+                for receipt in receipts
+                if runtime_receipt_is_effective(directory, task_id, receipt)
+            ]
         automatic_frontier = (
             agent == "all"
             and role is None
@@ -7217,11 +9188,21 @@ def dispatch_task(
         and runtime_kind == "herdr"
         and owned_session_launch_replacement_pending(directory, state, phases)
     )
+    done_session_reprovision_retry = bool(
+        submit
+        and reprovision_done_session
+        and runtime_kind == "herdr"
+        and len(phases) == 1
+        and state.get("status") == "dispatching"
+        and read_json(directory / "iteration-budget.json").get("stop_reason")
+        == "runtime dispatch retry exhausted"
+    )
     runtime_retry = bool(
         submit
         and (
             runtime_dispatch_retry_pending(directory, state, runtime_kind, phases)
             or launch_replacement_retry
+            or done_session_reprovision_retry
         )
     )
     runtime_retry_reason = (
@@ -7231,6 +9212,8 @@ def dispatch_task(
     )
     if submit and not runtime_retry:
         enforce_iteration_budget(directory, routing, state, phases)
+    if submit:
+        enforce_cost_budget(directory, task_id)
 
     recorded_budgets = routing.get("dispatch_payload_budgets") or {}
     for target in targets:
@@ -7274,9 +9257,19 @@ def dispatch_task(
                 targets,
                 capabilities,
                 allow_launch_argv_change=replace_owned_session_launch,
+                allow_done_session_reprovision=reprovision_done_session,
             )
-            session_bindings = session_projection.get("bindings") or {}
+            session_bindings = targeted_session_bindings(session_projection, targets)
         except HerdrSubmissionError as exc:
+            if str(exc) == DONE_SESSION_REPROVISION_REQUIRED:
+                append_timeline_event(
+                    directory,
+                    "agent_session_reprovision_required",
+                    str(exc),
+                    work_item_ids=[f"{target_role}:{target}" for target, target_role in phases],
+                    attempt="precondition",
+                )
+                raise SystemExit(f"HERDR task-owned session provisioning failed: {exc}") from exc
             write_json(
                 directory / "agent-session-block.json",
                 {
@@ -7304,14 +9297,80 @@ def dispatch_task(
                 attempt="retry" if runtime_retry else "initial",
             )
             raise SystemExit(f"HERDR task-owned session provisioning failed: {exc}") from exc
-    preflight = collect_runtime_preflight(
-        targets,
-        runtime=runtime_kind,
-        session_bindings=session_bindings,
-        launch_argv_by_agent=launch_argv_by_agent,
-        version_command_by_agent=version_command_by_agent,
-    )
-    if any(
+    if submit:
+        preflight = collect_runtime_preflight(
+            targets,
+            runtime=runtime_kind,
+            session_bindings=session_bindings,
+            launch_argv_by_agent=launch_argv_by_agent,
+            version_command_by_agent=version_command_by_agent,
+        )
+    else:
+        preflight = (
+            (routing.get("runtime_adapter") or {}).get("preflight")
+            or read_json(directory / "runtime-preflight.json")
+        )
+    bootstrap_failed = False
+    bootstrap_succeeded = False
+    if submit and runtime_kind == "herdr" and session_bindings:
+        for target in targets:
+            binding = session_bindings.get(target)
+            agent_preflight = ((preflight.get("agents") or {}).get(target) or {})
+            readiness = agent_preflight.get("readiness") or {}
+            model_probe = agent_preflight.get("model_probe") or {}
+            needs_codex_session_bootstrap = (
+                target == "codex" and readiness.get("ready") is not True
+            )
+            needs_model_observation_bootstrap = (
+                target in {"claude", "hermes"}
+                and model_probe.get("status") == "unsupported"
+                and (
+                    target == "hermes"
+                    or readiness.get("ready") is True
+                )
+            )
+            if (
+                not isinstance(binding, dict)
+                or binding.get("lifecycle") != "provisioned"
+                or not (
+                    needs_codex_session_bootstrap
+                    or needs_model_observation_bootstrap
+                )
+            ):
+                continue
+            try:
+                session_projection = bootstrap_task_owned_herdr_session(
+                    directory,
+                    task_id,
+                    target,
+                    binding,
+                    herdr=activated_herdr_executable() or "herdr",
+                    timeout_seconds=max(
+                        60.0,
+                        min(float(wait_seconds or 30.0), 300.0),
+                    ),
+                )
+                session_bindings = targeted_session_bindings(session_projection, targets)
+                bootstrap_succeeded = True
+            except HerdrSubmissionError as exc:
+                bootstrap_failed = True
+                agent_record = (preflight.get("agents") or {}).get(target)
+                if isinstance(agent_record, dict):
+                    agent_record["status"] = "fail"
+                    agent_record["bootstrap_probe"] = {
+                        "status": "blocked",
+                        "reason": str(exc),
+                    }
+                preflight["status"] = "fail"
+    if bootstrap_succeeded:
+        preflight = collect_runtime_preflight(
+            targets,
+            runtime=runtime_kind,
+            session_bindings=session_bindings,
+            launch_argv_by_agent=launch_argv_by_agent,
+            version_command_by_agent=version_command_by_agent,
+        )
+    if not bootstrap_failed and any(
         isinstance(binding, dict) and binding.get("lifecycle") == "provisioned"
         for binding in (session_bindings or {}).values()
     ):
@@ -7338,7 +9397,7 @@ def dispatch_task(
         for name, record in (preflight.get("agents") or {}).items()
         if record.get("status") == "fail"
     ]
-    if preflight.get("status") == "fail" or failed:
+    if submit and (preflight.get("status") == "fail" or failed):
         write_json(directory / "runtime-preflight.json", preflight)
         budget = read_json(directory / "iteration-budget.json")
         if budget:
@@ -7358,7 +9417,8 @@ def dispatch_task(
             attempt="retry" if runtime_retry else "initial",
         )
         raise SystemExit("Runtime preflight failed for: " + target_summary)
-    write_json(directory / "runtime-preflight.json", preflight)
+    if submit:
+        write_json(directory / "runtime-preflight.json", preflight)
     model_dispatch_errors = (
         dynamic_model_dispatch_errors(
             routing,
@@ -7516,6 +9576,7 @@ def dispatch_task(
             pane_id = str(((preflight.get("agents") or {}).get(target) or {}).get("pane_id") or "")
             if not pane_id:
                 raise SystemExit(f"HERDR submission has no addressable pane for agent {target}")
+            baseline = expected_evidence_snapshot(directory, expected)
             try:
                 proof = submit_herdr_dispatch(
                     herdr,
@@ -7557,6 +9618,7 @@ def dispatch_task(
                     expected,
                     proof,
                     recovery=recovery_context,
+                    expected_evidence_baseline=baseline,
                 )
                 if recovery_context:
                     append_timeline_event(
@@ -7575,13 +9637,26 @@ def dispatch_task(
                         directory,
                         expected,
                         wait_seconds,
+                        baseline,
                     )
                     if completed:
+                        terminal_proof = None
+                        if (directory / "runtime" / "herdr" / "adoption.json").is_file():
+                            terminal_proof = observe_herdr_terminal(
+                                herdr,
+                                task_id=task_id,
+                                target=target,
+                                pane_id=pane_id,
+                                submission_proof=proof,
+                                run_command=run_command,
+                                timeout_seconds=max(proof_seconds, 5.0),
+                            )
                         write_herdr_completion_receipt(
                             directory,
                             task_id,
                             submission_receipt,
                             existing_refs,
+                            terminal_proof,
                         )
                         append_timeline_event(
                             directory,
@@ -7621,7 +9696,8 @@ def dispatch_task(
                     attempt="retry" if runtime_retry else "initial",
                 )
                 raise SystemExit(str(exc)) from exc
-    budget = read_json(directory / "iteration-budget.json")
-    if budget:
-        refresh_iteration_budget(directory, routing, budget)
+    if submit:
+        budget = read_json(directory / "iteration-budget.json")
+        if budget:
+            refresh_iteration_budget(directory, routing, budget)
     return commands

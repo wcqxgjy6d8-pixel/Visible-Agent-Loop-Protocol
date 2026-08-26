@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.3.0-rc.1
+
+- Prepares the installation control plane, layered protocol kernel, adapter
+  boundary, evidence contracts, and `0.3.0rc1` reference CLI as the release
+  candidate for the `0.3.0` protocol line. Stable status remains gated by RFC
+  0001 Sections 20 and 21.
+- Adds an explicit, digest-checked `0.3.0-draft -> 0.3.0` installation migration
+  that checkpoints the complete control root, preserves Leader authority,
+  fences terminal draft Tasks as legacy-read-only, resumes interrupted control
+  transitions, rolls back activation failures, and keeps legacy `0.2.0`
+  workspace import separate.
 
 - Redesigns Doctor and routing authority: Doctor commissions per-surface/session
   capability passports, the user selects the Leader, the Leader declares task
@@ -21,6 +31,14 @@
   shortest PASS -> FAIL -> PASS audit demo.
 - Adds a terminal-style hero demo asset to show PASS -> FAIL -> PASS before a
   reader reaches the long README sections.
+- Adds a deterministic, read-only single-task Task Graph and documents that
+  Neo4j is deferred to a future optional Ontology projection, never protocol or
+  audit authority.
+- Rebuilds the public animated workflow around the Doctor -> Leader -> Worker
+  -> Evidence -> Audit path, with editable Excalidraw and static PNG sources.
+- Normalizes machine-readable artifact references to POSIX form across hosts,
+  rejects Unix, Windows, and UNC absolute evidence paths consistently, and
+  makes Unix-socket framing tests portable without weakening transport checks.
 - Links active RFC, adapter feedback, and good-first-issue entry points from
   README, Pages, community docs, and Chinese README.
 

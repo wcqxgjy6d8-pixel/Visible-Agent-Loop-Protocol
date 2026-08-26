@@ -1,0 +1,141 @@
+{
+  "canvas": {
+    "width": 1210,
+    "height": 1138,
+    "fps": 20,
+    "frames": 41
+  },
+  "signature": "VALP / 0.3 RC",
+  "title": {
+    "prefix": "VALP 工作流",
+    "highlight": "先证据 再 Done",
+    "subtitle": "Doctor -> Leader -> Worker -> Evidence -> Audit"
+  },
+  "input_title": "授权 / 输入",
+  "read_label": "观察",
+  "context_label": "当前真值",
+  "inputs": [
+    {
+      "label": "用户授权",
+      "icon": "file",
+      "color": "#7ee3d6"
+    },
+    {
+      "label": "任务",
+      "icon": "folder",
+      "color": "#38bdf8"
+    },
+    {
+      "label": "Agent 能力",
+      "icon": "package",
+      "color": "#f4b64e"
+    },
+    {
+      "label": "外部 Runtime",
+      "icon": "shield",
+      "color": "#ff7ab6"
+    }
+  ],
+  "core": {
+    "title": "可见证据闭环",
+    "subtitle": "（协议不绑定 Worker 或 Provider）",
+    "cards": [
+      {
+        "title": "Doctor",
+        "body": "能力护照\n用户选 Leader",
+        "icon": "scan"
+      },
+      {
+        "title": "Leader",
+        "body": "声明分工\n契约与派送",
+        "icon": "shield"
+      },
+      {
+        "title": "Worker",
+        "body": "回执与证据\n验证与复审",
+        "icon": "hash"
+      }
+    ]
+  },
+  "decision": {
+    "title": "Audit 通过？",
+    "body": "review\napproval",
+    "yes_label": "PASS"
+  },
+  "output": {
+    "label": "PASS / WARN\n/ FAIL",
+    "icon": "file"
+  },
+  "loop_label": "缺证据或冲突：修复 → 重派 → 复审",
+  "retry_label": "FAIL / 不允许假 Done",
+  "left_panel": {
+    "title": "任务契约",
+    "badge": "task-local",
+    "cards": [
+      {
+        "title": "Task",
+        "body": "目标与 WorkItem",
+        "icon": "file"
+      },
+      {
+        "title": "Context",
+        "body": "最小必要上下文",
+        "icon": "folder"
+      },
+      {
+        "title": "Skills",
+        "body": "推荐、使用或跳过",
+        "icon": "shield"
+      }
+    ]
+  },
+  "center_panel": {
+    "title": "证据账本",
+    "subtitle": "（可重放、绑定摘要、fail closed）",
+    "footer": "receipt ≠ evidence ≠ audit",
+    "cards": [
+      {
+        "title": "Dispatch",
+        "body": "written / submitted",
+        "icon": "file"
+      },
+      {
+        "title": "Evidence",
+        "body": "expected / produced",
+        "icon": "folder"
+      },
+      {
+        "title": "Review",
+        "body": "independent / fixes",
+        "icon": "hash"
+      },
+      {
+        "title": "Close",
+        "body": "approval / synthesis",
+        "icon": "db"
+      }
+    ]
+  },
+  "right_panel": {
+    "title": "可复核视图",
+    "incoming_label": "投影",
+    "return_label": "只读",
+    "cards": [
+      {
+        "title": "Audit",
+        "body": "PASS / WARN / FAIL",
+        "icon": "package"
+      },
+      {
+        "title": "Task Graph",
+        "body": "单任务 · 确定性",
+        "icon": "folder"
+      },
+      {
+        "title": "Next: Ontology",
+        "body": "Neo4j 可选\n永远非权威",
+        "icon": "file"
+      }
+    ]
+  }
+}

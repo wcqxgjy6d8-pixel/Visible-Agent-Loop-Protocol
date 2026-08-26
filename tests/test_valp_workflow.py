@@ -6,6 +6,7 @@ from datetime import datetime
 import contextlib
 import errno
 import hashlib
+import inspect
 import io
 import json
 import os
@@ -21,6 +22,7 @@ import valp_cli.workflow as workflow_module
 from valp_cli.audit import TaskAudit
 from valp_cli.cli import main
 from valp_cli.herdr_adapter import HerdrSubmissionError
+from valp_cli.model_identity import model_identity_for
 from valp_cli.submission import (
     build_submission_dependencies,
     dependency_order_errors,
@@ -74,6 +76,831 @@ def herdr_invocation_proof(*, pane_id: str = "pane-1") -> dict[str, object]:
 
 
 class ValpWorkflowTests(unittest.TestCase):
+    def test_herdr_expected_evidence_requires_a_post_submission_content_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            ref = "agents/codex/evidence.md"
+            evidence = directory / ref
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("old evidence\n", encoding="utf-8")
+
+            baseline = workflow_module.expected_evidence_snapshot(directory, [ref])
+            completed, existing, missing = workflow_module.herdr_expected_ref_status(
+                directory, [ref], baseline
+            )
+            self.assertFalse(completed)
+            self.assertEqual(existing, [])
+            self.assertEqual(missing, [ref])
+
+            evidence.write_text("fresh evidence\n", encoding="utf-8")
+            completed, existing, missing = workflow_module.herdr_expected_ref_status(
+                directory, [ref], baseline
+            )
+            self.assertTrue(completed)
+            self.assertEqual(existing, [ref])
+            self.assertEqual(missing, [])
+
+    def test_bootstrap_task_owned_codex_session_runs_once_before_formal_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            task_id = "TASK-CODEX-BOOTSTRAP"
+            pane_id = "workspace-owned:p1"
+            contract = workflow_module.build_control_contract(
+                task_id, "2026-08-08T06:00:00Z"
+            )
+            contract_bytes = (json.dumps(contract, indent=2, ensure_ascii=False) + "\n").encode()
+            digest = workflow_module.control_contract_digest(contract, contract_bytes)
+            control_slice = workflow_module.build_control_slice(
+                task_id,
+                "codex",
+                ["implementer:codex"],
+                digest,
+            )
+            (directory / "control-slices").mkdir()
+            (directory / "control-contract.json").write_bytes(contract_bytes)
+            (directory / "control-slices" / "codex.json").write_text(
+                json.dumps(control_slice, indent=2) + "\n", encoding="utf-8"
+            )
+            binding = {
+                "agent": "codex",
+                "session_name": "task-codex",
+                "generation": 1,
+                "ownership": {
+                    "scope": "task",
+                    "task_id": task_id,
+                    "project_identity": "sha256:" + ("c" * 64),
+                },
+                "context": {"cwd": str(directory)},
+                "launch": {"argv": ["/test/codex", "-m", "model-implementation-large"]},
+                "focused_at_provisioning": False,
+                "runtime_scope": {"kind": "workspace", "ownership": "task"},
+                "runtime_identity": {
+                    "pane_id": pane_id,
+                    "terminal_id": "terminal-owned",
+                    "workspace_id": "workspace-owned",
+                    "tab_id": "tab-owned",
+                    "token": "sha256:" + ("a" * 64),
+                },
+                "lifecycle": "provisioned",
+                "dispatch_eligible": True,
+            }
+            projection = {
+                "schema_version": "valp-agent-sessions.v1",
+                "task_id": task_id,
+                "adapter": "herdr",
+                "status": "ready",
+                "bindings": {"codex": binding},
+                "updated_at": "2026-08-08T06:00:00Z",
+            }
+            (directory / "agent-sessions.json").write_text(
+                json.dumps(projection), encoding="utf-8"
+            )
+            (directory / "agent-session-receipts.jsonl").write_text(
+                "", encoding="utf-8"
+            )
+            (directory / "dispatch-receipts.jsonl").write_text(
+                json.dumps({"event": "dispatch_written", "agent": "codex"}) + "\n",
+                encoding="utf-8",
+            )
+            calls: list[list[str]] = []
+            readiness_calls = 0
+
+            def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
+                nonlocal readiness_calls
+                calls.append(command)
+                if command[1:3] == ["agent", "readiness"]:
+                    readiness_calls += 1
+                    if readiness_calls == 1:
+                        readiness = {
+                            "schema_version": "valp-named-agent-readiness.v1",
+                            "ready": False,
+                            "reason_code": "session_identity_unknown",
+                            "addressable": True,
+                            "detected_agent": "codex",
+                            "agent_status": "idle",
+                            "interactive_ready": True,
+                            "prompt_eligible": False,
+                            "session_identity": {"status": "unknown"},
+                            "state_change_seq": 10,
+                        }
+                    else:
+                        readiness = {
+                            "schema_version": "valp-named-agent-readiness.v1",
+                            "ready": True,
+                            "reason_code": "ready",
+                            "addressable": True,
+                            "detected_agent": "codex",
+                            "agent_status": "done",
+                            "interactive_ready": True,
+                            "prompt_eligible": True,
+                            "session_identity": {
+                                "status": "known",
+                                "identity": {
+                                    "source": "herdr:codex",
+                                    "agent": "codex",
+                                    "kind": "id",
+                                    "value": "native-session",
+                                },
+                            },
+                            "state_change_seq": 12,
+                        }
+                    stdout = json.dumps(
+                        {"result": {"type": "agent_readiness", "readiness": readiness}}
+                    )
+                elif command[1:3] == ["agent", "get"]:
+                    stdout = json.dumps({"result": {"type": "agent_info", "agent": {
+                        "terminal_id": "terminal-owned", "name": "task-codex",
+                        "agent": "codex", "agent_status": "idle", "pane_id": pane_id,
+                        "state_change_seq": 10,
+                    }}})
+                elif command[1:3] == ["pane", "read"]:
+                    stdout = "Codex ready for input\n"
+                elif command[1:3] == ["agent", "prompt"]:
+                    self.assertTrue(command[4].startswith("[VALP CONTROL SLICE]\n"))
+                    self.assertIn(digest, command[4])
+                    self.assertIn(
+                        "Resolve control_contract_ref relative to this task directory: "
+                        f"{directory.resolve()}",
+                        command[4],
+                    )
+                    stdout = json.dumps({"result": {"type": "agent_prompted", "agent": {
+                        "terminal_id": "terminal-owned", "name": "task-codex",
+                        "agent": "codex", "agent_status": "done", "pane_id": pane_id,
+                        "state_change_seq": 12,
+                    }}})
+                elif command[1:3] == ["pane", "wait-output"]:
+                    self.assertEqual(
+                        command[5],
+                        r"^(?:BOOTSTRAP_READY|• BOOTSTRAP_READY|⏺ BOOTSTRAP_READY)$",
+                    )
+                    stdout = json.dumps({"result": {
+                        "type": "output_matched",
+                        "pane_id": pane_id,
+                        "matched_line": "• BOOTSTRAP_READY",
+                    }})
+                elif command[1:3] == ["agent", "model-probe"]:
+                    native_digest = hashlib.sha256(b"native-session").hexdigest()
+                    stdout = json.dumps({"result": {"type": "agent_model_probe", "probe": {
+                        "schema_version": "valp-model-probe.v1", "status": "observed",
+                        "source": "herdr:codex structured Stop hook", "observed_at": workflow_module.now_iso(),
+                        "ttl_seconds": 3600,
+                        "model": {"model_id": "model-implementation-large", "provider": "provider-relay", "reasoning_mode": "medium", "confidence": "high"},
+                        "session_identity": {
+                            "status": "known",
+                            "token": f"sha256:{native_digest}",
+                            "source": "herdr:codex",
+                            "generation": f"session:{native_digest[:16]}",
+                        },
+                    }}})
+                else:
+                    raise AssertionError(f"unexpected command: {command}")
+                return {"ok": True, "exit_code": 0, "stdout": stdout, "stderr": ""}
+
+            updated = workflow_module.bootstrap_task_owned_herdr_session(
+                directory,
+                task_id,
+                "codex",
+                binding,
+                herdr="/test/herdr",
+                run_command_fn=fake_run,
+                timeout_seconds=1,
+                poll_interval_seconds=0,
+            )
+
+            verified = updated["bindings"]["codex"]
+            self.assertEqual(verified["lifecycle"], "bootstrap_ready")
+            evidence = json.loads(
+                (directory / verified["bootstrap_verification"]["evidence_ref"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(evidence["formal_dispatch_count"], 0)
+            self.assertEqual(evidence["native_turn"]["actual_response"], "BOOTSTRAP_READY")
+            self.assertEqual(
+                evidence["response_proof"]["authority"], "response_only_not_identity_or_model"
+            )
+            self.assertEqual(
+                evidence["response_proof"]["raw_matched_line"], "• BOOTSTRAP_READY"
+            )
+            self.assertEqual(
+                evidence["response_proof"]["renderer_envelope"], "codex_list_marker"
+            )
+            self.assertFalse(any(call[1:3] == ["pane", "send-text"] for call in calls))
+
+            before = len(calls)
+            repeated = workflow_module.bootstrap_task_owned_herdr_session(
+                directory,
+                task_id,
+                "codex",
+                verified,
+                herdr="/test/herdr",
+                run_command_fn=fake_run,
+                timeout_seconds=1,
+                poll_interval_seconds=0,
+            )
+            self.assertEqual(repeated["bindings"]["codex"]["lifecycle"], "bootstrap_ready")
+            self.assertEqual(len(calls), before)
+            self.assertEqual(
+                list(
+                    schema_validator(
+                        Path("schemas/agent-sessions.schema.json")
+                    ).iter_errors(repeated)
+                ),
+                [],
+            )
+
+    def test_bootstrap_response_normalization_accepts_only_declared_envelopes(self) -> None:
+        accepted = {
+            "BOOTSTRAP_READY": "bare",
+            "• BOOTSTRAP_READY": "codex_list_marker",
+            "⏺ BOOTSTRAP_READY": "claude_action_marker",
+        }
+        for raw_line, envelope in accepted.items():
+            with self.subTest(raw_line=raw_line):
+                self.assertEqual(
+                    workflow_module._normalize_herdr_bootstrap_response(raw_line),
+                    ("BOOTSTRAP_READY", envelope),
+                )
+
+        for raw_line in (
+            "⏺  BOOTSTRAP_READY",
+            "⏺ BOOTSTRAP_READY extra",
+            "prefix ⏺ BOOTSTRAP_READY",
+            "● BOOTSTRAP_READY",
+        ):
+            with self.subTest(raw_line=raw_line):
+                self.assertIsNone(
+                    workflow_module._normalize_herdr_bootstrap_response(raw_line)
+                )
+
+    def test_bootstrap_task_owned_codex_session_fails_closed_before_prompt(self) -> None:
+        for case in ("wrong_reason", "formal_dispatch"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp)
+                task_id = "TASK-CODEX-BOOTSTRAP-REJECT"
+                contract = workflow_module.build_control_contract(
+                    task_id, "2026-08-08T06:00:00Z"
+                )
+                contract_bytes = (json.dumps(contract, indent=2, ensure_ascii=False) + "\n").encode()
+                digest = workflow_module.control_contract_digest(contract, contract_bytes)
+                control_slice = workflow_module.build_control_slice(
+                    task_id, "codex", ["implementer:codex"], digest
+                )
+                (directory / "control-slices").mkdir()
+                (directory / "control-contract.json").write_bytes(contract_bytes)
+                (directory / "control-slices" / "codex.json").write_text(
+                    json.dumps(control_slice), encoding="utf-8"
+                )
+                binding = {
+                    "agent": "codex", "generation": 1,
+                    "ownership": {"scope": "task", "task_id": task_id},
+                    "runtime_identity": {"pane_id": "pane-1", "token": "sha256:" + ("a" * 64)},
+                    "lifecycle": "provisioned", "dispatch_eligible": True,
+                }
+                (directory / "agent-sessions.json").write_text(json.dumps({
+                    "schema_version": "valp-agent-sessions.v1", "task_id": task_id,
+                    "adapter": "herdr", "status": "ready", "bindings": {"codex": binding},
+                }), encoding="utf-8")
+                (directory / "agent-session-receipts.jsonl").write_text("", encoding="utf-8")
+                receipt = {"event": "dispatch_submitted", "agent": "codex"} if case == "formal_dispatch" else {"event": "dispatch_written", "agent": "codex"}
+                (directory / "dispatch-receipts.jsonl").write_text(json.dumps(receipt) + "\n", encoding="utf-8")
+                calls: list[list[str]] = []
+
+                def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
+                    calls.append(command)
+                    readiness = {
+                        "schema_version": "valp-named-agent-readiness.v1", "ready": False,
+                        "reason_code": "not_interactive" if case == "wrong_reason" else "session_identity_unknown",
+                        "addressable": True, "detected_agent": "codex", "agent_status": "idle",
+                        "interactive_ready": case != "wrong_reason", "prompt_eligible": False,
+                        "session_identity": {"status": "unknown"}, "state_change_seq": 1,
+                    }
+                    return {"ok": True, "exit_code": 0, "stdout": json.dumps({"result": {"type": "agent_readiness", "readiness": readiness}}), "stderr": ""}
+
+                with self.assertRaises(HerdrSubmissionError):
+                    workflow_module.bootstrap_task_owned_herdr_session(
+                        directory, task_id, "codex", binding,
+                        herdr="/test/herdr", run_command_fn=fake_run,
+                        timeout_seconds=1, poll_interval_seconds=0,
+                    )
+                self.assertFalse(any(call[1:3] == ["agent", "prompt"] for call in calls))
+
+    def test_bootstrap_task_owned_claude_session_observes_model_on_same_native_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            task_id = "TASK-CLAUDE-MODEL-BOOTSTRAP"
+            pane_id = "workspace-claude:p1"
+            native_session_id = "claude-native-session"
+            native_digest = hashlib.sha256(native_session_id.encode()).hexdigest()
+            contract = workflow_module.build_control_contract(
+                task_id, "2026-08-08T10:00:00Z"
+            )
+            contract_bytes = (json.dumps(contract, indent=2) + "\n").encode()
+            digest = workflow_module.control_contract_digest(contract, contract_bytes)
+            control_slice = workflow_module.build_control_slice(
+                task_id, "claude", ["reviewer:claude"], digest
+            )
+            (directory / "control-slices").mkdir()
+            (directory / "control-contract.json").write_bytes(contract_bytes)
+            (directory / "control-slices" / "claude.json").write_text(
+                json.dumps(control_slice), encoding="utf-8"
+            )
+            binding = {
+                "agent": "claude",
+                "session_name": "task-claude",
+                "generation": 2,
+                "ownership": {"scope": "task", "task_id": task_id},
+                "context": {"cwd": str(directory)},
+                "launch": {"argv": ["/test/claude"]},
+                "focused_at_provisioning": False,
+                "runtime_scope": {"kind": "workspace", "ownership": "task"},
+                "runtime_identity": {
+                    "pane_id": pane_id,
+                    "terminal_id": "terminal-claude",
+                    "token": "sha256:" + ("a" * 64),
+                },
+                "lifecycle": "provisioned",
+                "dispatch_eligible": True,
+            }
+            (directory / "agent-sessions.json").write_text(json.dumps({
+                "schema_version": "valp-agent-sessions.v1",
+                "task_id": task_id,
+                "adapter": "herdr",
+                "status": "ready",
+                "bindings": {"claude": binding},
+            }), encoding="utf-8")
+            (directory / "agent-session-receipts.jsonl").write_text("", encoding="utf-8")
+            (directory / "dispatch-receipts.jsonl").write_text(
+                json.dumps({"event": "dispatch_written", "agent": "claude"}) + "\n"
+                + json.dumps({
+                    "schema_version": "valp-dispatch-receipt.v2",
+                    "event": "dispatch_submitted",
+                    "agent": "claude",
+                    "role": "coordinator",
+                    "work_item_id": "coordinator:claude",
+                    "proof": {"session_binding": {"generation": 1}},
+                }) + "\n",
+                encoding="utf-8",
+            )
+            calls: list[list[str]] = []
+            readiness_calls = 0
+            model_probe_calls = 0
+
+            def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
+                nonlocal readiness_calls, model_probe_calls
+                calls.append(command)
+                if command[1:3] == ["agent", "readiness"]:
+                    readiness_calls += 1
+                    readiness = {
+                        "schema_version": "valp-named-agent-readiness.v1",
+                        "ready": True,
+                        "reason_code": "ready",
+                        "addressable": True,
+                        "detected_agent": "claude",
+                        "agent_status": "idle",
+                        "interactive_ready": True,
+                        "prompt_eligible": True,
+                        "session_identity": {
+                            "status": "known",
+                            "identity": {
+                                "source": "herdr:claude",
+                                "agent": "claude",
+                                "kind": "id",
+                                "value": native_session_id,
+                            },
+                        },
+                        "state_change_seq": 22 if readiness_calls > 1 else 20,
+                    }
+                    stdout = json.dumps({"result": {
+                        "type": "agent_readiness", "readiness": readiness,
+                    }})
+                elif command[1:3] == ["agent", "model-probe"]:
+                    model_probe_calls += 1
+                    probe = {
+                        "schema_version": "valp-model-probe.v1",
+                        "status": "unsupported",
+                        "source": "runtime integration has no current model observation",
+                        "ttl_seconds": 3600,
+                    } if model_probe_calls == 1 else {
+                        "schema_version": "valp-model-probe.v1",
+                        "status": "observed",
+                        "source": "herdr:claude structured Stop hook",
+                        "observed_at": workflow_module.now_iso(),
+                        "ttl_seconds": 3600,
+                        "model": {
+                            "model_id": "model-review-large",
+                            "provider": "deepseek",
+                            "reasoning_mode": "low",
+                            "confidence": "high",
+                        },
+                        "session_identity": {
+                            "status": "known",
+                            "token": f"sha256:{native_digest}",
+                            "source": "herdr:claude",
+                            "generation": f"session:{native_digest[:16]}",
+                        },
+                    }
+                    stdout = json.dumps({"result": {
+                        "type": "agent_model_probe", "probe": probe,
+                    }})
+                elif command[1:3] == ["agent", "get"]:
+                    stdout = json.dumps({"result": {"type": "agent_info", "agent": {
+                        "terminal_id": "terminal-claude", "name": "task-claude",
+                        "agent": "claude", "agent_status": "idle", "pane_id": pane_id,
+                        "state_change_seq": 20,
+                    }}})
+                elif command[1:3] == ["pane", "read"]:
+                    stdout = "Claude ready for input\n"
+                elif command[1:3] == ["agent", "prompt"]:
+                    self.assertTrue(command[4].startswith("[VALP CONTROL SLICE]\n"))
+                    self.assertIn(digest, command[4])
+                    stdout = json.dumps({"result": {"type": "agent_prompted", "agent": {
+                        "terminal_id": "terminal-claude", "name": "task-claude",
+                        "agent": "claude", "agent_status": "idle", "pane_id": pane_id,
+                        "state_change_seq": 22,
+                    }}})
+                elif command[1:3] == ["pane", "wait-output"]:
+                    stdout = json.dumps({"result": {
+                        "type": "output_matched", "pane_id": pane_id,
+                        "matched_line": "BOOTSTRAP_READY",
+                    }})
+                else:
+                    raise AssertionError(f"unexpected command: {command}")
+                return {"ok": True, "exit_code": 0, "stdout": stdout, "stderr": ""}
+
+            updated = workflow_module.bootstrap_task_owned_herdr_session(
+                directory, task_id, "claude", binding,
+                herdr="/test/herdr", run_command_fn=fake_run,
+                timeout_seconds=1, poll_interval_seconds=0,
+            )
+
+            verified = updated["bindings"]["claude"]
+            evidence = json.loads((
+                directory / verified["bootstrap_verification"]["evidence_ref"]
+            ).read_text(encoding="utf-8"))
+            self.assertEqual(verified["lifecycle"], "bootstrap_ready")
+            self.assertEqual(evidence["target"]["native_session_id"], native_session_id)
+            self.assertEqual(evidence["structured_observation"]["session_id"], native_session_id)
+            self.assertEqual(evidence["native_turn"]["provider"], "deepseek")
+            self.assertEqual(evidence["native_turn"]["model"], "model-review-large")
+            self.assertEqual(evidence["native_turn"]["reasoning_mode"], "low")
+            self.assertEqual(evidence["formal_dispatch_count"], 0)
+            self.assertEqual(model_probe_calls, 2)
+            self.assertTrue(any(call[1:3] == ["agent", "prompt"] for call in calls))
+
+    def test_bootstrap_task_owned_hermes_session_uses_the_strong_model_path(self) -> None:
+        source = inspect.getsource(workflow_module.bootstrap_task_owned_herdr_session)
+
+        self.assertIn('{"codex", "claude", "hermes"}', source)
+        self.assertIn('hermes_bootstrap_ready', source)
+        self.assertIn('agent == "hermes"', source)
+        self.assertIn('reason_code") == "session_identity_unknown"', source)
+        self.assertIn('if agent in {"claude", "hermes"}', source)
+        self.assertNotIn('agent in {"claude", "hermes", "agy"}', source)
+        self.assertNotIn('agent in {"claude", "hermes", "grok"}', source)
+
+    def test_done_session_reprovision_is_a_bounded_runtime_retry(self) -> None:
+        source = inspect.getsource(workflow_module.dispatch_task)
+
+        self.assertIn("done_session_reprovision_retry", source)
+        self.assertIn('state.get("status") == "dispatching"', source)
+        self.assertIn('== "runtime dispatch retry exhausted"', source)
+        self.assertIn("or done_session_reprovision_retry", source)
+
+    def test_existing_provisioning_receipt_is_not_duplicated_before_bootstrap(self) -> None:
+        source = inspect.getsource(workflow_module.ensure_herdr_agent_sessions)
+
+        self.assertIn('binding["lifecycle"] == "provisioned" and any(', source)
+        self.assertIn('record.get("event") == "agent_session_provisioned"', source)
+        self.assertIn('record.get("identity_token")', source)
+
+    def test_bootstrap_task_owned_claude_session_rejects_unsupported_probe_with_model_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            task_id = "TASK-CLAUDE-AMBIGUOUS-MODEL-BOOTSTRAP"
+            pane_id = "workspace-claude:p1"
+            contract = workflow_module.build_control_contract(
+                task_id, "2026-08-08T10:00:00Z"
+            )
+            contract_bytes = (json.dumps(contract, indent=2) + "\n").encode()
+            digest = workflow_module.control_contract_digest(contract, contract_bytes)
+            control_slice = workflow_module.build_control_slice(
+                task_id, "claude", ["reviewer:claude"], digest
+            )
+            (directory / "control-slices").mkdir()
+            (directory / "control-contract.json").write_bytes(contract_bytes)
+            (directory / "control-slices" / "claude.json").write_text(
+                json.dumps(control_slice), encoding="utf-8"
+            )
+            binding = {
+                "agent": "claude", "generation": 1,
+                "ownership": {"scope": "task", "task_id": task_id},
+                "runtime_identity": {
+                    "pane_id": pane_id,
+                    "terminal_id": "terminal-claude",
+                    "token": "sha256:" + ("a" * 64),
+                },
+                "lifecycle": "provisioned", "dispatch_eligible": True,
+            }
+            (directory / "agent-sessions.json").write_text(json.dumps({
+                "schema_version": "valp-agent-sessions.v1", "task_id": task_id,
+                "adapter": "herdr", "status": "ready", "bindings": {"claude": binding},
+            }), encoding="utf-8")
+            (directory / "agent-session-receipts.jsonl").write_text("", encoding="utf-8")
+            (directory / "dispatch-receipts.jsonl").write_text(
+                json.dumps({"event": "dispatch_written", "agent": "claude"}) + "\n",
+                encoding="utf-8",
+            )
+            calls: list[list[str]] = []
+
+            def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
+                calls.append(command)
+                if command[1:3] == ["agent", "readiness"]:
+                    stdout = json.dumps({"result": {"type": "agent_readiness", "readiness": {
+                        "schema_version": "valp-named-agent-readiness.v1",
+                        "ready": True, "reason_code": "ready", "addressable": True,
+                        "detected_agent": "claude", "agent_status": "idle",
+                        "interactive_ready": True, "prompt_eligible": True,
+                        "session_identity": {"status": "known", "identity": {
+                            "source": "herdr:claude", "agent": "claude", "kind": "id",
+                            "value": "claude-native-session",
+                        }},
+                        "state_change_seq": 20,
+                    }}})
+                elif command[1:3] == ["agent", "model-probe"]:
+                    stdout = json.dumps({"result": {"type": "agent_model_probe", "probe": {
+                        "schema_version": "valp-model-probe.v1",
+                        "status": "unsupported",
+                        "source": "conflicting runtime payload",
+                        "ttl_seconds": 3600,
+                        "model": {
+                            "model_id": "spoofed-model", "provider": "spoofed-provider",
+                            "reasoning_mode": "unknown", "confidence": "low",
+                        },
+                    }}})
+                else:
+                    raise AssertionError(f"bootstrap advanced past ambiguous model proof: {command}")
+                return {"ok": True, "exit_code": 0, "stdout": stdout, "stderr": ""}
+
+            with self.assertRaises(HerdrSubmissionError):
+                workflow_module.bootstrap_task_owned_herdr_session(
+                    directory, task_id, "claude", binding,
+                    herdr="/test/herdr", run_command_fn=fake_run,
+                    timeout_seconds=0, poll_interval_seconds=0,
+                )
+            self.assertFalse(any(call[1:3] == ["agent", "prompt"] for call in calls))
+
+    def test_bootstrap_task_owned_codex_session_rejects_identity_and_replay_conflicts(self) -> None:
+        for case in (
+            "control_digest",
+            "wrong_pane",
+            "wrong_generation",
+            "model_session",
+            "model_token",
+            "model_generation",
+            "raw_native_generation",
+            "preexisting_response",
+            "prompt_spoof",
+            "missing_matched_line",
+            "repeated_unverified",
+            "current_generation_delivery",
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp)
+                task_id = "TASK-CODEX-BOOTSTRAP-CONFLICT"
+                pane_id = "workspace-owned:p1"
+                contract = workflow_module.build_control_contract(
+                    task_id, "2026-08-08T06:00:00Z"
+                )
+                contract_bytes = (
+                    json.dumps(contract, indent=2, ensure_ascii=False) + "\n"
+                ).encode()
+                digest = workflow_module.control_contract_digest(contract, contract_bytes)
+                control_slice = workflow_module.build_control_slice(
+                    task_id, "codex", ["implementer:codex"], digest
+                )
+                if case == "control_digest":
+                    control_slice["control_contract_digest"] = "sha256:" + ("f" * 64)
+                (directory / "control-slices").mkdir()
+                (directory / "control-contract.json").write_bytes(contract_bytes)
+                (directory / "control-slices" / "codex.json").write_text(
+                    json.dumps(control_slice), encoding="utf-8"
+                )
+                binding = {
+                    "agent": "codex",
+                    "session_name": "task-codex",
+                    "generation": 1,
+                    "ownership": {"scope": "task", "task_id": task_id},
+                    "context": {"cwd": str(directory)},
+                    "launch": {"argv": ["/test/codex", "-m", "model-implementation-large"]},
+                    "focused_at_provisioning": False,
+                    "runtime_scope": {"kind": "workspace", "ownership": "task"},
+                    "runtime_identity": {
+                        "pane_id": pane_id,
+                        "terminal_id": "terminal-owned",
+                        "token": "sha256:" + ("a" * 64),
+                    },
+                    "lifecycle": "provisioned",
+                    "dispatch_eligible": True,
+                }
+                (directory / "agent-sessions.json").write_text(
+                    json.dumps(
+                        {
+                            "schema_version": "valp-agent-sessions.v1",
+                            "task_id": task_id,
+                            "adapter": "herdr",
+                            "status": "ready",
+                            "bindings": {"codex": binding},
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                (directory / "agent-session-receipts.jsonl").write_text(
+                    "", encoding="utf-8"
+                )
+                receipt = {"event": "dispatch_written", "agent": "codex"}
+                if case == "current_generation_delivery":
+                    receipt = {
+                        "schema_version": "valp-dispatch-receipt.v2",
+                        "event": "dispatch_submitted",
+                        "agent": "codex",
+                        "proof": {"session_binding": {"generation": 1}},
+                    }
+                (directory / "dispatch-receipts.jsonl").write_text(
+                    json.dumps(receipt) + "\n", encoding="utf-8"
+                )
+                if case == "repeated_unverified":
+                    evidence_dir = directory / "evidence"
+                    evidence_dir.mkdir()
+                    (evidence_dir / "bootstrap-probe-codex-g1.json").write_text(
+                        json.dumps({"accepted": False}), encoding="utf-8"
+                    )
+
+                calls: list[list[str]] = []
+                readiness_calls = 0
+
+                def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
+                    nonlocal readiness_calls
+                    calls.append(command)
+                    if command[1:3] == ["agent", "readiness"]:
+                        readiness_calls += 1
+                        known = readiness_calls > 1
+                        readiness = {
+                            "schema_version": "valp-named-agent-readiness.v1",
+                            "ready": known,
+                            "reason_code": "ready" if known else "session_identity_unknown",
+                            "addressable": True,
+                            "detected_agent": "codex",
+                            "agent_status": "done" if known else "idle",
+                            "interactive_ready": True,
+                            "prompt_eligible": known,
+                            "session_identity": (
+                                {
+                                    "status": "known",
+                                    "identity": {
+                                        "source": "herdr:codex",
+                                        "agent": "codex",
+                                        "kind": "id",
+                                        "value": "native-session",
+                                    },
+                                }
+                                if known
+                                else {"status": "unknown"}
+                            ),
+                            "state_change_seq": 12 if known else 10,
+                        }
+                        stdout = json.dumps(
+                            {"result": {"type": "agent_readiness", "readiness": readiness}}
+                        )
+                    elif command[1:3] == ["agent", "get"]:
+                        stdout = json.dumps(
+                            {
+                                "result": {
+                                    "type": "agent_info",
+                                    "agent": {
+                                        "terminal_id": "terminal-owned",
+                                        "name": "task-codex",
+                                        "agent": "codex",
+                                        "agent_status": "idle",
+                                        "pane_id": "other:p1" if case == "wrong_pane" else pane_id,
+                                        "state_change_seq": 10,
+                                    },
+                                }
+                            }
+                        )
+                    elif command[1:3] == ["pane", "read"]:
+                        stdout = (
+                            "• BOOTSTRAP_READY\n"
+                            if case == "preexisting_response"
+                            else "Codex ready for input\n"
+                        )
+                    elif command[1:3] == ["agent", "prompt"]:
+                        stdout = json.dumps(
+                            {
+                                "result": {
+                                    "type": "agent_prompted",
+                                    "agent": {
+                                        "terminal_id": "terminal-owned",
+                                        "name": "task-codex",
+                                        "agent": "codex",
+                                        "agent_status": "done",
+                                        "pane_id": pane_id,
+                                        "state_change_seq": 12,
+                                    },
+                                }
+                            }
+                        )
+                    elif command[1:3] == ["pane", "wait-output"]:
+                        matched_line = (
+                            "Load and honor the control slice, then respond with exactly "
+                            "BOOTSTRAP_READY and nothing else."
+                            if case == "prompt_spoof"
+                            else None if case == "missing_matched_line" else "BOOTSTRAP_READY"
+                        )
+                        stdout = json.dumps(
+                            {
+                                "result": {
+                                    "type": "output_matched",
+                                    "pane_id": pane_id,
+                                    "matched_line": matched_line,
+                                }
+                            }
+                        )
+                    elif command[1:3] == ["agent", "model-probe"]:
+                        native_digest = hashlib.sha256(b"native-session").hexdigest()
+                        stdout = json.dumps(
+                            {
+                                "result": {
+                                    "type": "agent_model_probe",
+                                    "probe": {
+                                        "schema_version": "valp-model-probe.v1",
+                                        "status": "observed",
+                                        "source": "herdr:codex structured Stop hook",
+                                        "observed_at": workflow_module.now_iso(),
+                                        "ttl_seconds": 3600,
+                                        "model": {
+                                            "model_id": "model-implementation-large",
+                                            "provider": "provider-relay",
+                                            "reasoning_mode": "medium",
+                                            "confidence": "high",
+                                        },
+                                        "session_identity": {
+                                            "status": "known",
+                                            "token": (
+                                                "sha256:" + ("b" * 64)
+                                                if case in {"model_session", "model_token"}
+                                                else f"sha256:{native_digest}"
+                                            ),
+                                            "source": "herdr:codex",
+                                            "generation": (
+                                                "other-session"
+                                                if case == "model_session"
+                                                else "session:" + ("0" * 16)
+                                                if case == "model_generation"
+                                                else "native-session"
+                                                if case == "raw_native_generation"
+                                                else f"session:{native_digest[:16]}"
+                                            ),
+                                        },
+                                    },
+                                }
+                            }
+                        )
+                    else:
+                        raise AssertionError(f"unexpected command: {command}")
+                    return {
+                        "ok": True,
+                        "exit_code": 0,
+                        "stdout": stdout,
+                        "stderr": "",
+                    }
+
+                supplied_binding = json.loads(json.dumps(binding))
+                if case == "wrong_generation":
+                    supplied_binding["generation"] = 2
+                with self.assertRaises(HerdrSubmissionError):
+                    workflow_module.bootstrap_task_owned_herdr_session(
+                        directory,
+                        task_id,
+                        "codex",
+                        supplied_binding,
+                        herdr="/test/herdr",
+                        run_command_fn=fake_run,
+                        timeout_seconds=0,
+                        poll_interval_seconds=0,
+                    )
+                if case not in {
+                    "model_session",
+                    "model_token",
+                    "model_generation",
+                    "raw_native_generation",
+                    "prompt_spoof",
+                    "missing_matched_line",
+                }:
+                    self.assertFalse(
+                        any(call[1:3] == ["agent", "prompt"] for call in calls)
+                    )
+
     def test_sequential_dispatch_preflight_preserves_prior_task_owned_agents(self) -> None:
         task_id = "TASK-SEQUENTIAL-PREFLIGHT"
 
@@ -180,6 +1007,236 @@ class ValpWorkflowTests(unittest.TestCase):
             {"status": "pass", "attempts": 2, "pending_agents": []},
         )
 
+    def test_owned_session_model_preflight_allows_startup_beyond_five_seconds(self) -> None:
+        pending = {
+            "checks": {},
+            "agents": {
+                "codex": {
+                    "agent_status": "unknown",
+                    "model_probe": {
+                        "status": "unsupported",
+                        "session_identity": {"status": "known"},
+                    },
+                }
+            },
+        }
+        observed = {
+            "checks": {},
+            "agents": {
+                "codex": {
+                    "agent_status": "idle",
+                    "model_probe": {
+                        "status": "observed",
+                        "session_identity": {"status": "known"},
+                    },
+                }
+            },
+        }
+
+        with patch("valp_cli.workflow.time.sleep") as sleep:
+            with patch(
+                "valp_cli.workflow.collect_runtime_preflight",
+                side_effect=([pending] * 20) + [observed],
+            ) as collect:
+                result = await_owned_session_model_preflight(
+                    ["codex"],
+                    "herdr",
+                    {"codex": {"runtime_identity": {"pane_id": "pane-owned"}}},
+                    pending,
+                )
+
+        self.assertEqual(sleep.call_count, 21)
+        self.assertEqual(collect.call_count, 21)
+        self.assertEqual(
+            result["checks"]["owned_session_model_readiness"],
+            {"status": "pass", "attempts": 22, "pending_agents": []},
+        )
+
+    def test_owned_session_model_preflight_keeps_launch_attestation_separate_from_runtime_observation(self) -> None:
+        initial = {
+            "checks": {},
+            "agents": {
+                "codex": {
+                    "agent_status": "idle",
+                    "model_probe": {
+                        "status": "unsupported",
+                        "session_identity": {"status": "known"},
+                    },
+                }
+            },
+        }
+        binding = {
+            "agent": "codex",
+            "dispatch_eligible": True,
+            "provisioned_at": "2026-08-06T00:00:00Z",
+            "ownership": {"scope": "task", "task_id": "TASK-LAUNCH-OBSERVATION"},
+            "launch": {
+                "argv": [
+                    "/test/bin/codex",
+                    "-m",
+                    "model-implementation-large",
+                    "-c",
+                    'model_reasoning_effort="medium"',
+                ]
+            },
+            "runtime_identity": {
+                "pane_id": "pane-owned",
+                "terminal_id": "terminal-owned",
+                "workspace_id": "workspace-owned",
+                "tab_id": "tab-owned",
+                "token": "sha256:" + ("a" * 64),
+            },
+        }
+
+        result = await_owned_session_model_preflight(
+            ["codex"],
+            "herdr",
+            {"codex": binding},
+            initial,
+            max_attempts=1,
+        )
+
+        self.assertEqual(result["agents"]["codex"]["model_probe"]["status"], "unsupported")
+        self.assertEqual(
+            result["agents"]["codex"]["launch_attestation"]["model"],
+            {
+                "model_id": "model-implementation-large",
+                "provider": "unknown",
+                "reasoning_mode": "medium",
+                "confidence": "low",
+            },
+        )
+        self.assertEqual(result["agents"]["codex"]["launch_attestation"]["status"], "launch_attested")
+        self.assertEqual(result["agents"]["codex"]["launch_attestation"]["attested_at"], "2026-08-06T00:00:00Z")
+        self.assertEqual(
+            result["checks"]["owned_session_model_readiness"],
+            {"status": "warn", "attempts": 1, "pending_agents": ["codex"]},
+        )
+
+    def test_dynamic_model_gate_rejects_launch_attestation_without_runtime_observation(self) -> None:
+        probe = {
+            "schema_version": "valp-model-probe.v1",
+            "status": "unsupported",
+            "source": "HERDR metadata unsupported",
+            "observed_at": "2026-08-06T00:00:00Z",
+            "ttl_seconds": 3600,
+            "model": {
+                "model_id": "model-implementation-large",
+                "provider": "unknown",
+                "reasoning_mode": "medium",
+                "confidence": "unknown",
+            },
+            "session_identity": {
+                "status": "known",
+                "token": "sha256:" + ("a" * 64),
+                "source": "HERDR metadata unsupported",
+                "generation": "1",
+            },
+        }
+        agent_info = {
+            "model_identity": {
+                "provider": "codex",
+                "declared_model": {
+                    "model_id": "model-implementation-large",
+                    "reasoning_mode": "medium",
+                    "confidence": "high",
+                },
+            }
+        }
+        identity = workflow_module.model_identity_for(
+            "codex",
+            agent_info,
+            {},
+            runtime_probe=probe,
+            evaluated_at="2026-08-06T00:01:00Z",
+        )
+
+        errors = workflow_module.dynamic_model_dispatch_errors(
+            {
+                "provider_matrix": {
+                    "model_awareness": {"dynamic_discovery_required": True},
+                    "providers": {"codex": {"model_identity": identity}},
+                }
+            },
+            {"codex": agent_info},
+            {"agent_capability_profiles": {}},
+            {"agents": {"codex": {"model_probe": probe}}},
+            [("codex", "implementer")],
+            evaluated_at="2026-08-06T00:01:00Z",
+            allow_session_rebinding=True,
+        )
+
+        self.assertEqual(
+            errors,
+            ["implementer:codex active model identity is not eligible at dispatch preflight"],
+        )
+
+    def test_launch_attestation_freshness_is_anchored_to_provisioning_time(self) -> None:
+        binding = {
+            "agent": "codex",
+            "dispatch_eligible": True,
+            "provisioned_at": "2026-08-06T00:00:00Z",
+            "ownership": {"scope": "task", "task_id": "TASK-IMMUTABLE-ATTESTATION"},
+            "launch": {"argv": ["/test/bin/codex", "-m", "model-implementation-large"]},
+            "runtime_identity": {
+                "pane_id": "pane-owned",
+                "terminal_id": "terminal-owned",
+                "workspace_id": "workspace-owned",
+                "tab_id": "tab-owned",
+                "token": "sha256:" + ("c" * 64),
+            },
+        }
+        unsupported_probe = {"status": "unsupported"}
+
+        with patch("valp_cli.workflow.now_iso", return_value="2026-08-06T02:00:01Z"):
+            attestation = workflow_module.launch_attestation_from_task_owned_binding(
+                "codex",
+                binding,
+                unsupported_probe,
+            )
+
+        self.assertEqual(attestation["attested_at"], "2026-08-06T00:00:00Z")
+        self.assertEqual(attestation["freshness"], "stale")
+        self.assertEqual(attestation["age_seconds"], 7201)
+
+    def test_owned_session_model_preflight_rejects_ambiguous_launch_model(self) -> None:
+        initial = {
+            "checks": {},
+            "agents": {
+                "codex": {
+                    "agent_status": "idle",
+                    "model_probe": {"status": "unsupported"},
+                }
+            },
+        }
+        binding = {
+            "agent": "codex",
+            "dispatch_eligible": True,
+            "ownership": {"scope": "task", "task_id": "TASK-AMBIGUOUS-LAUNCH"},
+            "launch": {"argv": ["/test/bin/codex", "-m", "model-a", "--model=model-b"]},
+            "runtime_identity": {
+                "pane_id": "pane-owned",
+                "terminal_id": "terminal-owned",
+                "workspace_id": "workspace-owned",
+                "tab_id": "tab-owned",
+                "token": "sha256:" + ("b" * 64),
+            },
+        }
+
+        result = await_owned_session_model_preflight(
+            ["codex"],
+            "herdr",
+            {"codex": binding},
+            initial,
+            max_attempts=1,
+        )
+
+        self.assertEqual(result["agents"]["codex"]["model_probe"]["status"], "unsupported")
+        self.assertEqual(
+            result["checks"]["owned_session_model_readiness"],
+            {"status": "warn", "attempts": 1, "pending_agents": ["codex"]},
+        )
+
     def test_owned_session_readiness_does_not_stop_before_agent_idle(self) -> None:
         observed_but_starting = {
             "checks": {},
@@ -226,6 +1283,360 @@ class ValpWorkflowTests(unittest.TestCase):
             result["checks"]["owned_session_model_readiness"],
             {"status": "pass", "attempts": 2, "pending_agents": []},
         )
+
+    def test_owned_session_model_preflight_accepts_verified_bootstrap_done_state(self) -> None:
+        verified_bootstrap = {
+            "checks": {},
+            "agents": {
+                "codex": {
+                    "agent_status": "done",
+                    "model_probe": {
+                        "status": "observed",
+                        "session_identity": {"status": "known"},
+                    },
+                }
+            },
+        }
+        binding = {
+            "lifecycle": "bootstrap_ready",
+            "bootstrap_verification": {
+                "status": "verified",
+                "evidence_ref": "evidence/bootstrap-probe-result.json",
+                "generation": 1,
+                "pane_id": "pane-owned",
+                "native_session_id": "session-native",
+                "expected_response": "BOOTSTRAP_READY",
+                "actual_response": "BOOTSTRAP_READY",
+                "native_turn_error": None,
+                "session_identity_status": "known",
+                "model_probe_status": "observed",
+            },
+            "generation": 1,
+            "runtime_identity": {"pane_id": "pane-owned"},
+        }
+
+        result = await_owned_session_model_preflight(
+            ["codex"],
+            "herdr",
+            {"codex": binding},
+            verified_bootstrap,
+            max_attempts=1,
+        )
+
+        self.assertEqual(
+            result["checks"]["owned_session_model_readiness"],
+            {"status": "pass", "attempts": 1, "pending_agents": []},
+        )
+
+    def test_owned_session_model_preflight_rejects_unverified_done_state(self) -> None:
+        done_without_bootstrap = {
+            "checks": {},
+            "agents": {
+                "codex": {
+                    "agent_status": "done",
+                    "model_probe": {
+                        "status": "observed",
+                        "session_identity": {"status": "known"},
+                    },
+                }
+            },
+        }
+
+        result = await_owned_session_model_preflight(
+            ["codex"],
+            "herdr",
+            {
+                "codex": {
+                    "generation": 1,
+                    "lifecycle": "provisioned",
+                    "runtime_identity": {"pane_id": "pane-owned"},
+                }
+            },
+            done_without_bootstrap,
+            max_attempts=1,
+        )
+
+        self.assertEqual(
+            result["checks"]["owned_session_model_readiness"],
+            {"status": "warn", "attempts": 1, "pending_agents": ["codex"]},
+        )
+
+    def test_records_verified_idle_bootstrap_against_exact_native_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            task_id = "TASK-VERIFIED-BOOTSTRAP"
+            pane_id = "workspace-owned:p1"
+            projection = {
+                "schema_version": "valp-agent-sessions.v1",
+                "task_id": task_id,
+                "adapter": "herdr",
+                "status": "ready",
+                "bindings": {
+                    "codex": {
+                        "agent": "codex",
+                        "generation": 1,
+                        "ownership": {"scope": "task", "task_id": task_id},
+                        "runtime_identity": {
+                            "pane_id": pane_id,
+                            "token": "sha256:" + ("a" * 64),
+                        },
+                        "lifecycle": "provisioned",
+                        "dispatch_eligible": True,
+                    }
+                },
+            }
+            (directory / "agent-sessions.json").write_text(
+                json.dumps(projection),
+                encoding="utf-8",
+            )
+            (directory / "agent-session-receipts.jsonl").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-agent-session-receipt.v1",
+                        "adapter": "herdr",
+                        "task_id": task_id,
+                        "event_sequence": 1,
+                        "event": "agent_session_provisioned",
+                        "agent": "codex",
+                        "generation": 1,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            evidence_ref = "evidence/bootstrap-probe-result.json"
+            evidence_path = directory / evidence_ref
+            evidence_path.parent.mkdir()
+            evidence_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-bootstrap-probe-result.v1",
+                        "task_id": task_id,
+                        "target": {
+                            "agent": "codex",
+                            "pane_id": pane_id,
+                            "generation": 1,
+                            "native_session_id": "session-native",
+                        },
+                        "classification": "non_task_bootstrap_probe",
+                        "native_turn": {
+                            "expected_response": "BOOTSTRAP_READY",
+                            "actual_response": "BOOTSTRAP_READY",
+                            "error": None,
+                            "model": "model-implementation-large",
+                            "provider": "provider-relay",
+                            "reasoning_mode": "medium",
+                            "completed_turn_count": 2,
+                            "aborted_turn_count": 0,
+                        },
+                        "runtime_after": {
+                            "agent_status": "idle",
+                            "readiness_status": "ready",
+                            "prompt_eligible": True,
+                            "session_identity_status": "known",
+                            "model_probe_status": "observed",
+                        },
+                        "structured_observation": {
+                            "session_id": "session-native",
+                            "model_id": "model-implementation-large",
+                            "provider": "provider-relay",
+                            "reasoning_mode": "medium",
+                            "task_complete_timestamps": [
+                                "2026-08-07T12:10:41.468Z",
+                                "2026-08-07T12:11:47.189Z",
+                            ],
+                        },
+                        "formal_dispatch_count": 0,
+                        "accepted": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            updated = workflow_module.record_verified_bootstrap_lifecycle(
+                directory,
+                "codex",
+                evidence_ref,
+            )
+
+            binding = updated["bindings"]["codex"]
+            self.assertEqual(binding["lifecycle"], "bootstrap_ready")
+            self.assertEqual(
+                binding["bootstrap_verification"],
+                {
+                    "status": "verified",
+                    "evidence_ref": evidence_ref,
+                    "generation": 1,
+                    "pane_id": pane_id,
+                    "native_session_id": "session-native",
+                    "expected_response": "BOOTSTRAP_READY",
+                    "actual_response": "BOOTSTRAP_READY",
+                    "native_turn_error": None,
+                    "session_identity_status": "known",
+                    "model_probe_status": "observed",
+                },
+            )
+            receipts = [
+                json.loads(line)
+                for line in (directory / "agent-session-receipts.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(receipts[-1]["event"], "agent_session_bootstrap_verified")
+            self.assertEqual(receipts[-1]["evidence_ref"], evidence_ref)
+
+    def test_record_verified_bootstrap_rejects_mismatched_evidence(self) -> None:
+        def use_atomic_response_proof(
+            evidence: dict[str, object], *, raw_line: str, envelope: str
+        ) -> None:
+            evidence["structured_observation"]["task_complete_timestamps"] = []
+            evidence["runtime_before"] = {"state_change_seq": 10}
+            evidence["runtime_after"]["state_change_seq"] = 12
+            evidence["response_proof"] = {
+                "source": "HERDR pane wait-output renderer-aware anchored exact-line match",
+                "authority": "response_only_not_identity_or_model",
+                "raw_matched_line": raw_line,
+                "renderer_envelope": envelope,
+            }
+
+        mutations = {
+            "missing_task_complete": lambda evidence: evidence[
+                "structured_observation"
+            ].pop("task_complete_timestamps"),
+            "turn_abort": lambda evidence: evidence["native_turn"].update(
+                aborted_turn_count=1
+            ),
+            "response": lambda evidence: evidence["native_turn"].update(
+                actual_response="OTHER"
+            ),
+            "renderer_line": lambda evidence: use_atomic_response_proof(
+                evidence,
+                raw_line="Load the prompt containing BOOTSTRAP_READY",
+                envelope="codex_list_marker",
+            ),
+            "renderer_envelope": lambda evidence: use_atomic_response_proof(
+                evidence,
+                raw_line="• BOOTSTRAP_READY",
+                envelope="arbitrary_marker",
+            ),
+            "native_session": lambda evidence: evidence[
+                "structured_observation"
+            ].update(session_id="other-session"),
+            "model": lambda evidence: evidence["structured_observation"].update(
+                model_id="other-model"
+            ),
+            "missing_model_identity": lambda evidence: (
+                [
+                    evidence["native_turn"].pop(key)
+                    for key in ("model", "provider", "reasoning_mode")
+                ],
+                [
+                    evidence["structured_observation"].pop(key)
+                    for key in ("model_id", "provider", "reasoning_mode")
+                ],
+            ),
+            "placeholder_model_identity": lambda evidence: (
+                evidence["native_turn"].update(provider="unknown"),
+                evidence["structured_observation"].update(provider="unknown"),
+            ),
+            "formal_dispatch": lambda evidence: evidence.update(formal_dispatch_count=1),
+            "generation": lambda evidence: evidence["target"].update(generation=2),
+            "pane_id": lambda evidence: evidence["target"].update(pane_id="other:p1"),
+            "native_turn_error": lambda evidence: evidence["native_turn"].update(
+                error={"code": "server_overloaded"}
+            ),
+            "classification": lambda evidence: evidence.update(classification="task_turn"),
+        }
+
+        for case, mutate in mutations.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp)
+                task_id = "TASK-REJECT-BOOTSTRAP"
+                pane_id = "workspace-owned:p1"
+                projection = {
+                    "schema_version": "valp-agent-sessions.v1",
+                    "task_id": task_id,
+                    "adapter": "herdr",
+                    "status": "ready",
+                    "bindings": {
+                        "codex": {
+                            "agent": "codex",
+                            "generation": 1,
+                            "ownership": {"scope": "task", "task_id": task_id},
+                            "runtime_identity": {
+                                "pane_id": pane_id,
+                                "token": "sha256:" + ("a" * 64),
+                            },
+                            "lifecycle": "provisioned",
+                            "dispatch_eligible": True,
+                        }
+                    },
+                }
+                (directory / "agent-sessions.json").write_text(
+                    json.dumps(projection), encoding="utf-8"
+                )
+                (directory / "agent-session-receipts.jsonl").write_text(
+                    "", encoding="utf-8"
+                )
+                evidence_ref = "evidence/bootstrap-probe-result.json"
+                evidence_path = directory / evidence_ref
+                evidence_path.parent.mkdir()
+                evidence = {
+                    "schema_version": "valp-bootstrap-probe-result.v1",
+                    "task_id": task_id,
+                    "target": {
+                        "agent": "codex",
+                        "pane_id": pane_id,
+                        "generation": 1,
+                        "native_session_id": "session-native",
+                    },
+                    "classification": "non_task_bootstrap_probe",
+                    "native_turn": {
+                        "expected_response": "BOOTSTRAP_READY",
+                        "actual_response": "BOOTSTRAP_READY",
+                        "error": None,
+                        "model": "model-implementation-large",
+                        "provider": "provider-relay",
+                        "reasoning_mode": "medium",
+                        "completed_turn_count": 1,
+                        "aborted_turn_count": 0,
+                    },
+                    "runtime_after": {
+                        "agent_status": "idle",
+                        "readiness_status": "ready",
+                        "prompt_eligible": True,
+                        "session_identity_status": "known",
+                        "model_probe_status": "observed",
+                    },
+                    "structured_observation": {
+                        "session_id": "session-native",
+                        "model_id": "model-implementation-large",
+                        "provider": "provider-relay",
+                        "reasoning_mode": "medium",
+                        "task_complete_timestamps": ["2026-08-07T12:10:41.468Z"],
+                    },
+                    "formal_dispatch_count": 0,
+                    "accepted": True,
+                }
+                mutate(evidence)
+                evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+                with self.assertRaisesRegex(
+                    HerdrSubmissionError,
+                    "does not match the exact task-owned session",
+                ):
+                    workflow_module.record_verified_bootstrap_lifecycle(
+                        directory, "codex", evidence_ref
+                    )
+
+                unchanged = json.loads(
+                    (directory / "agent-sessions.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(unchanged["bindings"]["codex"]["lifecycle"], "provisioned")
+                self.assertEqual(
+                    (directory / "agent-session-receipts.jsonl").read_text(encoding="utf-8"),
+                    "",
+                )
 
     def test_runtime_retry_accepts_unknown_owned_session_model_readiness(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -284,6 +1695,194 @@ class ValpWorkflowTests(unittest.TestCase):
                             "herdr",
                         )
                     )
+
+    def test_runtime_retry_accepts_route_time_preflight_block_before_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "iteration-budget.json").write_text(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "stop_reason": "task status is blocked",
+                        "usage": {"dispatches": 0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (directory / "runtime-preflight.json").write_text(
+                json.dumps({"status": "fail"}),
+                encoding="utf-8",
+            )
+
+            self.assertTrue(
+                runtime_dispatch_retry_pending(
+                    directory,
+                    {"task_id": "TASK", "status": "blocked"},
+                    "herdr",
+                )
+            )
+
+    def test_runtime_retry_preserves_original_state_preflight_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "iteration-budget.json").write_text(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "stop_reason": "task status is blocked",
+                        "usage": {"dispatches": 0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (directory / "runtime-preflight.json").write_text(
+                json.dumps({"status": "warn"}), encoding="utf-8"
+            )
+            (directory / "routing.json").write_text(
+                json.dumps({"runtime_adapter": {"preflight": {"status": "warn"}}}),
+                encoding="utf-8",
+            )
+            state = {
+                "task_id": "TASK",
+                "status": "blocked",
+                "runtime_adapter": {"preflight": {"status": "fail"}},
+            }
+
+            self.assertTrue(
+                runtime_dispatch_retry_pending(directory, state, "herdr")
+            )
+
+    def test_runtime_retry_accepts_orphaned_pre_delivery_warn_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "iteration-budget.json").write_text(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "stop_reason": "task status is blocked",
+                        "usage": {"dispatches": 0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (directory / "runtime-preflight.json").write_text(
+                json.dumps({"status": "warn"}), encoding="utf-8"
+            )
+            (directory / "routing.json").write_text(
+                json.dumps({"runtime_adapter": {"preflight": {"status": "warn"}}}),
+                encoding="utf-8",
+            )
+            (directory / "assignment-validation.json").write_text(
+                json.dumps({"status": "pass"}), encoding="utf-8"
+            )
+            state = {
+                "task_id": "TASK",
+                "status": "blocked",
+                "gates": {"approval": "not_required"},
+                "capabilities_missing": [],
+                "runtime_adapter": {"preflight": {"status": "warn"}},
+            }
+
+            self.assertTrue(runtime_dispatch_retry_pending(directory, state, "herdr"))
+            state["gates"]["approval"] = "blocked"
+            self.assertFalse(runtime_dispatch_retry_pending(directory, state, "herdr"))
+
+    def test_runtime_retry_rejects_route_time_block_after_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "iteration-budget.json").write_text(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "stop_reason": "task status is blocked",
+                        "usage": {"dispatches": 0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (directory / "runtime-preflight.json").write_text(
+                json.dumps({"status": "fail"}),
+                encoding="utf-8",
+            )
+            (directory / "dispatch-receipts.jsonl").write_text(
+                json.dumps(
+                    {
+                        "task_id": "TASK",
+                        "event": "dispatch_submitted",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertFalse(
+                runtime_dispatch_retry_pending(
+                    directory,
+                    {"task_id": "TASK", "status": "blocked"},
+                    "herdr",
+                )
+            )
+
+    def test_route_time_preflight_recovery_resumes_dispatching_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            state = {
+                "task_id": "TASK",
+                "status": "blocked",
+                "gates": {},
+            }
+            budget = {
+                "status": "blocked",
+                "stop_reason": "task status is blocked",
+                "usage": {
+                    "dispatches": 0,
+                    "dispatch_reference_tokens": 0,
+                    "reroutes": 0,
+                    "fix_review_rounds": 0,
+                },
+                "max_dispatches": 3,
+                "max_dispatch_reference_tokens": 1000,
+                "max_reroutes": 1,
+                "max_fix_review_rounds": 1,
+            }
+            (directory / "state.json").write_text(json.dumps(state), encoding="utf-8")
+            (directory / "iteration-budget.json").write_text(
+                json.dumps(budget), encoding="utf-8"
+            )
+            (directory / "runtime-preflight.json").write_text(
+                json.dumps({"status": "fail"}), encoding="utf-8"
+            )
+
+            resumed = workflow_module.resume_runtime_dispatch_retry(
+                directory,
+                {"dispatch_payload_budgets": {}},
+                [("codex", "implementer")],
+                expected_stop_reason="task status is blocked",
+            )
+
+            self.assertEqual(read_json(directory / "state.json")["status"], "dispatching")
+            self.assertEqual(resumed["status"], "active")
+            self.assertIsNone(resumed["stop_reason"])
+
+    def test_runtime_retry_accepts_resumed_executing_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "iteration-budget.json").write_text(
+                json.dumps({
+                    "status": "blocked",
+                    "stop_reason": "runtime dispatch failure",
+                }),
+                encoding="utf-8",
+            )
+
+            self.assertTrue(
+                runtime_dispatch_retry_pending(
+                    directory,
+                    {"status": "executing"},
+                    "herdr",
+                    [("claude", "reviewer")],
+                )
+            )
 
     def test_herdr_route_defers_model_gate_until_owned_session_preflight(self) -> None:
         capabilities = {
@@ -622,6 +2221,57 @@ class ValpWorkflowTests(unittest.TestCase):
                         }
                     }
                 }
+            elif command[1:3] == ["agent", "readiness"]:
+                payload = {
+                    "result": {
+                        "type": "agent_readiness",
+                        "readiness": {
+                            "schema_version": "valp-named-agent-readiness.v1",
+                            "ready": True,
+                            "reason_code": "ready",
+                            "addressable": True,
+                            "detected_agent": "qwen",
+                            "agent_status": "idle",
+                            "interactive_ready": True,
+                            "prompt_eligible": True,
+                            "session_identity": {
+                                "status": "known",
+                                "identity": {
+                                    "source": "herdr:qwen",
+                                    "agent": "qwen",
+                                    "kind": "id",
+                                    "value": "session-qwen",
+                                },
+                            },
+                            "state_change_seq": 1,
+                        },
+                    }
+                }
+            elif command[1:3] == ["agent", "model-probe"]:
+                payload = {
+                    "result": {
+                        "type": "agent_model_probe",
+                        "probe": {
+                            "schema_version": "valp-model-probe.v1",
+                            "status": "observed",
+                            "source": "herdr:qwen",
+                            "observed_at": "2026-08-06T04:00:00Z",
+                            "ttl_seconds": 3600,
+                            "model": {
+                                "model_id": "qwen-example-model",
+                                "provider": "unknown",
+                                "reasoning_mode": "unknown",
+                                "confidence": "high",
+                            },
+                            "session_identity": {
+                                "status": "known",
+                                "token": "sha256:qwen-session",
+                                "source": "herdr:qwen",
+                                "generation": "session:qwen",
+                            },
+                        },
+                    }
+                }
             elif command == ["qwen", "version"]:
                 return {
                     "ok": True,
@@ -660,6 +2310,377 @@ class ValpWorkflowTests(unittest.TestCase):
             pane_list_stdout_limits,
             [workflow_module.HERDR_PANE_LIST_STDOUT_LIMIT],
         )
+
+    def test_unbound_herdr_preflight_prefers_healthy_qwen_session_over_stale_session(self) -> None:
+        stale_pane_id = "stale-workspace:p1"
+        healthy_pane_id = "healthy-workspace:p1"
+        panes = [
+            {"pane_id": stale_pane_id, "agent": "qwen", "agent_status": "unknown"},
+            {"pane_id": healthy_pane_id, "agent": "qwen", "agent_status": "idle"},
+        ]
+
+        def command_result(command: list[str], **_kwargs: object) -> dict[str, object]:
+            if command[1:] == ["agent", "--help"]:
+                stdout = "herdr agent start <name> -- <argv...>\nherdr agent prompt\nherdr agent wait\n"
+            elif command[1:] == ["workspace", "--help"]:
+                stdout = "herdr workspace create [--cwd PATH] [--no-focus]\n"
+            elif command[1:] == ["pane", "--help"]:
+                stdout = "herdr pane move --new-tab\nherdr pane send-text\nherdr pane send-keys\n"
+            elif command[1:] == ["status", "--json"]:
+                stdout = json.dumps({
+                    "client": {"version": "0.7.4"},
+                    "server": {"version": "0.7.4", "restart_needed": False},
+                })
+            elif command[1:] == ["pane", "list"]:
+                stdout = json.dumps({"result": {"panes": panes}})
+            elif command[1:3] == ["agent", "model-probe"]:
+                pane_id = command[3]
+                observed = pane_id == healthy_pane_id
+                stdout = json.dumps({"result": {"type": "agent_model_probe", "probe": {
+                    "schema_version": "valp-model-probe.v1",
+                    "status": "observed" if observed else "unavailable",
+                    "source": "herdr:qwen",
+                    "observed_at": "2026-08-09T16:00:00Z" if observed else None,
+                    "ttl_seconds": 3600,
+                    "model": {"model_id": "model-research-large", "provider": "qwen-code"} if observed else None,
+                    "session_identity": {"status": "known" if observed else "unknown"},
+                }}})
+            elif command[1:3] == ["agent", "readiness"]:
+                pane_id = command[3]
+                ready = pane_id == healthy_pane_id
+                stdout = json.dumps({"result": {"type": "agent_readiness", "readiness": {
+                    "schema_version": "valp-named-agent-readiness.v1",
+                    "ready": ready,
+                    "reason_code": "ready" if ready else "agent_not_addressable",
+                    "addressable": ready,
+                    "detected_agent": "qwen" if ready else None,
+                    "agent_status": "idle" if ready else None,
+                    "interactive_ready": ready,
+                    "prompt_eligible": ready,
+                    "session_identity": {"status": "known" if ready else "unknown"},
+                    "state_change_seq": 1,
+                }}})
+            elif command[1:4] == ["pane", "process-info", "--pane"]:
+                stdout = json.dumps({"result": {"process_info": {"foreground_process_group_id": 4242}}})
+            elif command[1:4] == ["pane", "layout", "--pane"]:
+                pane_id = command[4]
+                stdout = json.dumps({"result": {"layout": {"panes": [
+                    {"pane_id": pane_id, "rect": {"width": 80, "height": 30}}
+                ]}}})
+            elif command == ["qwen", "version"]:
+                return {"ok": True, "exit_code": 0, "stdout": "0.21.8\n", "stderr": ""}
+            else:
+                self.fail(f"unexpected command: {command}")
+            return {"ok": True, "exit_code": 0, "stdout": stdout, "stderr": ""}
+
+        with patch("valp_cli.workflow.activated_herdr_executable", return_value="/test/herdr"):
+            with patch("valp_cli.workflow.shutil.which", return_value="/test/qwen"):
+                with patch("valp_cli.workflow.run_command", side_effect=command_result):
+                    preflight = workflow_module.collect_herdr_preflight(
+                        ["qwen"],
+                        launch_argv_by_agent={"qwen": ["qwen"]},
+                        version_command_by_agent={"qwen": ["qwen", "version"]},
+                    )
+
+        qwen = preflight["agents"]["qwen"]
+        self.assertEqual(preflight["status"], "pass")
+        self.assertEqual(qwen["status"], "pass")
+        self.assertEqual(qwen["pane_id"], healthy_pane_id)
+        self.assertTrue(qwen["readiness"]["ready"])
+        self.assertEqual(qwen["model_probe"]["status"], "observed")
+        self.assertEqual(len(qwen["sessions"]), 2)
+        self.assertEqual([record["status"] for record in qwen["sessions"]], ["fail", "pass"])
+
+    def test_herdr_preflight_accepts_verified_bootstrap_done_state(self) -> None:
+        task_id = "TASK-VERIFIED-BOOTSTRAP"
+        pane_id = "workspace-owned:p1"
+        pane = {
+            "pane_id": pane_id,
+            "terminal_id": "terminal-owned",
+            "workspace_id": "workspace-owned",
+            "tab_id": "tab-owned",
+            "agent": "codex",
+            "agent_status": "done",
+            "cwd": "/test/project",
+        }
+        binding = {
+            "agent": "codex",
+            "generation": 1,
+            "ownership": {
+                "scope": "task",
+                "task_id": task_id,
+                "project_identity": "sha256:test-project",
+            },
+            "context": {"cwd": "/test/project"},
+            "launch": {
+                "argv": [
+                    "/test/bin/codex",
+                    "-m",
+                    "model-implementation-large",
+                    "-c",
+                    'model_reasoning_effort="medium"',
+                ]
+            },
+            "runtime_identity": {
+                "pane_id": pane_id,
+                "terminal_id": "terminal-owned",
+                "workspace_id": "workspace-owned",
+                "tab_id": "tab-owned",
+                "token": "sha256:test-owned-session",
+            },
+            "lifecycle": "bootstrap_ready",
+            "bootstrap_verification": {
+                "status": "verified",
+                "evidence_ref": "evidence/bootstrap-probe-result.json",
+                "generation": 1,
+                "pane_id": pane_id,
+                "native_session_id": "session-native",
+                "expected_response": "BOOTSTRAP_READY",
+                "actual_response": "BOOTSTRAP_READY",
+                "native_turn_error": None,
+                "session_identity_status": "known",
+                "model_probe_status": "observed",
+            },
+        }
+
+        def command_result(command: list[str], **_kwargs: object) -> dict[str, object]:
+            if command[1:] == ["status", "--json"]:
+                payload = {
+                    "client": {"version": "0.8.0"},
+                    "server": {"version": "0.8.0", "restart_needed": False},
+                }
+            elif command[1:] == ["pane", "list", "--workspace", "workspace-owned"]:
+                payload = {"result": {"panes": [pane]}}
+            elif command[1:4] == ["pane", "layout", "--pane"]:
+                payload = {
+                    "result": {
+                        "layout": {
+                            "panes": [
+                                {
+                                    "pane_id": pane_id,
+                                    "rect": {"width": 80, "height": 30},
+                                }
+                            ]
+                        }
+                    }
+                }
+            else:
+                self.fail(f"unexpected command: {command}")
+            return {
+                "ok": True,
+                "exit_code": 0,
+                "stdout": json.dumps(payload),
+                "stderr": "",
+            }
+
+        readiness = {
+            "schema_version": "valp-named-agent-readiness.v1",
+            "ready": True,
+            "reason_code": "ready",
+            "addressable": True,
+            "detected_agent": "codex",
+            "agent_status": "done",
+            "interactive_ready": True,
+            "prompt_eligible": True,
+            "session_identity": {"status": "known", "identity": {"value": "session-native"}},
+            "state_change_seq": 2,
+        }
+        model_probe = {
+            "schema_version": "valp-model-probe.v1",
+            "status": "observed",
+            "observed_at": workflow_module.now_iso(),
+            "ttl_seconds": 3600,
+            "model": {
+                "model_id": "model-implementation-large",
+                "provider": "provider-relay",
+                "reasoning_mode": "medium",
+                "confidence": "high",
+            },
+            "session_identity": {"status": "known", "generation": "session-native"},
+        }
+
+        with patch("valp_cli.workflow.shutil.which", return_value="/opt/example/bin/herdr"):
+            with patch("valp_cli.workflow.run_command", side_effect=command_result):
+                with patch(
+                    "valp_cli.workflow.detect_herdr_submission_capability",
+                    return_value={"status": "pass"},
+                ):
+                    with patch(
+                        "valp_cli.workflow.detect_herdr_session_provisioning_capability",
+                        return_value={"status": "pass"},
+                    ):
+                        with patch("valp_cli.workflow.herdr_named_agent_readiness", return_value=readiness):
+                            with patch("valp_cli.workflow.herdr_model_probe", return_value=model_probe):
+                                with patch(
+                                    "valp_cli.workflow.cli_preflight_for_agent",
+                                    return_value={"status": "pass"},
+                                ):
+                                    verified_preflight = workflow_module.collect_herdr_preflight(
+                                        ["codex"],
+                                        session_bindings={"codex": binding},
+                                    )
+                                    mismatched_probe = {
+                                        **model_probe,
+                                        "model": {**model_probe["model"], "model_id": "other-model"},
+                                    }
+                                    with patch(
+                                        "valp_cli.workflow.herdr_model_probe",
+                                        return_value=mismatched_probe,
+                                    ):
+                                        mismatched_preflight = workflow_module.collect_herdr_preflight(
+                                            ["codex"],
+                                            session_bindings={"codex": binding},
+                                        )
+                                    binding["lifecycle"] = "provisioned"
+                                    binding.pop("bootstrap_verification")
+                                    unverified_preflight = workflow_module.collect_herdr_preflight(
+                                        ["codex"],
+                                        session_bindings={"codex": binding},
+                                    )
+
+        self.assertEqual(verified_preflight["status"], "pass")
+        self.assertEqual(verified_preflight["agents"]["codex"]["status"], "pass")
+        self.assertEqual(mismatched_preflight["status"], "fail")
+        self.assertIn(
+            "current structured model observation does not match the task-owned binding",
+            mismatched_preflight["agents"]["codex"]["notes"],
+        )
+        self.assertEqual(unverified_preflight["status"], "fail")
+        self.assertEqual(unverified_preflight["agents"]["codex"]["status"], "fail")
+
+    def test_herdr_preflight_accepts_observed_model_for_provider_managed_launch(self) -> None:
+        task_id = "TASK-PROVIDER-MANAGED-BOOTSTRAP"
+        pane_id = "workspace-owned:p1"
+        binding = {
+            "agent": "claude",
+            "generation": 1,
+            "ownership": {
+                "scope": "task",
+                "task_id": task_id,
+                "project_identity": "sha256:test-project",
+            },
+            "context": {"cwd": "/test/project"},
+            "launch": {"argv": ["/test/bin/claude", "--dangerously-skip-permissions"]},
+            "runtime_identity": {
+                "pane_id": pane_id,
+                "terminal_id": "terminal-owned",
+                "workspace_id": "workspace-owned",
+                "tab_id": "tab-owned",
+                "token": "sha256:test-owned-session",
+            },
+            "lifecycle": "bootstrap_ready",
+            "bootstrap_verification": {
+                "status": "verified",
+                "evidence_ref": "evidence/bootstrap-probe-result.json",
+                "generation": 1,
+                "pane_id": pane_id,
+                "native_session_id": "session-native",
+                "expected_response": "BOOTSTRAP_READY",
+                "actual_response": "BOOTSTRAP_READY",
+                "native_turn_error": None,
+                "session_identity_status": "known",
+                "model_probe_status": "observed",
+            },
+        }
+        readiness = {
+            "schema_version": "valp-named-agent-readiness.v1",
+            "ready": True,
+            "reason_code": "ready",
+            "addressable": True,
+            "detected_agent": "claude",
+            "agent_status": "idle",
+            "interactive_ready": True,
+            "prompt_eligible": True,
+            "session_identity": {
+                "status": "known",
+                "identity": {"value": "session-native"},
+            },
+            "state_change_seq": 2,
+        }
+        model_probe = {
+            "schema_version": "valp-model-probe.v1",
+            "status": "observed",
+            "observed_at": workflow_module.now_iso(),
+            "ttl_seconds": 3600,
+            "model": {
+                "model_id": "model-review-large",
+                "provider": "deepseek",
+                "reasoning_mode": "low",
+                "confidence": "high",
+            },
+            "session_identity": {"status": "known", "generation": "session-native"},
+        }
+
+        def command_result(command: list[str], **_kwargs: object) -> dict[str, object]:
+            if command[1:] == ["status", "--json"]:
+                payload = {
+                    "client": {"version": "0.8.0"},
+                    "server": {"version": "0.8.0", "restart_needed": False},
+                }
+            elif command[1:] == ["pane", "list", "--workspace", "workspace-owned"]:
+                payload = {
+                    "result": {
+                        "panes": [
+                            {
+                                "pane_id": pane_id,
+                                "terminal_id": "terminal-owned",
+                                "workspace_id": "workspace-owned",
+                                "tab_id": "tab-owned",
+                                "agent": "claude",
+                                "agent_status": "idle",
+                                "cwd": "/test/project",
+                            }
+                        ]
+                    }
+                }
+            elif command[1:4] == ["pane", "layout", "--pane"]:
+                payload = {
+                    "result": {
+                        "layout": {
+                            "panes": [
+                                {"pane_id": pane_id, "rect": {"width": 80, "height": 30}}
+                            ]
+                        }
+                    }
+                }
+            else:
+                self.fail(f"unexpected command: {command}")
+            return {
+                "ok": True,
+                "exit_code": 0,
+                "stdout": json.dumps(payload),
+                "stderr": "",
+            }
+
+        with patch("valp_cli.workflow.shutil.which", return_value="/opt/example/bin/herdr"):
+            with patch("valp_cli.workflow.run_command", side_effect=command_result):
+                with patch(
+                    "valp_cli.workflow.detect_herdr_submission_capability",
+                    return_value={"status": "pass"},
+                ):
+                    with patch(
+                        "valp_cli.workflow.detect_herdr_session_provisioning_capability",
+                        return_value={"status": "pass"},
+                    ):
+                        with patch(
+                            "valp_cli.workflow.herdr_named_agent_readiness",
+                            return_value=readiness,
+                        ):
+                            with patch(
+                                "valp_cli.workflow.herdr_model_probe",
+                                return_value=model_probe,
+                            ):
+                                with patch(
+                                    "valp_cli.workflow.cli_preflight_for_agent",
+                                    return_value={"status": "pass"},
+                                ):
+                                    preflight = workflow_module.collect_herdr_preflight(
+                                        ["claude"],
+                                        session_bindings={"claude": binding},
+                                    )
+
+        self.assertEqual(preflight["status"], "pass")
+        self.assertEqual(preflight["agents"]["claude"]["status"], "pass")
 
     def test_read_only_agent_is_never_scored_as_implementer(self) -> None:
         self.assertEqual(
@@ -1289,7 +3310,7 @@ class ValpWorkflowTests(unittest.TestCase):
             with contextlib.redirect_stdout(output):
                 main(["--version"])
         self.assertEqual(raised.exception.code, 0)
-        self.assertIn("valp 0.2.0", output.getvalue())
+        self.assertIn("valp 0.3.0rc1", output.getvalue())
 
     def test_profile_classification_scores_all_matches(self) -> None:
         self.assertEqual(classify_profile("Fix the HERDR agent connector code"), "agent-runtime")
@@ -1654,6 +3675,14 @@ class ValpWorkflowTests(unittest.TestCase):
         self.assertEqual(
             classify_approval_risks(
                 "Do not publish a release, deploy, or delete files."
+            ),
+            [],
+        )
+
+    def test_risk_classifier_negates_shared_change_verb_before_auth(self) -> None:
+        self.assertEqual(
+            classify_approval_risks(
+                "Do not change auth, agent configuration, or credentials."
             ),
             [],
         )
@@ -3898,6 +5927,56 @@ class ValpWorkflowTests(unittest.TestCase):
                 "forbidden",
             )
 
+    def test_long_task_identity_keeps_reviewer_dispatch_within_role_budget(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-08-07T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification"],
+                    "skills": [],
+                    "mcp_servers": [],
+                },
+                "claude": {
+                    "active": True,
+                    "role": ["review", "code_review", "risk_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                },
+            },
+        }
+        task_id = "VALP-HERDR-FRESH-CODEX-BOOTSTRAP-20260807-G5-S7-PREFLIGHT-REVIEW"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    task_dir = self.publish_routed_task(
+                        root,
+                        task_id,
+                        "Repair preflight projection and independently review the frozen source.",
+                        profile="agent-runtime",
+                        runtime="queue",
+                    )
+
+            routing = read_json(task_dir / "routing.json")
+            budget = routing["dispatch_payload_budgets"]["claude"]
+            dispatch = (task_dir / "agents" / "claude" / "dispatch.md").read_text(
+                encoding="utf-8"
+            )
+
+        self.assertLessEqual(len(dispatch), budget["max_chars"])
+        self.assertLessEqual((len(dispatch) + 3) // 4, budget["max_reference_tokens"])
+        self.assertIn("## VALP Control Contract (Load First)", dispatch)
+        self.assertIn("## Permission Boundary", dispatch)
+        self.assertIn("read-only", dispatch.lower())
+        self.assertIn("## Expected Evidence", dispatch)
+        self.assertIn("control_contract_status: honored", dispatch)
+        self.assertIn("task.md", dispatch)
+        self.assertIn("context-pack.json", dispatch)
+
     def test_reroute_preserves_delegation_violations_and_blocked_state(self) -> None:
         capabilities = {
             "schema_version": "valp-agent-capabilities.v1",
@@ -5013,9 +7092,10 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertTrue(commands)
             self.assertTrue(commands[0].startswith("VALP Queue Mode:"))
             self.assertNotIn("herdr-loop", commands[0])
-            preflight = read_json(task_dir / "runtime-preflight.json")
+            preflight = routing["runtime_adapter"]["preflight"]
             self.assertEqual(preflight["adapter_class"], "daemon_queue")
             self.assertNotIn("terminal_size_status", json.dumps(preflight))
+            self.assertFalse((task_dir / "runtime-preflight.json").exists())
 
     def test_submitted_phase_writes_wait_policy_for_exact_work_items(self) -> None:
         capabilities = {
@@ -5134,6 +7214,186 @@ class ValpWorkflowTests(unittest.TestCase):
                 policy["required_work_items"][0]["expected_refs"],
                 ["agents/codex/self-review.md"],
             )
+
+    def test_dispatch_uses_evidence_wait_for_codex_bootstrap_timeout(self) -> None:
+        task_id = "TASK-HERDR-BOOTSTRAP-WAIT"
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-08-08T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "code_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["coordinates", "edits files", "runs tests", "reviews"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
+        routed_preflight = {
+            "runtime": "HERDR",
+            "adapter_class": "pane_controller",
+            "status": "pass",
+            "checks": {"submission_transport": {"status": "pass", "mode": "agent_prompt"}},
+            "agents": {"codex": {"status": "pass", "pane_id": "pane-owned"}},
+        }
+        bootstrap_preflight = {
+            "runtime": "HERDR",
+            "adapter_class": "pane_controller",
+            "status": "fail",
+            "checks": {"submission_transport": {"status": "pass", "mode": "agent_prompt"}},
+            "agents": {
+                "codex": {
+                    "status": "fail",
+                    "pane_id": "pane-owned",
+                    "readiness": {
+                        "ready": False,
+                        "reason_code": "session_identity_unknown",
+                    },
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    with patch(
+                        "valp_cli.workflow.collect_runtime_preflight",
+                        return_value=routed_preflight,
+                    ):
+                        task_dir = self.publish_routed_task(
+                            root,
+                            task_id,
+                            "Coordinate and verify an agent runtime change",
+                            runtime="herdr",
+                        )
+
+            provisioned = self.owned_session_projection(
+                task_id,
+                "pane-owned",
+                lifecycle="provisioned",
+            )
+            verified = self.owned_session_projection(
+                task_id,
+                "pane-owned",
+                lifecycle="bootstrap_ready",
+            )
+
+            def submit_with_evidence(*_args: object, **_kwargs: object) -> dict[str, object]:
+                evidence_path = task_dir / "agents/codex/self-review.md"
+                evidence_path.parent.mkdir(parents=True, exist_ok=True)
+                evidence_path.write_text("completed\n", encoding="utf-8")
+                return herdr_invocation_proof(pane_id="pane-owned")
+
+            with patch(
+                "valp_cli.workflow.ensure_herdr_agent_sessions",
+                return_value=provisioned,
+            ):
+                with patch(
+                    "valp_cli.workflow.collect_runtime_preflight",
+                    side_effect=[bootstrap_preflight, routed_preflight],
+                ):
+                    with patch(
+                        "valp_cli.workflow.bootstrap_task_owned_herdr_session",
+                        return_value=verified,
+                    ) as bootstrap:
+                        with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
+                            with patch(
+                                "valp_cli.workflow.submit_herdr_dispatch",
+                                side_effect=submit_with_evidence,
+                            ):
+                                dispatch_task(
+                                    root,
+                                    task_id,
+                                    role="coordinator",
+                                    wait_seconds=240,
+                                    submit=True,
+                                )
+
+            self.assertEqual(bootstrap.call_args.kwargs["timeout_seconds"], 240)
+
+    def test_dispatch_enforces_minimum_bootstrap_timeout_for_startup_hooks(self) -> None:
+        task_id = "TASK-HERDR-BOOTSTRAP-MINIMUM-WAIT"
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-08-12T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "code_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["coordinates", "edits files", "runs tests", "reviews"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
+        routed_preflight = {
+            "runtime": "HERDR",
+            "adapter_class": "pane_controller",
+            "status": "pass",
+            "checks": {"submission_transport": {"status": "pass", "mode": "agent_prompt"}},
+            "agents": {"codex": {"status": "pass", "pane_id": "pane-owned"}},
+        }
+        bootstrap_preflight = {
+            "runtime": "HERDR",
+            "adapter_class": "pane_controller",
+            "status": "fail",
+            "checks": {"submission_transport": {"status": "pass", "mode": "agent_prompt"}},
+            "agents": {
+                "codex": {
+                    "status": "fail",
+                    "pane_id": "pane-owned",
+                    "readiness": {"ready": False, "reason_code": "session_identity_unknown"},
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    with patch("valp_cli.workflow.collect_runtime_preflight", return_value=routed_preflight):
+                        task_dir = self.publish_routed_task(
+                            root,
+                            task_id,
+                            "Coordinate and verify an agent runtime change",
+                            runtime="herdr",
+                        )
+            provisioned = self.owned_session_projection(task_id, "pane-owned", lifecycle="provisioned")
+            verified = self.owned_session_projection(task_id, "pane-owned", lifecycle="bootstrap_ready")
+
+            def submit_with_evidence(*_args: object, **_kwargs: object) -> dict[str, object]:
+                evidence_path = task_dir / "agents/codex/self-review.md"
+                evidence_path.parent.mkdir(parents=True, exist_ok=True)
+                evidence_path.write_text("completed\n", encoding="utf-8")
+                return herdr_invocation_proof(pane_id="pane-owned")
+
+            with patch("valp_cli.workflow.ensure_herdr_agent_sessions", return_value=provisioned):
+                with patch(
+                    "valp_cli.workflow.collect_runtime_preflight",
+                    side_effect=[bootstrap_preflight, routed_preflight],
+                ):
+                    with patch(
+                        "valp_cli.workflow.bootstrap_task_owned_herdr_session",
+                        return_value=verified,
+                    ) as bootstrap:
+                        with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
+                            with patch(
+                                "valp_cli.workflow.submit_herdr_dispatch",
+                                side_effect=submit_with_evidence,
+                            ):
+                                dispatch_task(
+                                    root,
+                                    task_id,
+                                    role="coordinator",
+                                    wait_seconds=20,
+                                    submit=True,
+                                )
+
+            self.assertEqual(bootstrap.call_args.kwargs["timeout_seconds"], 60)
 
     def test_dispatch_uses_digest_bound_task_runtime_launch_capabilities(self) -> None:
         task_id = "TASK-HERDR-TASK-RUNTIME-CAPABILITIES"
@@ -5359,6 +7619,150 @@ class ValpWorkflowTests(unittest.TestCase):
             ]
             self.assertEqual(timeline[-1]["event"], "runtime_dispatch_retry_started")
             self.assertEqual(timeline[-1]["work_item_ids"], ["coordinator:codex"])
+
+    def test_done_session_reprovision_precondition_does_not_consume_runtime_retry(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-08-07T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "code_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["coordinates, edits files, runs tests, and reviews"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
+        preflight = {
+            "runtime": "HERDR",
+            "adapter_class": "pane_controller",
+            "status": "pass",
+            "checks": {"submission_transport": {"status": "pass", "mode": "agent_prompt"}},
+            "agents": {"codex": {"status": "pass", "pane_id": "pane-1"}},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
+                        task_dir = self.publish_routed_task(
+                            root,
+                            "TASK-HERDR-DONE-REPROVISION-PRECONDITION",
+                            "Coordinate and verify an agent runtime change",
+                            runtime="herdr",
+                        )
+
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch(
+                    "valp_cli.workflow.ensure_herdr_agent_sessions",
+                    side_effect=HerdrSubmissionError(
+                        "HERDR task-owned done session requires an explicit fenced reprovision"
+                    ),
+                ):
+                    with patch("valp_cli.workflow.collect_runtime_preflight") as collect_preflight:
+                        with self.assertRaisesRegex(SystemExit, "explicit fenced reprovision"):
+                            dispatch_task(
+                                root,
+                                "TASK-HERDR-DONE-REPROVISION-PRECONDITION",
+                                role="coordinator",
+                                wait_seconds=0,
+                                submit=True,
+                            )
+
+            collect_preflight.assert_not_called()
+            budget = read_json(task_dir / "iteration-budget.json")
+            self.assertEqual(budget["status"], "active")
+            self.assertIsNone(budget["stop_reason"])
+            self.assertFalse((task_dir / "agent-session-block.json").exists())
+            timeline = [
+                json.loads(line)
+                for line in (task_dir / "timeline.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(timeline[-1]["event"], "agent_session_reprovision_required")
+
+    def test_dispatch_dry_run_does_not_preflight_or_mutate_runtime_failure_state(self) -> None:
+        capabilities = {
+            "schema_version": "valp-agent-capabilities.v1",
+            "updated_at": "2026-08-07T00:00:00Z",
+            "source": "test fixture",
+            "agents": {
+                "codex": {
+                    "active": True,
+                    "role": ["coordination", "implementation", "verification", "code_review"],
+                    "skills": [],
+                    "mcp_servers": [],
+                    "strengths": ["coordinates, edits files, runs tests, and reviews"],
+                    "must_not_do": ["must not bypass approval gates"],
+                }
+            },
+        }
+        passing_preflight = {
+            "runtime": "HERDR",
+            "adapter_class": "pane_controller",
+            "status": "pass",
+            "checks": {"submission_transport": {"status": "pass", "mode": "agent_prompt"}},
+            "agents": {"codex": {"status": "pass", "pane_id": "pane-1"}},
+        }
+        failing_preflight = {
+            "runtime": "HERDR",
+            "adapter_class": "pane_controller",
+            "status": "fail",
+            "checks": {},
+            "agents": {"codex": {"status": "fail", "pane_id": None}},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.skill_router_command", return_value=None):
+                    with patch("valp_cli.workflow.collect_runtime_preflight", return_value=passing_preflight):
+                        task_dir = self.publish_routed_task(
+                            root,
+                            "TASK-HERDR-DRY-RUN-NO-MUTATION",
+                            "Coordinate and verify an agent runtime change",
+                            runtime="herdr",
+                        )
+
+            tracked = ["iteration-budget.json", "timeline.jsonl", "runtime-preflight.json"]
+            before = {
+                name: (task_dir / name).read_bytes() if (task_dir / name).exists() else None
+                for name in tracked
+            }
+
+            with patch(
+                "valp_cli.workflow.collect_runtime_preflight",
+                return_value=failing_preflight,
+            ) as collect_preflight:
+                commands = dispatch_task(
+                    root,
+                    "TASK-HERDR-DRY-RUN-NO-MUTATION",
+                    role="coordinator",
+                    submit=False,
+                )
+
+            collect_preflight.assert_not_called()
+            self.assertEqual(len(commands), 1)
+            after = {
+                name: (task_dir / name).read_bytes() if (task_dir / name).exists() else None
+                for name in tracked
+            }
+            self.assertEqual(after, before)
+
+    def test_targeted_session_bindings_excludes_completed_sibling_sessions(self) -> None:
+        projection = {
+            "bindings": {
+                "codex": {"runtime_identity": {"pane_id": "closed-codex"}},
+                "claude": {"runtime_identity": {"pane_id": "live-claude"}},
+            }
+        }
+
+        self.assertEqual(
+            workflow_module.targeted_session_bindings(projection, ["claude"]),
+            {"claude": {"runtime_identity": {"pane_id": "live-claude"}}},
+        )
 
     def test_dispatch_stops_after_retried_runtime_failure(self) -> None:
         capabilities = {
@@ -6067,6 +8471,62 @@ class ValpWorkflowTests(unittest.TestCase):
             replay_preflight.assert_not_called()
             replay_submit.assert_not_called()
             self.assertEqual(receipt_path.read_text(encoding="utf-8").splitlines(), completed_lines)
+
+    def test_public_incomplete_recovery_retries_unchanged_pre_submission_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_id = "TASK-INCOMPLETE-UNCHANGED-EVIDENCE"
+            task_dir, capabilities, preflight, coordinator = self.incomplete_recovery_fixture(
+                root,
+                task_id,
+            )
+            baseline: dict[str, str] = {}
+            for ref in coordinator["expected_refs"]:
+                evidence_path = task_dir / str(ref)
+                evidence_path.parent.mkdir(parents=True, exist_ok=True)
+                evidence_path.write_text("pre-existing evidence\n", encoding="utf-8")
+                baseline[str(ref)] = "sha256:" + hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+
+            submitted = self.deterministic_receipt(
+                task_id,
+                coordinator,
+                "dispatch_submitted",
+                1,
+            )
+            submitted["proof"] = {
+                "runtime": "HERDR",
+                "transport_mode": "pane_send_text_enter",
+                "pane_id": "pane-original",
+                "submission_id": "original",
+                "expected_evidence_baseline": baseline,
+            }
+            receipt_path = task_dir / "dispatch-receipts.jsonl"
+            with receipt_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(submitted) + "\n")
+            original_lines = receipt_path.read_text(encoding="utf-8").splitlines()
+
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
+                    with patch(
+                        "valp_cli.workflow.ensure_herdr_agent_sessions",
+                        return_value=self.owned_session_projection(task_id, "pane-fresh"),
+                    ):
+                        with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
+                            with patch(
+                                "valp_cli.workflow.submit_herdr_dispatch",
+                                return_value=herdr_invocation_proof(pane_id="pane-fresh"),
+                            ) as submit_dispatch:
+                                self.assertEqual(main(self.recover_incomplete_cli_args(root, task_id)), 0)
+
+            submit_dispatch.assert_called_once()
+            receipt_lines = receipt_path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(receipt_lines[: len(original_lines)], original_lines)
+            receipts = [json.loads(line) for line in receipt_lines if '"schema_version"' in line]
+            self.assertEqual([receipt["event"] for receipt in receipts], [
+                "dispatch_submitted",
+                "dispatch_submitted",
+            ])
+            self.assertEqual(receipts[-1]["retry_generation"], 1)
 
     def test_public_incomplete_recovery_reconciles_late_evidence_after_retry_without_transport(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6911,6 +9371,218 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertIn("OLD-DONE", score["evidence_history_refs"][0])
             self.assertEqual(score["model_evidence"]["history_status"], "invalidated")
 
+    def test_completed_task_feedback_is_consumed_by_next_task_scoring(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_done_feedback_history(root, task_id="TASK-A-DONE")
+            publish_task(root, "TASK-B-NEXT", "Fix a bug and run tests", runtime="queue")
+
+            history = load_routing_feedback_history(root)
+            self.assertEqual([record["task_id"] for record in history], ["TASK-A-DONE"])
+
+            probe = {
+                "schema_version": "valp-model-probe.v1",
+                "status": "observed",
+                "source": "test runtime metadata",
+                "observed_at": "2026-07-10T00:00:00Z",
+                "ttl_seconds": 86400,
+                "model": {
+                    "model_id": "test-model",
+                    "provider": "test-provider",
+                    "reasoning_mode": "unknown",
+                    "confidence": "high",
+                },
+                "session_identity": {
+                    "status": "known",
+                    "token": "sha256:test-session",
+                    "source": "test runtime metadata",
+                    "generation": "1",
+                },
+            }
+            agent_info = {
+                "active": True,
+                "role": ["implementation"],
+                "model_identity": {
+                    "declared_model": {
+                        "model_id": "test-model",
+                        "provider": "test-provider",
+                        "reasoning_mode": "unknown",
+                        "confidence": "high",
+                    }
+                },
+            }
+            first_identity = model_identity_for(
+                "codex",
+                agent_info,
+                {},
+                runtime_probe=probe,
+                evaluated_at="2026-07-10T00:00:00Z",
+            )
+            agent_info["model_identity"]["history_binding"] = first_identity["history_binding"]
+
+            scores = score_candidates(
+                "software-code",
+                {"codex": agent_info},
+                history,
+                runtime_preflight={
+                    "agents": {
+                        "codex": {
+                            "model_probe": probe
+                        }
+                    }
+                },
+                evaluated_at="2026-07-10T00:05:00Z",
+            )
+
+            self.assertEqual(scores["codex"]["evidence_history"], 0.68)
+            self.assertIn("TASK-A-DONE", scores["codex"]["evidence_history_refs"][0])
+
+    def test_historical_success_cannot_route_to_missing_current_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_done_feedback_history(root, task_id="TASK-A-DONE")
+            capabilities_path = root / ".valp" / "agents" / "capabilities.json"
+            capabilities_path.parent.mkdir(parents=True)
+            capabilities_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-agent-capabilities.v1",
+                        "updated_at": "2026-07-10T00:00:00Z",
+                        "agents": {
+                            "manual-operator": {
+                                "active": True,
+                                "role": ["review"],
+                                "strengths": ["writes manual evidence"],
+                                "skills": [],
+                                "mcp_servers": [],
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            task_dir = publish_task(
+                root,
+                "TASK-B-MISSING-CURRENT",
+                "Review a source",
+                profile="generic-analysis",
+                runtime="manual",
+            )
+            declaration = {
+                "schema_version": "valp-assignment-declaration.v1",
+                "declaration_id": "decl-TASK-B-MISSING-CURRENT",
+                "task_id": "TASK-B-MISSING-CURRENT",
+                "declared_at": "2026-07-10T00:01:00Z",
+                "leader": {
+                    "agent_id": "manual-leader",
+                    "selected_by": "user",
+                    "selection_ref": "test-user-selection:TASK-B-MISSING-CURRENT",
+                },
+                "assignments": {"reviewer": "codex"},
+                "reasons": {"reviewer": "Historical success must not substitute for current capability evidence."},
+            }
+
+            with patch("valp_cli.workflow.load_local_overlay", return_value={}):
+                with self.assertRaisesRegex(SystemExit, "unknown_agent:reviewer:codex"):
+                    route_task(
+                        root,
+                        "TASK-B-MISSING-CURRENT",
+                        runtime="manual",
+                        assignment_declaration=declaration,
+                    )
+
+            blocked = read_json(task_dir / "assignment-validation.json")
+            self.assertEqual(blocked["status"], "blocked")
+            self.assertIn("unknown_agent:reviewer:codex", blocked["blockers"])
+
+    def test_learning_feedback_is_not_consumed_or_written_back_during_routing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_a = root / ".herdr-loop" / "tasks" / "TASK-A-LEARNING-ONLY"
+            task_a.mkdir(parents=True)
+            (task_a / "learning-feedback.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-learning-feedback.v1",
+                        "task_id": "TASK-A-LEARNING-ONLY",
+                        "profile": "generic-analysis",
+                        "result": "done",
+                        "learning_items": [
+                            {
+                                "kind": "routing",
+                                "observation": "A proposal exists but is not routing authority.",
+                                "evidence_refs": [],
+                                "confidence": "high",
+                                "next_effect": "Requires explicit disposition.",
+                            }
+                        ],
+                        "proposed_updates": [],
+                        "privacy_notes": ["test fixture"],
+                        "updated_at": "2026-07-10T00:00:00Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            registry = root / ".valp" / "registry.json"
+            passport = root / ".valp" / "passport.json"
+            capabilities = root / ".valp" / "agents" / "capabilities.json"
+            capabilities.parent.mkdir(parents=True)
+            capabilities.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "valp-agent-capabilities.v1",
+                        "updated_at": "2026-07-10T00:00:00Z",
+                        "agents": {
+                            "manual-operator": {
+                                "active": True,
+                                "role": ["review"],
+                                "strengths": ["writes manual evidence"],
+                                "skills": [],
+                                "mcp_servers": [],
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            registry.parent.mkdir(parents=True, exist_ok=True)
+            registry.write_text('{"version":1,"entries":[]}', encoding="utf-8")
+            passport.write_text('{"version":1,"capabilities":[]}', encoding="utf-8")
+            before_registry = registry.read_bytes()
+            before_passport = passport.read_bytes()
+
+            self.assertEqual(load_routing_feedback_history(root), [])
+            task_b = publish_task(
+                root,
+                "TASK-B-LEARNING-ONLY",
+                "Review a source",
+                profile="generic-analysis",
+                runtime="manual",
+            )
+            routing = route_task(
+                root,
+                "TASK-B-LEARNING-ONLY",
+                runtime="manual",
+                assignment_declaration={
+                    "schema_version": "valp-assignment-declaration.v1",
+                    "declaration_id": "decl-TASK-B-LEARNING-ONLY",
+                    "task_id": "TASK-B-LEARNING-ONLY",
+                    "declared_at": "2026-07-10T00:01:00Z",
+                    "leader": {
+                        "agent_id": "manual-leader",
+                        "selected_by": "user",
+                        "selection_ref": "test-user-selection:TASK-B-LEARNING-ONLY",
+                    },
+                    "assignments": {"reviewer": "manual-operator"},
+                    "reasons": {"reviewer": "Manual reviewer is current and reachable for this fixture."},
+                },
+            )
+
+            self.assertEqual(routing["candidate_scores"]["manual-operator"]["evidence_history_refs"], [])
+            self.assertEqual(registry.read_bytes(), before_registry)
+            self.assertEqual(passport.read_bytes(), before_passport)
+            self.assertTrue((task_b / "routing.json").exists())
+
     def test_unbacked_feedback_index_does_not_affect_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -7000,6 +9672,185 @@ class ValpWorkflowTests(unittest.TestCase):
             self.assertEqual(task_dir.resolve(), (root / ".herdr-loop" / "tasks" / "TASK-ROUTE").resolve())
             self.assertEqual(routing["profile"], "research")
             self.assertTrue((task_dir / "routing.json").exists())
+
+    def test_scan_excludes_overlay_only_agent_from_routing_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capabilities_path = root / ".valp" / "agents" / "capabilities.json"
+            capabilities_path.parent.mkdir(parents=True)
+            capabilities_path.write_text(
+                json.dumps({"schema_version": "valp-agent-capabilities.v1", "agents": {}}),
+                encoding="utf-8",
+            )
+            overlay = {
+                "agent_capability_profiles": {
+                    "overlay-only-agent": {
+                        "routing_hint_only": True,
+                        "likely_roles": ["implementation", "verification"],
+                        "model_identity": {
+                            "agent_surface": "local-surface",
+                            "provider": "local-provider",
+                            "declared_model": {"model_id": "local-model"},
+                        },
+                    }
+                }
+            }
+            with patch("valp_cli.workflow.load_local_overlay", return_value=overlay):
+                scanned = scan_workspace(root, runtime="manual")
+
+            self.assertNotIn("overlay-only-agent", scanned["agents"])
+            scores = score_candidates("software-code", scanned["agents"])
+            self.assertNotIn("overlay-only-agent", scores)
+
+    def test_refresh_scan_preserves_routed_task_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_dir = publish_task(root, "TASK-SCAN-REFRESH", "Inspect runtime", runtime="manual")
+            state = read_json(task_dir / "state.json")
+            state["status"] = "dispatching"
+            workflow_module.write_json(task_dir / "state.json", state)
+
+            scan_workspace(root, "TASK-SCAN-REFRESH", runtime="manual")
+
+            refreshed = read_json(task_dir / "state.json")
+            self.assertEqual(refreshed["status"], "dispatching")
+            self.assertEqual(refreshed["capabilities_ref"], ".herdr-loop/agents/capabilities.json")
+
+            refreshed["status"] = "scanning_capabilities"
+            refreshed["selected_agents"] = ["codex"]
+            workflow_module.write_json(task_dir / "state.json", refreshed)
+            workflow_module.write_json(task_dir / "routing.json", {"selected_agents": ["codex"]})
+
+            scan_workspace(root, "TASK-SCAN-REFRESH", runtime="manual")
+
+            recovered = read_json(task_dir / "state.json")
+            self.assertEqual(recovered["status"], "dispatching")
+
+    def test_refresh_scan_reconciles_bound_provider_evidence_without_rewriting_dispatch_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_id = "TASK-SCAN-BOUND-PROVIDERS"
+            directory = root / ".herdr-loop" / "tasks" / task_id
+            directory.mkdir(parents=True)
+            historical_preflight = {
+                "generated_at": "2026-08-07T17:13:07Z",
+                "runtime": "HERDR",
+                "adapter_class": "pane_controller",
+                "status": "warn",
+                "checks": {},
+                "agents": {},
+            }
+            workflow_module.write_json(
+                directory / "routing.json",
+                {
+                    "task_id": task_id,
+                    "selected_agents": ["codex", "claude"],
+                    "role_assignments": {
+                        "coordinator": "codex",
+                        "implementer": "codex",
+                        "reviewer": "claude",
+                    },
+                    "runtime_adapter": {
+                        "id": "herdr",
+                        "class": "pane_controller",
+                        "preflight": historical_preflight,
+                    },
+                    "provider_matrix": {
+                        "generated_at": "2026-08-07T17:36:36Z",
+                        "runtime_preflight": historical_preflight,
+                        "model_awareness": {
+                            "required": True,
+                            "dynamic_discovery_required": True,
+                        },
+                        "providers": {},
+                    },
+                    "control_contract": {
+                        "status": "recorded",
+                        "ref": "control-contract.json",
+                        "digest": "sha256:immutable",
+                    },
+                },
+            )
+            workflow_module.write_json(
+                directory / "state.json",
+                {
+                    "task_id": task_id,
+                    "status": "dispatching",
+                    "selected_agents": ["codex", "claude"],
+                },
+            )
+            workflow_module.write_json(
+                directory / "agent-sessions.json",
+                {
+                    "schema_version": "valp-agent-sessions.v1",
+                    "task_id": task_id,
+                    "bindings": {
+                        "codex": {"runtime_identity": {"pane_id": "pane-codex"}},
+                        "claude": {"runtime_identity": {"pane_id": "pane-claude"}},
+                    },
+                },
+            )
+            contract_bytes = b'{"immutable":true}\n'
+            receipt_bytes = b'{"event":"dispatch_completed"}\n'
+            (directory / "control-contract.json").write_bytes(contract_bytes)
+            (directory / "dispatch-receipts.jsonl").write_bytes(receipt_bytes)
+            capabilities = {
+                "schema_version": "valp-agent-capabilities.v1",
+                "agents": {
+                    "codex": {"active": True, "mcp_servers": [], "must_not_do": []},
+                    "claude": {"active": True, "mcp_servers": [], "must_not_do": []},
+                },
+            }
+
+            def probe(agent: str, timestamp: str) -> dict[str, object]:
+                return {
+                    "status": "observed",
+                    "source": f"herdr:{agent}",
+                    "observed_at": timestamp,
+                    "ttl_seconds": 3600,
+                    "model": {
+                        "model_id": f"{agent}-model",
+                        "provider": f"{agent}-provider",
+                        "reasoning_mode": "medium",
+                        "confidence": "high",
+                    },
+                    "session_identity": {
+                        "status": "known",
+                        "token": f"sha256:{agent}",
+                        "source": f"herdr:{agent}",
+                        "generation": f"session:{agent}",
+                    },
+                }
+
+            current_preflight = {
+                "generated_at": "2026-08-08T03:00:00Z",
+                "runtime": "HERDR",
+                "adapter_class": "pane_controller",
+                "status": "pass",
+                "checks": {},
+                "agents": {
+                    "codex": {"status": "pass", "model_probe": probe("codex", "2026-08-08T02:57:51Z")},
+                    "claude": {"status": "pass", "model_probe": probe("claude", "2026-08-08T02:58:07Z")},
+                },
+            }
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities), \
+                    patch("valp_cli.workflow.load_local_overlay", return_value={}), \
+                    patch("valp_cli.workflow.collect_runtime_preflight", return_value=current_preflight):
+                scan_workspace(root, task_id, runtime="herdr")
+
+            refreshed = read_json(directory / "routing.json")
+            self.assertEqual(
+                refreshed["provider_matrix"]["providers"]["codex"]["model_identity"]["observed_model"]["timestamp"],
+                "2026-08-08T02:57:51Z",
+            )
+            self.assertEqual(
+                refreshed["provider_matrix"]["providers"]["claude"]["model_identity"]["observed_model"]["timestamp"],
+                "2026-08-08T02:58:07Z",
+            )
+            self.assertEqual(refreshed["provider_matrix"]["runtime_preflight"], historical_preflight)
+            self.assertEqual(refreshed["control_contract"]["digest"], "sha256:immutable")
+            self.assertEqual((directory / "control-contract.json").read_bytes(), contract_bytes)
+            self.assertEqual((directory / "dispatch-receipts.jsonl").read_bytes(), receipt_bytes)
 
     def test_route_validates_and_records_leader_declared_assignments_without_selecting_agents(self) -> None:
         capabilities = {

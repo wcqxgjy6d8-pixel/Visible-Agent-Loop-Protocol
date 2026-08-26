@@ -1,25 +1,121 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from jsonschema import Draft202012Validator
+
 from valp_cli.audit import FAIL, PASS, TaskAudit
+from valp_cli.cli import build_parser, main
 from valp_cli.continuation import (
     ContinuationError,
     ContinuationStore,
+    HerdrCoordinatorContinueAdapter,
+    HerdrCoordinatorContinuationAdapter,
     HermesCliAdapter,
     HermesRuntimeControlAdapter,
+    HerdrUnixSocketRpcClient,
     SafePointQueue,
+    SUCCESS_EVENTS,
+    SubprocessRuntimeControlAdapter,
     build_envelope,
     capability_declaration,
+    content_addressed_evidence_ref,
     file_digest,
     idempotency_key,
 )
+
+
+class _FakeRpcConnection:
+    def __init__(self, observed: dict[str, object], *, response_id: str | None = None) -> None:
+        self.observed = observed
+        self.response_id = response_id
+        self.response = b""
+        self.timeout: float | None = None
+        self.connected_to = ""
+
+    def __enter__(self) -> "_FakeRpcConnection":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def settimeout(self, timeout: float) -> None:
+        self.timeout = timeout
+
+    def connect(self, path: str) -> None:
+        self.connected_to = path
+
+    def sendall(self, raw: bytes) -> None:
+        if not raw.endswith(b"\n") or raw.count(b"\n") != 1:
+            raise AssertionError("request must use one JSON-RPC line")
+        request = json.loads(raw)
+        self.observed.update(request)
+        self.response = json.dumps({
+            "jsonrpc": "2.0",
+            "id": self.response_id or request["id"],
+            "result": {"type": "coordinator_continued"},
+        }).encode("utf-8") + b"\n"
+
+    def recv(self, _size: int) -> bytes:
+        response, self.response = self.response, b""
+        return response
+
+
+class HerdrUnixSocketRpcClientTests(unittest.TestCase):
+    def test_call_uses_json_rpc_line_framing_and_requires_matching_id(self) -> None:
+        observed: dict[str, object] = {}
+
+        connection = _FakeRpcConnection(observed)
+        socket_path = Path("runtime/herdr.sock")
+        with patch.object(socket, "AF_UNIX", 1, create=True), patch(
+            "valp_cli.continuation.socket.socket", return_value=connection
+        ) as socket_factory:
+            result = HerdrUnixSocketRpcClient(socket_path, timeout=1).call(
+                "coordinator.continue", {"target": "wBF:p1"}
+            )
+
+        socket_factory.assert_called_once_with(1, socket.SOCK_STREAM)
+        self.assertEqual(connection.timeout, 1.0)
+        self.assertEqual(connection.connected_to, str(socket_path))
+        self.assertEqual(result["result"], {"type": "coordinator_continued"})
+        self.assertEqual(observed["jsonrpc"], "2.0")
+        self.assertEqual(observed["method"], "coordinator.continue")
+        self.assertEqual(observed["params"], {"target": "wBF:p1"})
+        self.assertIsInstance(observed["id"], str)
+
+    def test_call_rejects_response_with_mismatched_id(self) -> None:
+        connection = _FakeRpcConnection({}, response_id="wrong-id")
+        with patch.object(socket, "AF_UNIX", 1, create=True), patch(
+            "valp_cli.continuation.socket.socket", return_value=connection
+        ):
+            with self.assertRaisesRegex(ContinuationError, "id does not match request"):
+                HerdrUnixSocketRpcClient("runtime/herdr.sock", timeout=1).call("ping", {})
+
+    def test_call_fails_closed_when_unix_socket_family_is_unavailable(self) -> None:
+        socket_without_af_unix = SimpleNamespace(SOCK_STREAM=socket.SOCK_STREAM)
+        with patch("valp_cli.continuation.socket", socket_without_af_unix):
+            with self.assertRaisesRegex(
+                ContinuationError, "Unix-domain sockets are unavailable"
+            ):
+                HerdrUnixSocketRpcClient("runtime/herdr.sock", timeout=1).call("ping", {})
+
+    def test_call_fails_closed_when_unix_socket_transport_is_unavailable(self) -> None:
+        with patch.object(socket, "AF_UNIX", 1, create=True), patch(
+            "valp_cli.continuation.socket.socket", side_effect=OSError("unavailable")
+        ):
+            with self.assertRaisesRegex(ContinuationError, "transport failed: unavailable"):
+                HerdrUnixSocketRpcClient("runtime/herdr.sock", timeout=1).call("ping", {})
 
 
 class ContinuationStoreTests(unittest.TestCase):
@@ -94,6 +190,72 @@ class ContinuationStoreTests(unittest.TestCase):
             self.assertEqual([event["event"] for event in store.events()], list(("resume_pending", "resume_received", "digest_verified", "resume_accepted", "continuation_started", "resume_consumed")))
             persisted = root / "continuations" / ("b" * 64) / "invocation-receipt.json"
             self.assertEqual(json.loads(persisted.read_text()), receipt)
+
+    def test_herdr_coordinator_continuation_invokes_once_and_completes_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.setup_store(root)
+            payload = {"wake": "ready"}
+            envelope = self.envelope(
+                root,
+                payload,
+                adapter="herdr-coordinator-continuation",
+                provider="herdr",
+                coordinator="codex",
+            )
+            requests: list[dict[str, object]] = []
+
+            def continue_coordinator(request: dict[str, object]) -> dict[str, object]:
+                requests.append(request)
+                return {
+                    "schema_version": "valp-herdr-coordinator-continuation-response.v1",
+                    "status": "consumed",
+                    "receipt": self.receipt(
+                        envelope,
+                        adapter={"id": "herdr-coordinator-continuation", "version": "1"},
+                        provider={
+                            "id": "herdr",
+                            "invocation_id": "herdr-invocation-1",
+                            "turn_id": "herdr-turn-1",
+                        },
+                    ),
+                }
+
+            adapter = HerdrCoordinatorContinuationAdapter(
+                runtime_session_id="herdr-session-1",
+                provider_id="herdr",
+                coordinator_agent="codex",
+                continue_coordinator=continue_coordinator,
+                identity_evidence_ref="evidence/provider-identity.json",
+                duplicate_suppression_evidence_ref="evidence/provider-dedup.json",
+            )
+            store.register_capability(adapter.capability())
+            store.pending(envelope, payload)
+            store.receive(envelope, payload)
+
+            first = store.consume_with_adapter(envelope, payload, adapter)
+            replay = store.consume_with_adapter(envelope, payload, adapter)
+
+            self.assertEqual(first, replay)
+            self.assertEqual(len(requests), 1)
+            self.assertEqual(requests[0]["method"], "coordinator.continue")
+            self.assertEqual(requests[0]["session_id"], "herdr-session-1")
+            self.assertEqual(requests[0]["channel"], {
+                "kind": "runtime_control",
+                "user_input_allowed": False,
+                "raw_worker_output_allowed": False,
+            })
+            self.assertEqual(
+                [event["event"] for event in store.events()],
+                [
+                    "resume_pending",
+                    "resume_received",
+                    "digest_verified",
+                    "resume_accepted",
+                    "continuation_started",
+                    "resume_consumed",
+                ],
+            )
 
     def test_receive_cannot_bypass_persisted_pending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -297,6 +459,159 @@ print(json.dumps(store.consume(envelope, invoke), sort_keys=True))
                 list(("resume_pending", "resume_received", "digest_verified", "resume_accepted", "continuation_started", "resume_consumed")),
             )
 
+    def test_committed_receipt_recovers_missing_terminal_events_without_reinvoke(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store, envelope = self.prepare(root, {"wake": "ready"})
+            store.claim(envelope)
+            original_append = store._append
+
+            def crash_before_started(event: str, value: dict, **extra: object) -> dict:
+                if event == "continuation_started":
+                    raise OSError("injected process crash")
+                return original_append(event, value, **extra)
+
+            with patch.object(store, "_append", side_effect=crash_before_started):
+                with self.assertRaisesRegex(OSError, "injected process crash"):
+                    store.consume(envelope, lambda: self.receipt(envelope))
+            receipt_path = root / "continuations" / ("b" * 64) / "invocation-receipt.json"
+            self.assertTrue(receipt_path.is_file())
+
+            restarted = ContinuationStore(root, "TASK-1")
+            recovered = restarted.consume(
+                envelope,
+                lambda: self.fail("provider must not be reinvoked"),
+            )
+            self.assertEqual(recovered, self.receipt(envelope))
+            self.assertEqual(
+                [event["event"] for event in restarted.events()],
+                list(("resume_pending", "resume_received", "digest_verified", "resume_accepted", "continuation_started", "resume_consumed")),
+            )
+
+    def test_external_subprocess_provider_is_invoked_once_and_reconciles_after_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            root = workspace / ".herdr-loop" / "tasks" / "TASK-1"
+            root.mkdir(parents=True)
+            store = self.setup_store(root)
+            payload = {"wake": "ready"}
+            envelope = self.envelope(
+                root, payload, adapter="subprocess-runtime-control",
+                provider="local-provider", coordinator="coordinator",
+            )
+            provider_root = root / "provider-state"
+            script = root / "provider.py"
+            script.write_text('''
+import json
+from pathlib import Path
+import sys
+
+provider_root = Path(sys.argv[1])
+provider_root.mkdir(parents=True, exist_ok=True)
+request = json.load(sys.stdin)
+params = request["params"]
+envelope = params["envelope"]
+state_path = provider_root / "receipt.json"
+calls_path = provider_root / "calls.jsonl"
+with calls_path.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps({"method": request["method"], "key": params["idempotency_key"]}) + "\\n")
+if request["method"] == "runtime_control.submit":
+    receipt = {
+        "schema_version": "valp-continuation-invocation-receipt.v1",
+        "task_id": envelope["task_id"],
+        "suspension_id": envelope["suspension_id"],
+        "suspension_epoch": envelope["suspension_epoch"],
+        "wake_id": envelope["wake_id"],
+        "continuation_generation": envelope["continuation_generation"],
+        "idempotency_key": params["idempotency_key"],
+        "payload_digest": envelope["payload_digest"],
+        "adapter": {"id": "subprocess-runtime-control", "version": "1"},
+        "provider": {"id": "local-provider", "invocation_id": "local-invocation-1", "turn_id": "local-turn-1"},
+        "durable_boundary_ref": envelope["target"]["durable_boundary_ref"],
+        "identity_evidence_ref": "evidence/provider-identity.json",
+        "duplicate_suppression_ref": "evidence/provider-dedup.json",
+        "started_at": "2026-08-05T00:00:00Z",
+        "consumed_at": "2026-08-05T00:00:01Z",
+        "result": "consumed",
+    }
+    state_path.write_text(json.dumps(receipt), encoding="utf-8")
+else:
+    receipt = json.loads(state_path.read_text(encoding="utf-8"))
+print(json.dumps({"result": {"status": "consumed", "receipt": receipt}}))
+''', encoding="utf-8")
+            adapter = SubprocessRuntimeControlAdapter(
+                command=(sys.executable, str(script), str(provider_root)),
+                provider_id="local-provider", coordinator_surface="coordinator",
+                identity_evidence_ref="evidence/provider-identity.json",
+                duplicate_suppression_evidence_ref="evidence/provider-dedup.json",
+                timeout=5,
+            )
+            store.register_capability(adapter.capability())
+            store.pending(envelope, payload)
+            store.receive(envelope, payload)
+
+            command = [
+                "adapter", "continuation", "TASK-1",
+                "--workspace", str(workspace),
+                "--command-json", json.dumps(list(adapter.command)),
+                "--provider-id", "local-provider",
+                "--coordinator-surface", "coordinator",
+                "--identity-evidence-ref", "evidence/provider-identity.json",
+                "--duplicate-suppression-ref", "evidence/provider-dedup.json",
+                "--json",
+            ]
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(command), 0)
+            self.assertEqual(json.loads(output.getvalue())["status"], "dry_run")
+            self.assertFalse((provider_root / "calls.jsonl").exists())
+
+            def consumed_then_crash() -> dict:
+                adapter.invoke(envelope, payload)
+                raise OSError("crash after provider consumption")
+
+            with self.assertRaisesRegex(OSError, "crash after provider consumption"):
+                store.consume(
+                    envelope,
+                    consumed_then_crash,
+                    reconcile=lambda: adapter.reconcile(envelope, payload),
+                )
+            intent_path = root / "continuations" / ("b" * 64) / "invocation.inflight"
+            intent_schema = json.loads((
+                Path(__file__).parents[1]
+                / "schemas/continuation-invocation-intent.schema.json"
+            ).read_text(encoding="utf-8"))
+            Draft202012Validator(intent_schema).validate(
+                json.loads(intent_path.read_text(encoding="utf-8"))
+            )
+            self.assertEqual(
+                TaskAudit(root, strict=True).check_continuation_ledger().status,
+                PASS,
+            )
+            receipt = ContinuationStore(root, "TASK-1").consume_with_adapter(
+                envelope, payload, adapter
+            )
+            replay = ContinuationStore(root, "TASK-1").consume_with_adapter(
+                envelope, payload, adapter
+            )
+            self.assertEqual(receipt, replay)
+            self.assertEqual(
+                TaskAudit(root, strict=True).check_continuation_ledger().status,
+                PASS,
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main([*command, "--approve"]), 0)
+            self.assertEqual(json.loads(output.getvalue())["status"], "consumed")
+            calls = [
+                json.loads(line)
+                for line in (provider_root / "calls.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(
+                [item["method"] for item in calls],
+                ["runtime_control.submit", "runtime_control.status"],
+            )
+
     def test_unknown_locking_platform_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = self.setup_store(Path(tmp))
@@ -382,6 +697,234 @@ print(json.dumps(store.consume(envelope, invoke), sort_keys=True))
                 ],
             )
             self.assertEqual(store.events()[-1]["event"], "resume_consumed")
+
+    def test_herdr_coordinator_continue_translates_runtime_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.setup_store(root)
+            payload = {"wake": "dependency_ready"}
+            envelope = self.envelope(
+                root,
+                payload,
+                adapter="herdr-coordinator-continue",
+                provider="CodexPlusPlus",
+                coordinator="codex",
+            )
+            envelope["target"]["durable_boundary_ref"] = "wBF:p1"
+            calls: list[tuple[str, dict]] = []
+
+            def rpc_call(method: str, params: dict) -> dict:
+                calls.append((method, params))
+                return {"result": {"type": "coordinator_continued", "receipt": {
+                    "invocation_id": "herdr:continue:state-change:82",
+                    "task_id": "TASK-1",
+                    "resume_id": envelope["wake_id"],
+                    "coordinator_id": "valp-leader-codex-g1",
+                    "provider": "CodexPlusPlus",
+                    "session_id": "session-codex-1",
+                    "state_change_seq": 82,
+                    "prompt_digest": "sha256:" + "d" * 64,
+                    "revision": 4,
+                    "event_chain": [
+                        "resume_pending", "resume_received", "digest_verified",
+                        "resume_accepted", "continuation_started", "resume_consumed",
+                    ],
+                }}}
+
+            adapter = HerdrCoordinatorContinueAdapter(
+                coordinator_target="wBF:p1",
+                runtime_coordinator_id="valp-leader-codex-g1",
+                runtime_session_id="session-codex-1",
+                provider_id="CodexPlusPlus",
+                rpc_call=rpc_call,
+                identity_evidence_ref="evidence/provider-identity.json",
+                duplicate_suppression_evidence_ref="evidence/provider-dedup.json",
+            )
+            store.register_capability(adapter.capability())
+            store.pending(envelope, payload)
+            store.receive(envelope, payload)
+
+            result = store.consume(envelope, lambda: adapter.invoke(envelope, payload))
+
+            self.assertEqual(result["provider"]["invocation_id"], "herdr:continue:state-change:82")
+            self.assertEqual(result["provider"]["turn_id"], "session-codex-1:state-change:82")
+            self.assertEqual(calls[0][0], "coordinator.continue")
+            self.assertEqual(calls[0][1]["target"], "wBF:p1")
+            self.assertEqual(calls[0][1]["resume_id"], envelope["wake_id"])
+            self.assertEqual(calls[0][1]["idempotency_key"], idempotency_key(envelope))
+            self.assertFalse(calls[0][1]["approval_granted"])
+            self.assertEqual(store.events()[-1]["event"], "resume_consumed")
+
+    def test_herdr_coordinator_continue_recovers_inflight_with_idempotent_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.setup_store(root)
+            payload = {"wake": "dependency_ready"}
+            envelope = self.envelope(
+                root,
+                payload,
+                adapter="herdr-coordinator-continue",
+                provider="CodexPlusPlus",
+                coordinator="codex",
+            )
+            envelope["target"]["durable_boundary_ref"] = "wBF:p1"
+            calls: list[tuple[str, dict]] = []
+
+            def rpc_call(method: str, params: dict) -> dict:
+                calls.append((method, dict(params)))
+                return {"result": {"type": "coordinator_continued", "receipt": {
+                    "invocation_id": "herdr:continue:state-change:82",
+                    "task_id": "TASK-1",
+                    "resume_id": envelope["wake_id"],
+                    "coordinator_id": "valp-leader-codex-g1",
+                    "provider": "CodexPlusPlus",
+                    "session_id": "session-codex-1",
+                    "state_change_seq": 82,
+                    "prompt_digest": "sha256:" + "d" * 64,
+                    "revision": 4,
+                    "event_chain": list(SUCCESS_EVENTS),
+                }}}
+
+            adapter = HerdrCoordinatorContinueAdapter(
+                coordinator_target="wBF:p1",
+                runtime_coordinator_id="valp-leader-codex-g1",
+                runtime_session_id="session-codex-1",
+                provider_id="CodexPlusPlus",
+                rpc_call=rpc_call,
+                identity_evidence_ref="evidence/provider-identity.json",
+                duplicate_suppression_evidence_ref="evidence/provider-dedup.json",
+            )
+            store.register_capability(adapter.capability())
+            store.pending(envelope, payload)
+            store.receive(envelope, payload)
+
+            def consumed_then_crash() -> dict:
+                adapter.invoke(envelope, payload)
+                raise OSError("crash after HERDR consumption")
+
+            with self.assertRaisesRegex(OSError, "crash after HERDR consumption"):
+                store.consume(
+                    envelope,
+                    consumed_then_crash,
+                    reconcile=lambda: adapter.reconcile(envelope, payload),
+                )
+
+            recovered = ContinuationStore(root, "TASK-1").consume_with_adapter(
+                envelope, payload, adapter
+            )
+
+            self.assertEqual(
+                recovered["provider"]["invocation_id"],
+                "herdr:continue:state-change:82",
+            )
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[0], calls[1])
+            self.assertEqual(
+                [event["event"] for event in ContinuationStore(root, "TASK-1").events()],
+                list(SUCCESS_EVENTS),
+            )
+
+    def test_content_addressed_evidence_refs_change_with_identity(self) -> None:
+        first = content_addressed_evidence_ref(
+            "continuation-herdr-identity",
+            {"session_id": "session-a"},
+        )
+        replay = content_addressed_evidence_ref(
+            "continuation-herdr-identity",
+            {"session_id": "session-a"},
+        )
+        rotated = content_addressed_evidence_ref(
+            "continuation-herdr-identity",
+            {"session_id": "session-b"},
+        )
+
+        self.assertEqual(first, replay)
+        self.assertNotEqual(first, rotated)
+        self.assertRegex(
+            first,
+            r"^evidence/continuation-herdr-identity/[0-9a-f]{64}\.json$",
+        )
+
+    def test_herdr_coordinator_continue_passes_explicit_approval_and_timeout(self) -> None:
+        envelope = {
+            "task_id": "TASK-1",
+            "suspension_id": "sha256:" + "a" * 64,
+            "suspension_epoch": 1,
+            "wake_id": "wake-1",
+            "continuation_generation": 1,
+            "payload_digest": "sha256:" + "b" * 64,
+            "target": {
+                "adapter_id": "herdr-coordinator-continue",
+                "provider_id": "CodexPlusPlus",
+                "coordinator_agent": "codex",
+                "durable_boundary_ref": "wBF:p1",
+            },
+        }
+        calls: list[tuple[str, dict]] = []
+
+        def rpc_call(method: str, params: dict) -> dict:
+            calls.append((method, params))
+            return {"result": {"type": "coordinator_continued", "receipt": {
+                "invocation_id": "herdr:continue:state-change:82",
+                "task_id": "TASK-1",
+                "resume_id": "wake-1",
+                "coordinator_id": "valp-leader-codex-g1",
+                "provider": "CodexPlusPlus",
+                "session_id": "session-codex-1",
+                "state_change_seq": 82,
+                "prompt_digest": "sha256:" + "d" * 64,
+                "revision": 4,
+                "event_chain": list(SUCCESS_EVENTS),
+            }}}
+
+        adapter = HerdrCoordinatorContinueAdapter(
+            coordinator_target="wBF:p1",
+            runtime_coordinator_id="valp-leader-codex-g1",
+            runtime_session_id="session-codex-1",
+            provider_id="CodexPlusPlus",
+            rpc_call=rpc_call,
+            identity_evidence_ref="evidence/provider-identity.json",
+            duplicate_suppression_evidence_ref="evidence/provider-dedup.json",
+            timeout_ms=120000,
+            approval_granted=True,
+        )
+
+        adapter.invoke(envelope, {"wake": "dependency_ready"})
+
+        self.assertEqual(calls[0][1]["timeout_ms"], 120000)
+        self.assertTrue(calls[0][1]["approval_granted"])
+
+    def test_herdr_coordinator_continue_preserves_runtime_error(self) -> None:
+        adapter = HerdrCoordinatorContinueAdapter(
+            coordinator_target="wBF:p1",
+            runtime_coordinator_id="valp-leader-codex-g1",
+            runtime_session_id="session-codex-1",
+            provider_id="CodexPlusPlus",
+            rpc_call=lambda _method, _params: {
+                "error": {
+                    "code": "coordinator_wait_timeout",
+                    "message": "timed out waiting for the coordinator safe point",
+                }
+            },
+            identity_evidence_ref="evidence/provider-identity.json",
+            duplicate_suppression_evidence_ref="evidence/provider-dedup.json",
+        )
+        with self.assertRaisesRegex(
+            ContinuationError,
+            r"\[coordinator_wait_timeout\].*safe point",
+        ):
+            adapter._runtime_receipt(adapter.rpc_call("coordinator.continue", {}))
+
+    def test_continuation_cli_approval_defaults_false_and_is_opt_in(self) -> None:
+        parser = build_parser()
+        default_args = parser.parse_args(["wait", "TASK-1"])
+        approved_args = parser.parse_args([
+            "resume", "TASK-1", "--event", "receipt", "--ref", "wake.json",
+            "--herdr-continuation-approval-granted",
+        ])
+
+        self.assertFalse(default_args.herdr_continuation_approval_granted)
+        self.assertTrue(approved_args.herdr_continuation_approval_granted)
 
     def test_strict_audit_recomputes_event_ids_and_correlates_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

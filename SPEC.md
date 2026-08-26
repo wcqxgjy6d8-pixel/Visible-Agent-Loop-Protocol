@@ -1,10 +1,10 @@
 # Visible Agent Loop Protocol Specification
 
-Version: 0.3.0-draft
+Version: 0.3.0
 
-Status: normative documentation target. The stable public release remains
-`0.2.0`; the layered architecture in Section 21 is not an implementation or
-runtime-conformance claim.
+Status: normative stable specification. Public repository promotion and release
+distribution are separate delivery gates; this document is the source of truth
+for the `0.3.0` protocol contract.
 
 ## 1. Purpose
 
@@ -201,6 +201,20 @@ omit role boundaries, expected evidence, or gate requirements.
   records observed usage and stops before a new dispatch would exceed a limit
   or a safety gate. It is a control-plane budget, not a provider tokenizer
   claim.
+
+`task cost budget`
+: A task-local optional ceiling for a named estimate basis. It is not a price
+  quote, invoice, authorization to spend, or evidence of an actual charge.
+
+`pricing snapshot`
+: A versioned provider-neutral input-rate record. Official list price,
+  relay/account price, and subscription marginal cost are separate categories
+  and MUST NOT be substituted for one another.
+
+`billing event`
+: An append-only task-local record of a charge supported by billing evidence.
+  A cost report MUST NOT present an actual billed amount unless such evidence
+  exists. Missing billing evidence means `actual_billed: null`, not zero.
 
 `provider-reachable skill slice`
 : A compact per-agent recommendation artifact containing only installed skills
@@ -750,6 +764,11 @@ approval_required
 visible_refs
 ```
 
+When `trigger_mode` is `watcher`, the trigger evidence MUST additionally
+include `task_id`, `source_event_id`, `matched_signal`, `rule_ref`, and a
+digest-shaped `deduplication_identity`. These fields bind the published task to
+the exact source event and matched rule that the runtime deduplicates.
+
 Allowed selected actions:
 
 ```text
@@ -777,6 +796,13 @@ No background watcher is required by the protocol. A runtime that implements a
 watcher must export the source event, rule, task id, and approval state into
 VALP evidence before dispatching work. A watcher that cannot export this proof
 is not an Auto Visible Mode implementation.
+
+A watcher MUST derive and persist one deduplication identity from its source
+event and matched rule before accepting a duplicate. An identical repeated
+source event returns the original task result without another publication; a
+reused identity with changed source content fails closed. A high-risk event MAY
+publish its visible task record, but its selected action MUST be
+`block_for_approval` until the separate approval gate is satisfied.
 
 ### 4.3 Automation Policy
 
@@ -1041,6 +1067,13 @@ principal's validated runtime adapter and `runtime.launch_argv` or equivalent
 launch contract from current Doctor evidence. The protocol and reference CLI
 MUST NOT synthesize a product-specific command or flags.
 
+Before a Leader is selected, the bootstrap surface MAY refresh candidate
+discovery from `awaiting_leader_selection`. The refresh MUST return to
+`discovering_leader_candidates`, commission fresh Doctor passports, replace
+the candidate projection, and append distinct discovery events. It MUST NOT
+reuse stale candidates, rewrite prior events, select a Leader, or activate an
+epoch as a side effect.
+
 An initial Agent Leader start MUST create a fresh, non-focused,
 installation-owned runtime attachment. The installation Leader authority is
 the selected principal plus the installation id and fenced epoch; it MUST NOT
@@ -1270,6 +1303,68 @@ preflight during that fixed window. An unobserved identity after the deadline
 is a readiness blocker; an observed but ineligible identity is a model mismatch
 and MUST NOT be treated as readiness.
 
+Some interactive runtimes create their native session only after the first
+prompt. Others report a native session at startup but do not emit their
+structured model observation until the first completed turn. A Full Mode
+adapter MAY submit one bounded non-task bootstrap probe before formal dispatch
+only when fresh structured evidence reports one of these exact states:
+
+- the owned target is addressable, detected as the declared Agent,
+  interactive, settled, not prompt-eligible, and
+  `session_identity_unknown`; or
+- the owned target is addressable, detected as the declared Agent,
+  interactive, settled, prompt-eligible, and ready with a known native session,
+  while the runtime model probe is explicitly `unsupported` because no current
+  model observation exists.
+
+An unavailable, stale, malformed, or already-observed model probe MUST NOT use
+the second state. The probe MUST begin
+with the worker's validated task-local control slice, MUST request the exact
+response `BOOTSTRAP_READY`, and MUST be bound to the current owned binding
+generation and runtime identity. A relative `control_contract_ref` in that
+slice MUST resolve from the task directory, and the bootstrap input MUST give
+the Worker an unambiguous address for that exact directory before asking it to
+load the contract. Any other not-ready reason, an existing formal delivery
+receipt, a missing or mismatched control contract/slice, or a repeated
+unverified probe MUST fail closed without sending input. A formal delivery
+receipt from a prior task-owned binding generation or prior phase MAY remain in
+the immutable task ledger; it MUST NOT block a new binding generation. A formal
+receipt for the current Agent binding generation MUST block the probe, and a
+same-Agent formal receipt whose binding generation is absent or ambiguous MUST
+also fail closed.
+
+The exact response may be proven from terminal output only as response evidence.
+An adapter MAY declare a closed set of renderer envelopes for that response,
+but normalization MUST accept only a whole rendered line that maps through one
+declared envelope to the exact requested response. For example, an adapter may
+declare the bare response, an exact Codex list-marker envelope, or an exact
+Claude action-marker envelope; the marker and spacing are part of the declared
+envelope rather than punctuation that may be stripped generically. It MUST NOT use substring
+search, extract a token from prompt text, strip arbitrary punctuation or
+formatting, accept additional text on the matched line, or accept a match
+without the concrete matched line. The same normalization MUST reject an
+equivalent line already present in the bounded pre-probe snapshot. The accepted
+envelope and raw matched line MUST be recorded as response-only proof; they
+remain invalid session or model evidence. Pane text, titles, argv, labels, and
+launch attestations remain invalid session or model evidence. After the probe
+settles, native session identity MUST come from the runtime's structured session report
+and model/provider/reasoning MUST come from the structured runtime model
+observation for that same native session. When the runtime exposes that binding
+as a SHA-256 token and generation, the token MUST equal the complete SHA-256 of
+the structured native session identifier and the generation MUST equal the
+runtime's declared prefix derivation; comparing a derived generation directly
+to the raw identifier is invalid. Model, provider, and reasoning values MUST be
+concrete; placeholders such as `unknown`, `unsupported`, or `unavailable` are
+not proof. The final state-change sequence MUST advance
+beyond the pre-probe sequence. When the native session was already known before
+the probe, structured readiness after the probe and the structured model
+observation MUST both bind to that exact same pre-probe native session.
+Only then may the adapter append one `agent_session_bootstrap_verified` receipt,
+mark the binding `bootstrap_ready`, and reuse that same session for one formal
+dispatch. The bootstrap probe itself MUST keep `formal_dispatch_count: 0` and
+MUST NOT create `dispatch_submitted`, `dispatch_completed`, or equivalent Worker
+delivery evidence.
+
 An Agent launch interposer that probes identity, reports metadata, captures
 startup output, or supervises a child process MUST preserve the child runtime's
 interactive terminal contract. For a TUI worker this includes a real child PTY,
@@ -1397,6 +1492,19 @@ payload, control contract, receipt, and capability tuple. A runtime MUST recover
 persisted pending envelopes after restart. Where exclusive locking is not
 implemented, the adapter MUST fail closed rather than append without a lock.
 
+Before external invocation, the runtime MUST durably persist an invocation
+intent keyed by the exact continuation idempotency key. If restart finds that
+intent without a committed invocation receipt, it MUST use the provider-owned
+status/reconciliation operation and duplicate-suppression boundary; it MUST NOT
+resubmit the continuation. A reconciled complete receipt is validated and
+committed through the same `continuation_started -> resume_consumed` transition.
+If provider status is pending, missing, malformed, or cannot prove the exact
+identity, the runtime remains indeterminate and preserves the intent. If restart
+finds a complete immutable receipt but either terminal event is missing, it MUST
+validate the receipt again and append only the missing correlated event or
+events. This recovery path never manufactures provider identity and never uses
+the VALP intent marker itself as duplicate-suppression proof.
+
 ## 6. Local Overlays
 
 VALP separates open protocol semantics from local execution facts.
@@ -1495,6 +1603,12 @@ model family. It MUST keep those surfaces separate. Discovery adapters publish
 their provenance and unsupported fields; Doctor must not invent facts that an
 adapter cannot observe safely.
 
+Doctor MUST commission passports from the union of static capability registry
+entries, local overlay profiles, and surfaces returned by the active runtime
+adapter. No one source may silently remove a surface reported by another. A
+surface known only to the overlay or runtime remains `unknown` for installation,
+role, model, permission, and other facts that were not directly observed.
+
 Only command output, receipts, expected evidence, and review records prove that
 work is done. The Leader uses capability passports to decide assignments. VALP
 uses them to validate those assignments and block hard-gate violations.
@@ -1552,7 +1666,12 @@ session state to infer a model.
 Unstructured pane, transcript, conversation, status-footer, or dispatch text
 MUST NOT qualify as model evidence. If the agent surface does not expose a
 structured active-model field through its adapter contract, the probe produces
-`unsupported` rather than a guessed identity.
+`unsupported` rather than a guessed identity. A task-owned launch contract MAY
+be recorded as `launch_attested` evidence when its provisioning receipt is
+immutable, identity-bound, and has one unambiguous model selection, but it is
+not a runtime observation and MUST NOT change the probe from `unsupported`.
+Product-name inference, inferred launch defaults, ambiguous flags, or an
+unbound launch contract remain unsupported.
 
 Every structured metadata key accepted by a model probe MUST be defined by its
 adapter as the active LLM identity. A generic deployment name, product name, or
@@ -1801,6 +1920,7 @@ dispatch_inserted
 dispatch_submitted
 dispatch_completed
 dispatch_blocked
+dispatch_superseded
 ```
 
 Manual Mode may also record manual-only receipt labels:
@@ -1902,6 +2022,13 @@ identity. A `submission_id`, generic response id, status string, revision,
 counter, pane id, or visible text MUST NOT be invented, extracted, or accepted
 as a substitute for the identity-bound `state_change_seq` advancement above.
 
+Completion observation MUST use the same structured Agent identity. The
+reference adapter polls `herdr agent get` because HERDR terminal states are
+`idle` and `blocked`, while `agent wait` accepts only one target status. A
+strictly later `idle` state maps to `completed`; a strictly later `blocked`
+state maps to `blocked`. `working`, `unknown`, identity drift, and replayed or
+non-advancing sequences do not produce a terminal receipt.
+
 Older HERDR compatibility paths that insert text, send Enter, and observe
 `agent wait` may prove only transport and observation. Without an independent
 Agent invocation receipt, the adapter MAY append `dispatch_inserted` with its
@@ -1927,6 +2054,16 @@ generation. A later matching `dispatch_blocked` supersedes an earlier
 recovered evidence. A receipt from another role, work item, generation,
 suspension epoch, or task is unrelated evidence and cannot supersede or satisfy
 the gate.
+
+`dispatch_superseded` is a ledger-management event, not a Worker outcome. It
+MAY supersede one earlier `dispatch_submitted` receipt only when its proof names
+`kind: invalid_session_binding`, the exact earlier submission receipt ID, and a
+later replacement `dispatch_submitted` receipt for the identical task, Agent,
+role, work item, dispatch ID, generation, dispatch ref, and expected refs. The
+replacement MUST have valid task-owned session-binding provenance; the
+superseded submission MUST fail that same provenance check. A supersession
+cannot target a completion, cannot change the original bytes, and is ignored
+when deciding the latest Worker outcome.
 
 Receipt timestamps are descriptive. Deterministic wake ordering uses the
 accepted event sequence and revision CAS. Duplicate receipt or event ids MUST
@@ -2726,7 +2863,7 @@ The Protocol `0.3` compatibility target is:
 |---|---|---|
 | Blueprint | `Blueprint-0001/1.x` | `1.0` defines Protocol `0.3`; a Blueprint is a frozen design-source identifier, distinct from the public RFC series; editorial clarifications may increment the Blueprint minor version without changing protocol semantics |
 | Protocol | `>=0.3.0,<0.4.0` | Reference System `0.3.x` reads and writes this line |
-| Legacy protocol input | `0.2.0-draft` | Reference System `0.3.x` may read it only through a declared compatibility and migration path; it never writes new `0.2` task state |
+| Legacy protocol input | `0.2.0` | Reference System `0.3.x` may read it only through a declared compatibility and migration path; it never writes new `0.2` task state |
 | State schema | read `valp-visible-loop-state.v1`, `.v2`, and `.v3`; write `.v3` | migration creates a new projection and preserves original bytes |
 | Receipt schema | read legacy, `valp-dispatch-receipt.v2`, and `.v3`; write `.v3` | new Attempt and proof semantics require v3 or digest-bound reconciliation evidence |
 | New core schemas | `v1` | Task, State, Work Item, Attempt, Event, Result, Replay Entry, Checkpoint Root, Proof, Evidence Descriptor, Dimension Policy Evidence, Dimension Gate Result, Dependency Edge, Manual Attestation, Cancellation Event, and Claim Result begin at v1 |
@@ -2797,6 +2934,30 @@ The reference task-local file is:
 Only `valid` evidence can satisfy expected evidence gates. A file that exists but
 is marked `superseded`, `invalid`, `rejected`, or `blocked` does not count as
 completion evidence.
+
+### 18.1 Task Graph Projection
+
+The Reference System MAY emit a Task Graph using
+`valp-task-graph.v1`. It is a deterministic Layer 01 presentation projection
+of one task-local ledger and a bounded audit summary. It is not a protocol
+authority, an evidence artifact, an approval record, or a substitute for
+`valp audit`. A missing artifact, displayed receipt, graph edge, or graph
+status MUST NOT create proof or change the audit result.
+
+The canonical JSON projection MUST be derived only from task-local inputs and
+an explicitly supplied audit summary. Given identical inputs, it MUST serialize
+to identical bytes. Canonical graph JSON MUST NOT include a generation time,
+absolute task/workspace path, copied raw audit report, provider-local runtime
+identifier, or other machine-local render metadata. Implementations MAY create
+HTML or SVG renderings from canonical JSON, but those renderings are not
+independent sources of truth.
+
+Each graph reference MUST be a safe, task-relative path. Absolute paths,
+parent traversal, and refs that resolve outside the task folder MUST be rejected
+or omitted. The schema owns the closed public node-kind and edge-type vocabulary
+for this projection. The graph remains separate from any ontology or routing
+projection: ontology may inform routing, while the Task Graph only presents
+task-local ledger and audit state.
 
 Agents must not make runtime/build/test/lint/UI verification claims without
 concrete evidence. Claims such as "build passed", "tests passed", "UI verified",
@@ -2989,7 +3150,7 @@ model, tool, or network, allocate external identity, inspect a UI, or perform a
 side effect. Time, identity, runtime status, content digests, and other
 observations enter only as typed Events and Evidence.
 
-For the `0.3.0-draft` Kernel machine contracts, canonical JSON bytes are UTF-8
+For the `0.3.0` Kernel machine contracts, canonical JSON bytes are UTF-8
 JSON with object keys sorted lexicographically, no insignificant whitespace,
 protocol arrays kept in their declared order, set-like Evidence collections
 sorted by each Evidence canonical byte representation, non-ASCII characters
@@ -3163,6 +3324,117 @@ eligibility and records a deterministic audit fact. Unknown, duplicate, or
 cross-Task dependency identities fail closed. These rules do not model Layer
 01 scheduling, waiting, wake-up, or runtime effects.
 
+#### 21.2.2 Suspension and dependency-ready wake Stage 3 slice
+
+Kernel Task status remains closed to the 13 values in Section 21.2. Waiting is
+not a Task status. While a Task is `executing`, the Kernel MAY carry exactly one
+current `Suspension` machine record whose status is closed to `waiting` or
+`resumed`. The record binds the Task ID, a distinct Suspension ID, a
+non-negative suspension epoch, a distinct Wait Policy ID and canonical policy
+digest, an ordered non-empty set of required Work Item IDs, and, after wake, the
+accepted Wake ID and wake reason. Suspension ID, suspension epoch, Leader
+epoch, Wait Policy ID, Wake ID, Event ID, Work Item ID, and Task ID are not
+interchangeable.
+
+The complete closed Suspension graph for this slice is:
+
+| Event kind | Source | Target | Constraint |
+| --- | --- | --- | --- |
+| `suspension_started` | no current Suspension, or current `resumed` Suspension | `waiting` | Task is `executing`; the first epoch is `0`; a later epoch is exactly the prior epoch plus one and uses a new Suspension ID; the Wait Policy and every required Work Item are exactly bound |
+| `wake_accepted` | current `waiting` Suspension | `resumed` | exact current Suspension ID, epoch, Wait Policy ID and digest; new Wake ID; wake reason is `dependency_ready`; every bound required Work Item is complete |
+
+The wake-reason vocabulary in this slice is closed to `dependency_ready`.
+`suspension_started` MUST bind a non-empty, duplicate-free ordered set of Work
+Item identities present in the same Task State. `wake_accepted` MUST carry the
+same ordered set. The Kernel computes readiness from the current Work Item
+table: every bound Work Item MUST have status `completed`. An Adapter,
+projection, receipt, pane, callback, or user-interface label cannot assert
+dependency readiness. A missing, unknown, duplicate, cross-Task, incomplete,
+partial, degraded, blocked, failed, cancelled, or skipped required Work Item
+causes `VALP-E-STATE-CONFLICT` and leaves State unchanged.
+
+Both Events remain subject to installation, Leader epoch, Task identity, and
+`expected_revision` CAS. A stale, cross-Task, cross-installation,
+cross-Leader-epoch, cross-suspension, cross-suspension-epoch, policy-mismatched,
+or already-consumed wake is rejected before it can change truth. An identical
+duplicate of an already accepted Event remains the canonical idempotent
+`no_op`; reuse of its Event identity with changed canonical content is
+`VALP-E-IDEMPOTENCY-CONFLICT`. A new suspension cycle after `resumed` MUST use
+the next epoch and a new Suspension identity.
+
+Accepted suspension and wake Events change only the Suspension machine record,
+increment State revision, and append normal accepted-event history. They do not
+change Task or Work Item status and emit no side-effect obligations. Replay
+MUST reconstruct the exact Suspension record and accepted Wake binding with
+byte-equal canonical Results and MUST return zero obligations. For backward
+compatibility, a State without a Suspension omits the `suspension` member, and
+all pre-Stage-3 Task-only canonical bytes and digests remain unchanged.
+
+A `waiting` Suspension blocks ordinary Task progress out of `executing`; the
+Task cannot accept `work_completed` until the exact Suspension is `resumed`.
+After resume, the first accepted Task transition out of `executing` clears the
+current Suspension record. Explicit `task_blocked`, `task_failed`, and
+`task_cancelled` Events MAY terminate an outstanding wait and also clear the
+current Suspension; their existing authority and fencing rules still apply.
+The Kernel MUST NOT produce a State that combines a current Suspension with a
+non-`executing` Task status.
+
+#### 21.2.3 Authority-bound cancellation, Interrupt, and Redirect
+
+Cancellation, Interrupt, and Redirect are pure Kernel control Events. Each
+MUST bind a `principal` identity, one `authority_evidence_id` present in the
+canonical EvidenceSet, and one closed reason: `user_requested`,
+`runtime_failed`, `policy_enforced`, or `superseded_by_redirect`. An authority
+label, UI action, runtime status, or non-bound Evidence file is insufficient.
+
+Cancellation scope is closed to `task`, `work_item`, and `attempt` and MUST
+match the Event kind. `task_cancelled` targets the current Task;
+`work_item_cancelled` targets one exact Work Item; `attempt_cancelled` targets
+the exact current Work Item, Attempt, dispatch ID, and generation. When a
+current Suspension exists, Task cancellation additionally binds its exact
+suspension epoch. An accepted cancellation changes Kernel truth immediately,
+fences late output, and emits one deterministic `adapter_cancel` obligation for
+each submitted or running Attempt in the cancelled scope. A created but not
+submitted Attempt needs no Adapter effect. Replay validates the obligations but
+returns none. The Reference System reconciles each accepted obligation against
+a durable effect record; missing proof remains pending and replay never retries
+the Adapter directly.
+
+An effect executor MUST accept only an obligation that reconciliation reports
+as pending. Before an external cancellation it MUST require explicit approval,
+resolve exactly one adopted Adapter submission whose Task, Work Item, Attempt,
+dispatch ID, and generation equal the obligation, and require that Adapter to
+advertise `cancel` support. Fulfillment requires an identity-bound terminal
+runtime observation and a task-local cancellation proof whose digest is stored
+in the Kernel effect ledger. Task-scoped reconciliation MUST re-read the proof
+ref and require its current bytes to match that digest; missing, empty, escaped,
+or changed proof fails closed. A dry run performs no Adapter operation. An exact
+retry of a fulfilled effect returns the prior record and MUST NOT resend
+cancellation. Unsupported or ambiguous Adapter routing remains pending or is
+recorded blocked with proof; it MUST NOT be relabelled fulfilled.
+
+The optional Kernel `control` record is absent for pre-control states and
+therefore preserves their canonical bytes. Once present it binds a non-negative
+`intent_version`, status `active` or `interrupted`, and the active Interrupt ID
+when interrupted. `interrupt_requested` is accepted only for a non-terminal
+Task at the current intent version, records a new Interrupt identity, and
+blocks every ordinary progress Event. While interrupted, only
+`interrupt_resumed`, `redirect_authorized`, `task_cancelled`, or `task_failed`
+may advance State. `interrupt_resumed` MUST bind the exact active Interrupt ID,
+current intent version, and fresh authority Evidence; it returns control status
+to `active` without satisfying evidence, dependency, review, or approval gates.
+
+`redirect_authorized` MUST bind a new Redirect identity, the exact current
+intent version, the next version (`current + 1`), and an ordered duplicate-free
+set of known Work Item IDs invalidated by the change. It cancels those
+non-terminal Work Items, cancels their current non-terminal Attempts, emits the
+same deterministic Adapter cancellation obligations where execution had been
+submitted, clears any Suspension and Interrupt, records the new active intent
+version, and moves every non-terminal Task to `fixing`. Historical Work Items,
+Attempts, Evidence, receipts, and accepted Events remain immutable. A Redirect
+cannot relax Done policy or revive cancelled work without fresh Work Items,
+Attempts, Evidence, and evaluation under the new intent version.
+
 ### 21.3 Attempts, replay, and control changes
 
 Replay consumes an ordered sequence of canonical entries:
@@ -3281,6 +3553,63 @@ the checkpoint Result or any suffix Result remain data under validation;
 `Replay.obligations` MUST be exactly empty, so replay never repeats a prior
 external effect.
 
+#### 21.3.1 Reference System durable Kernel journal and checkpoint recovery
+
+The file-backed Reference System persists one Task's Kernel truth in three
+separate canonical artifacts under one task-scoped store: an immutable
+`GenesisRoot`, an ordered `ReplayEntry` journal, and at most one authenticated
+checkpoint envelope containing a `CheckpointRoot` plus its independently
+supplied `CheckpointAuthentication`. These artifacts share one stable
+inter-process lock. A checkpoint is an acceleration index over the journal; it
+does not replace, truncate, or authorize journal history.
+
+Appending a `ReplayEntry` MUST lock the store, strictly decode the immutable
+Genesis Root and complete canonical journal, replay the current prefix through
+the public Kernel `replay` function, require the candidate to extend that exact
+State by one accepted revision, and require its recorded Result to be
+byte-equal to reducer output. An exact existing Event/Result entry is a no-op.
+A same Event identity with changed content, stale expected revision, malformed
+canonical bytes, identity/epoch mismatch, replay gap, or invalid Result fails
+closed without changing bytes. The complete old prefix plus candidate is
+written by same-directory temporary file, file flush and sync, atomic replace,
+and directory metadata sync where supported. Pre-replace failure preserves the
+prior bytes; a reported post-replace failure is `unknown_or_committed` and MUST
+be reconciled by strict reread before retry.
+
+Persisting a checkpoint MUST occur under the same lock after strict full
+Genesis replay. The envelope's root prefix digest and accepted-entry count MUST
+equal the exact journal prefix through the checkpoint State; its tail bindings,
+accepted checkpoint Result, trust policy, and authentication EvidenceSet MUST
+pass the Section 21.3 checkpoint replay contract before replacement. A
+checkpoint over an unknown, future, stale, or non-prefix State is rejected.
+The canonical envelope is atomically replaced and never inferred from a bare
+State or cached projection.
+
+Recovery MUST first validate Genesis and the complete journal. When no
+checkpoint exists it returns full Genesis replay. When a checkpoint exists it
+MUST revalidate the envelope against the exact journal prefix, then replay only
+the remaining suffix from the authenticated root. The recovered State MUST be
+byte-equal to full Genesis replay, and recovery returns zero obligations.
+Malformed, noncanonical, symlinked, mixed-task, mixed-installation,
+mixed-Leader-epoch, or digest-mismatched store artifacts fail closed and are not
+repaired, skipped, truncated, or overwritten by recovery.
+
+Kernel journal/checkpoint persistence and receipt-effect fulfillment are
+different boundaries. Accepted v3 receipt append obligations continue to be
+reconciled by the Section 21.4.1 `ReceiptStore`: exact durable receipt is
+fulfilled/no-op, absence is pending, changed identity/content is conflict, and
+post-replace uncertainty requires strict reread. Kernel replay never emits or
+repeats those effects.
+
+For an adopted runtime, the Reference System persists the complete declared v2
+Work Item dependency graph in the Kernel Genesis Root, not only the first wait
+frontier. Each later dependency-ready frontier advances its exact declared Work
+Item through eligibility and the submitted/running Attempt lifecycle before a
+new Suspension is accepted. The workflow suspension epoch and zero-based Kernel
+suspension epoch are bound explicitly. Restart recovery MUST reject an unknown
+Work Item, unmet dependency, changed Attempt/dispatch identity, skipped epoch,
+or workflow projection that conflicts with recovered Kernel truth.
+
 Any operation that can produce a different external output is a new Attempt
 with a new Attempt ID, even when the Work Item and payload are unchanged.
 
@@ -3289,12 +3618,9 @@ identity and generation. Late output remains immutable evidence but cannot
 silently revive the cancelled scope. Runtime cancellation is a System or
 Adapter obligation and remains unknown until matching proof exists.
 
-Explicit user interruption suspends automatic progression without satisfying
-missing evidence. A change to goal, scope, approach, or acceptance criteria is
-an authorized Redirect with a new intent version. Work that no longer applies
-is cancelled, superseded, or moved to a scoped follow-up; it is not erased.
-Identity-bound Interrupt and Redirect machine contracts are required before
-their Stage 3 implementation. Prose alone does not authorize implementation.
+Explicit user interruption and Redirect follow the identity-, authority-, and
+intent-bound machine contracts in Section 21.2.3. They never satisfy missing
+Evidence or silently rewrite historical work.
 
 ### 21.4 Receipt writes and migration
 
@@ -3348,6 +3674,20 @@ timestamp, line number, file presence, or coordinator intent. Missing,
 ambiguous, malformed, or unsupported safety semantics fail closed. Repeating
 the same source bytes and bindings is a no-op; reusing one `migration_id`
 for different source bytes or bindings is an idempotency conflict.
+
+A Reference System promotion from `0.3.0-draft` to `0.3.0` MUST checkpoint the
+complete installation control root, excluding only lock files and migration
+journal outputs. The plan MUST bind the installation state revision, registry
+revision, active Leader epoch, every affected Task, and every checkpointed file
+digest. Draft Tasks may remain immutable read-only history when no separately
+specified Task projection migration exists; they MUST NOT accept new state
+transitions under the stable installation. Promotion is permitted only when all
+such Tasks are terminal and cooperative writers are fenced by the installation
+lock. The stable activation changes only the installation and protocol manifest
+version declarations; it preserves Leader identity, epoch, bindings, ledgers,
+and all historical Task bytes. An interrupted promotion MUST resume from the
+same digest-bound checkpoint or restore the exact source bytes before reporting
+`rolled_back`.
 
 The bounded v2 submission projection recognizes only a closed Adapter proof
 record with a concrete submission ID, literal acknowledgement, exact payload
@@ -3475,6 +3815,118 @@ terminal receipt. Audit and dependency gates MUST validate the canonical v3
 chain and exact identity, proof, expected-evidence, ordering, and prior submitted
 receipt. Legacy/v2 remains readable only on runtime paths not adopted here.
 
+#### 21.4.3 Reference System HERDR v3 adoption
+
+The packaged HERDR Adapter adopts Adapter ABI 1.0 and the durable canonical v3
+receipt ledger at `runtime/herdr/receipts.v3.jsonl`. Adoption is task-local and
+is declared by `runtime/herdr/adoption.json`. Once declared, HERDR writers,
+observers, recovery, dependency gates, and audit MUST read that authoritative
+ledger and MUST NOT fall back to `dispatch-receipts.jsonl`. A non-empty legacy
+ledger and a HERDR adoption marker are a mixed-ledger conflict; the Adapter
+fails closed rather than merging histories implicitly.
+
+An atomic `herdr agent prompt` acceptance creates one Attempt identity from the
+bound terminal, pane, Agent identity, baseline state-change sequence, accepted
+state-change sequence, and exact payload digest. HERDR's top-level response ID
+remains request correlation and MUST NOT be used as the Attempt identity. The
+Adapter writes distinct process-bound and content-bound proof records, then a
+canonical `dispatch_submitted` receipt and ABI `accepted` observation. Terminal
+observation writes `dispatch_completed` or `dispatch_blocked` using the same
+Attempt and an ABI `completed` or `blocked` observation. Completion additionally
+binds every expected Evidence ref and its content digest. The terminal observer
+MUST bind the same terminal, pane, and Agent identity, the exact submission
+state-change sequence, a strictly later terminal state-change sequence, terminal
+status, and acknowledgement. Expected Evidence appearing on disk without this
+HERDR terminal state observation MUST NOT create a Full Mode terminal receipt.
+
+Pane `send-text` plus Enter remains transport only. It may write a canonical v3
+`dispatch_inserted` receipt and ABI observation containing a `transport_only`
+segment in Manual-degraded mode, but it MUST NOT write `dispatch_submitted`,
+claim Full Mode, or satisfy a delivery/completion gate. Exact retries return the
+same committed receipt and observation bytes. A same-identity retry with changed
+payload, proof, runtime identity, or expected refs is an idempotency conflict.
+
+#### 21.4.4 Reference System Queue v3 adoption
+
+The reference file-ledger Queue Adapter adopts Adapter ABI 1.0 and the durable
+canonical v3 ledger at `runtime/queue/receipts.v3.jsonl`, declared by
+`runtime/queue/adoption.json`. Queue acceptance creates a stable Attempt from
+the exact Task, Work Item, dispatch generation, queue item, enqueue transaction,
+and payload digest. It writes separate process-bound enqueue and content-bound
+payload proof, a canonical `dispatch_submitted` receipt, and an ABI `accepted`
+observation.
+
+`queued` means only that the queue durably accepted the exact item. It does not
+prove that a worker received, started, or completed it. Worker observation MUST
+bind a real worker/run identity before it can write terminal process proof, and
+`dispatch_completed` additionally requires all expected Evidence refs. A
+synthetic worker label, queue file existence, or controller-local status MUST
+NOT be used as delivery or completion proof. Unknown post-commit outcomes use
+strict reread reconciliation and MUST NOT enqueue a second Attempt merely
+because the caller did not receive success.
+
+The reference Queue terminal observer consumes a task-local worker observation
+record, never the queue item itself. That record MUST bind the queue ID, enqueue
+transaction ID, worker ID, run ID, strictly positive worker observation
+sequence, terminal status, and acknowledgement. `completed` additionally binds
+the digest of every expected Evidence ref. `blocked` binds a non-empty failure
+code and MUST NOT be projected as completion. The observer reuses the accepted
+Attempt and dispatch identity; mismatched or replayed worker/run identities fail
+closed. Exact retries return the same committed receipt and ABI observation.
+
+Queue worker lifecycle is an append-only, digest-chained state machine at
+`runtime/queue/lifecycle.v1.jsonl`. Every entry binds the Task, Work Item,
+Attempt, dispatch generation, queue ID, enqueue transaction, prior revision,
+prior entry digest, event ID, and resulting state. The reference implementation
+serializes claim and cancel against one task-local lock and accepts either
+`queued -> claimed` or `queued -> cancelled`, never both. A claim additionally
+binds one worker ID, run ID, and claim token. Exact retries return the committed
+entry; changed worker/run identity, claim token, authority, reason, or expected
+revision is an idempotency or CAS conflict and leaves the ledger unchanged.
+
+Cancellation is two-phase after claim. An authorized request transitions
+`claimed -> cancellation_requested` but does not prove that execution stopped.
+Only an acknowledgement from the exact claimed worker/run and claim token may
+transition `cancellation_requested -> cancelled` and emit ABI `cancelled` proof.
+A queued item may be cancelled directly because no worker claim exists. A queue
+file mutation, controller-local label, request without worker acknowledgement,
+or acknowledgement from another identity MUST NOT fulfill a runtime
+cancellation obligation. Terminal completion or blocking MUST cite the exact
+accepted claim entry and is rejected from `queued`, `cancelled`, or a conflicting
+claim identity. Terminal and cancellation acknowledgement race on the same
+revision frontier, so at most one terminal outcome is accepted.
+
+#### 21.4.5 Reference System Manual v3 adoption
+
+Manual Mode adopts Adapter ABI 1.0 and the canonical v3 ledger at
+`runtime/manual/receipts.v3.jsonl`, declared by `runtime/manual/adoption.json`.
+Every Manual receipt uses Manual mode, a stable Attempt identity, and exactly
+`manual_attested` proof. The attestation record binds the named authority and
+authority ref plus declaration digest, exact action, statement, subject identity, payload or Evidence
+digest, ledger revision, prior receipt digest, timestamp, and validity state.
+Delivery uses `manual_delivery_attested`; accepted result Evidence uses
+`manual_result_attested`; a failed result uses `manual_blocked`.
+
+Manual observations use ABI status `accepted`, `completed`, or `blocked` but
+remain Manual claims. They MUST NOT contain process-bound or content-bound proof,
+MUST NOT be relabeled as Full or Remote, and MUST NOT satisfy independent runtime
+submission, approval, or review separation. Revocation is append-only. Two
+active attestations for the same subject/action/revision with different content
+digests fail closed until an authorized adjudication record resolves them.
+
+The reference Manual runtime stores revocation and adjudication decisions in a
+separate append-only, hash-chained decision ledger. A decision binds its exact
+target receipt, subject key, named authority and task-local authority ref,
+authority declaration digest, statement, sequence, prior decision digest,
+timestamp, and decision digest. The referenced declaration MUST match the Task
+and authority and explicitly allow the exact attestation or decision action.
+Revocation makes the target ineffective without editing either the receipt or
+its proof. Adjudication names the complete conflicting receipt set and exactly
+one selected active receipt. A missing target, changed exact retry, malformed
+chain, incomplete conflict set, revoked selection, or multiple decisions for the
+same logical decision key fails closed. Consumers MUST consult effective Manual
+state before accepting delivery, terminal wake, audit completion, or Done.
+
 Receipt-write rejection leaves Kernel Task State unchanged. MVP-C does not add
 `recording -> blocked`: a pure validation/CAS rejection is not an external
 storage outage, and an outage cannot durably prove that transition through the
@@ -3515,6 +3967,44 @@ input and output identity, Adapter identity and ABI, proof kind, evidence refs,
 observation sequence, and failure or acknowledgement. A weak or missing
 segment limits the final claim; strong downstream proof MUST NOT hide weak
 upstream transport.
+
+#### 21.5.1 Adapter ABI 1.x machine contract
+
+The Adapter ABI version line is `1.x`; this slice implements exact version
+`1.0`. An Adapter manifest binds a non-empty Adapter ID, Adapter class, exact
+ABI version, and exactly one capability result for each closed operation:
+`probe`, `submit`, `observe`, `cancel`, `resume`, and `prove`. Capability status
+is closed to `supported` or `unsupported`. Unsupported operations require a
+non-empty reason and MUST return an explicit unsupported observation; they are
+never inferred from a missing method, exception text, or runtime name.
+
+Every Adapter request binds a unique request ID, operation, installation ID,
+Leader epoch, Task ID, Work Item ID, Attempt ID, dispatch ID and generation,
+canonical payload digest, and ordered expected-evidence refs. Every observation
+binds that exact request identity tuple, a non-negative observation sequence,
+closed status, runtime identity when one exists, and zero or more provenance
+segments. Observation status is closed to `accepted`, `waiting`, `completed`,
+`blocked`, `cancelled`, or `unsupported`. An observation never directly changes
+Kernel State.
+
+Each provenance segment binds a unique segment ID, contiguous non-negative
+segment sequence, Adapter ID and ABI version, exact input identity and digest,
+exact output identity and digest, one closed proof kind, ordered safe evidence
+refs, acknowledgement, and optional failure code. Adjacent segments MUST bind
+the prior output identity and digest as the next input identity and digest.
+Sequence gaps, duplicate identities, unsupported ABI versions, missing refs,
+digest mismatch, or conflicting acknowledgement/failure semantics fail closed.
+
+A Composite proof policy declares mode and required proof kinds. Full and Remote
+submission require both `process_bound` and `content_bound`, every segment
+acknowledged, and no `transport_only` segment. Completion uses the same pair and
+requires the observation's complete expected-evidence set. Remote additionally
+requires a declared remote issuer/host binding in its policy Evidence. Manual
+requires `manual_attested` and rejects relabeling as Full or Remote. A
+`transport_only` segment always limits the result to transport evidence even if
+later segments are stronger. Proof assessment returns `pass` or a closed list
+of missing/conflicting conditions; it does not invent receipts, Kernel Events,
+or Done.
 
 ### 21.6 Dependencies, dimensions, and Done
 
@@ -3567,6 +4057,13 @@ supersession, and conflict. Fault class is closed to `none`, `transient`,
 `capability`, `permission`, `configuration`, `protocol`, and `unknown`.
 Historical evidence remains immutable. Routing and learning may use accepted
 evidence as a prior but MUST still require fresh task observation.
+
+An Adapter that derives `dispatch_completed` from expected evidence MUST record
+the content digest or absence of every expected ref before submission. It may
+complete only when each required ref is newly created or has a different
+post-submission digest, and its completion proof MUST cite that submission.
+Pre-existing evidence, including evidence from an earlier attempt or
+generation, is not completion proof for a newly submitted Work Item.
 
 Reference System budgets independently cover context and payload, iteration,
 cost, dispatch and verification latency, deadline, ledger growth and replay,

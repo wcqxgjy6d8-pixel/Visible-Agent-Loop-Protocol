@@ -6,13 +6,15 @@ result mapping unchanged unless your runtime exposes stronger evidence.
 
 The required adapter contract is:
 
-1. `submit` returns a real runtime submission ID and replay/thread identity.
-2. `get_run` returns runtime-owned state and a concrete failure reason.
-3. A local observation timeout returns `waiting`; it never cancels the worker.
-4. Runtime success with missing expected evidence returns `blocked`.
-5. `completed` is emitted only when every expected task-local ref exists and is
+1. `adapter.json` implements the ABI 1.0 closed capability table for `probe`,
+   `submit`, `observe`, `cancel`, `resume`, and `prove`.
+2. `submit` returns a real runtime submission ID and replay/thread identity.
+3. `get_run` returns runtime-owned state and a concrete failure reason.
+4. A local observation timeout returns `waiting`; it never cancels the worker.
+5. Runtime success with missing expected evidence returns `blocked`.
+6. `completed` is emitted only when every expected task-local ref exists and is
    non-empty.
-6. Submission, output, state, and failure records are persisted before a VALP
+7. Submission, output, state, and failure records are persisted before a VALP
    terminal receipt is appended.
 
 Run the included contract tests:

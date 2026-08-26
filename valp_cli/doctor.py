@@ -119,9 +119,12 @@ def commission_capability_passports(root: Path, *, evaluated_at: str) -> list[di
     agents = capabilities.get("agents") or {}
     overlay = load_local_overlay(root)
     overlay_profiles = overlay.get("agent_capability_profiles") or {}
-    agent_ids = sorted(str(agent_id) for agent_id in agents)
+    declared_agent_ids = {
+        str(agent_id)
+        for agent_id in set(agents) | set(overlay_profiles)
+    }
     preflight = collect_runtime_preflight(
-        agent_ids,
+        sorted(declared_agent_ids),
         runtime="auto",
         launch_argv_by_agent=capability_runtime_argv_by_agent(agents, "launch_argv"),
         version_command_by_agent=capability_runtime_argv_by_agent(
@@ -130,10 +133,29 @@ def commission_capability_passports(root: Path, *, evaluated_at: str) -> list[di
         ),
     )
     runtime_agents = preflight.get("agents") or {}
+    agent_ids = sorted(declared_agent_ids | {str(agent_id) for agent_id in runtime_agents})
     passports: list[dict[str, Any]] = []
 
     for agent_id in agent_ids:
-        info = agents.get(agent_id) or {}
+        info = agents.get(agent_id)
+        overlay_profile = overlay_profiles.get(agent_id) or {}
+        if not isinstance(info, dict):
+            discovery_source = (
+                "runtime adapter discovery"
+                if agent_id in runtime_agents
+                else "local overlay routing hint"
+            )
+            info = {
+                # An overlay/runtime-discovered surface is useful to report, but
+                # it cannot become addressable or capability-declared without
+                # direct registry/runtime evidence.
+                "active": False,
+                "installation": {
+                    "status": "unknown",
+                    "version": "unknown",
+                    "source": discovery_source,
+                },
+            }
         agent_preflight = runtime_agents.get(agent_id) or {}
         sessions = agent_preflight.get("sessions")
         if isinstance(sessions, list) and sessions:
@@ -151,7 +173,7 @@ def commission_capability_passports(root: Path, *, evaluated_at: str) -> list[di
                 build_capability_passport(
                     agent_id,
                     info,
-                    overlay_profiles.get(agent_id) or {},
+                    overlay_profile,
                     capability_source=str(capabilities.get("source") or "unknown"),
                     runtime_preflight=preflight,
                     agent_preflight=session_preflight,
@@ -180,11 +202,25 @@ def build_capability_passport(
     )
     declared_roles = {str(role).strip().lower() for role in info.get("role") or []}
     live_status = str(agent_preflight.get("status") or "unknown")
+    runtime_config = info.get("runtime") if isinstance(info.get("runtime"), dict) else {}
+    launch_argv = runtime_config.get("launch_argv")
+    has_launch_contract = (
+        isinstance(launch_argv, list)
+        and bool(launch_argv)
+        and all(isinstance(item, str) and item.strip() for item in launch_argv)
+    )
 
-    def role_status(claims: set[str], *, model_role: str | None = None) -> str:
+    def role_status(
+        claims: set[str],
+        *,
+        model_role: str | None = None,
+        requires_launch_contract: bool = False,
+    ) -> str:
         if not declared_roles.intersection(claims):
             return "not_declared"
         if not info.get("active", True) or live_status not in {"pass", "warn"}:
+            return "blocked"
+        if requires_launch_contract and not has_launch_contract:
             return "blocked"
         if model_role and model_identity["role_eligibility"].get(model_role) != "eligible":
             return "blocked"
@@ -237,7 +273,6 @@ def build_capability_passport(
         if record["binding_status"] == "current"
         and str(record.get("outcome") or "").lower() in {"pass", "passed", "verified", "accepted"}
     ]
-    runtime_config = info.get("runtime") if isinstance(info.get("runtime"), dict) else {}
     runtime_session = model_identity["model_probe"]["session_identity"]
     principal_material = {
         "agent_id": agent_id,
@@ -331,7 +366,10 @@ def build_capability_passport(
             for item in discovery.get("known_limitations", info.get("must_not_do") or [])
         ],
         "role_eligibility": {
-            "leader": role_status({"leader", "coordination", "coordinator", "state"}),
+            "leader": role_status(
+                {"leader", "coordination", "coordinator", "state"},
+                requires_launch_contract=True,
+            ),
             "implementer": role_status(
                 {"implementation", "implementer", "verification"},
                 model_role="implementer",
@@ -557,7 +595,19 @@ def runtime_checks() -> list[DoctorCheck]:
         return checks
 
     herdr = collect_runtime_preflight(runtime="herdr")
-    status = herdr.get("status")
+    infrastructure_checks = herdr.get("checks") or {}
+    infrastructure_statuses = [
+        str(check.get("status") or WARN)
+        for check in infrastructure_checks.values()
+        if isinstance(check, dict)
+    ]
+    status = (
+        FAIL
+        if FAIL in infrastructure_statuses
+        else WARN
+        if WARN in infrastructure_statuses or not infrastructure_statuses
+        else PASS
+    )
     submission = (herdr.get("checks") or {}).get("submission_transport") or {}
     doctor_status = PASS if status == PASS else FAIL if status == FAIL else WARN
     submission_mode = submission.get("mode") or "unknown"
@@ -567,7 +617,7 @@ def runtime_checks() -> list[DoctorCheck]:
             "HERDR reference runtime is available",
             doctor_status,
             (
-                f"HERDR preflight status: {status}; submission mode: {submission_mode}; "
+                f"HERDR infrastructure status: {status}; submission mode: {submission_mode}; "
                 f"command={herdr_path}."
             ),
             ["adapter_class=" + str(herdr.get("adapter_class"))],

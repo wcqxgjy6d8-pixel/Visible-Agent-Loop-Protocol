@@ -22,6 +22,7 @@ from valp_cli.herdr_adapter import (
     HERDR_PANE_LIST_STDOUT_LIMIT,
     HerdrAutoVisibleWatcher,
     HerdrSubmissionError,
+    _launch_receipt_matches,
     binding_has_verified_bootstrap_lifecycle,
     detect_herdr_session_provisioning_capability,
     detect_herdr_submission_capability,
@@ -1755,6 +1756,107 @@ class PackagedHerdrAdapterTests(unittest.TestCase):
                 herdr_launch_argv_for("claude", capabilities)
 
         which.assert_called_once_with(missing_entrypoint)
+
+    def test_managed_kind_launch_receipt_accepts_post_exec_wrapper_identity(self) -> None:
+        self.assertTrue(
+            _launch_receipt_matches(
+                actual_argv=["/Users/test/.local/bin/qwen", "--approval-mode=yolo"],
+                launch_argv=["/Users/test/.local/bin/qwen-herdr", "--approval-mode=yolo"],
+                requested_agent_args=["--approval-mode=yolo"],
+                agent="qwen",
+                managed_kind_start=True,
+            )
+        )
+
+    def test_managed_kind_launch_receipt_rejects_wrong_post_exec_executable(self) -> None:
+        self.assertFalse(
+            _launch_receipt_matches(
+                actual_argv=["/Users/test/.local/bin/other", "--approval-mode=yolo"],
+                launch_argv=["/Users/test/.local/bin/qwen-herdr", "--approval-mode=yolo"],
+                requested_agent_args=["--approval-mode=yolo"],
+                agent="qwen",
+                managed_kind_start=True,
+            )
+        )
+
+    def test_managed_kind_launch_receipt_rejects_changed_post_exec_arguments(self) -> None:
+        for actual_argv in (
+            ["qwen"],
+            ["qwen", "--approval-mode=default"],
+            ["qwen", "--approval-mode=yolo", "--extra"],
+        ):
+            with self.subTest(actual_argv=actual_argv):
+                self.assertFalse(
+                    _launch_receipt_matches(
+                        actual_argv=actual_argv,
+                        launch_argv=["qwen-herdr", "--approval-mode=yolo"],
+                        requested_agent_args=["--approval-mode=yolo"],
+                        agent="qwen",
+                        managed_kind_start=True,
+                    )
+                )
+
+    def test_legacy_launch_receipt_rejects_post_exec_wrapper_identity(self) -> None:
+        self.assertFalse(
+            _launch_receipt_matches(
+                actual_argv=["qwen", "--approval-mode=yolo"],
+                launch_argv=["qwen-herdr", "--approval-mode=yolo"],
+                requested_agent_args=["qwen-herdr", "--approval-mode=yolo"],
+                agent="qwen",
+                managed_kind_start=False,
+            )
+        )
+
+    def test_provision_disables_background_agents_for_claude_task_workspace(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
+            calls.append(command)
+            if command[1:3] == ["workspace", "create"]:
+                return {
+                    "ok": True,
+                    "exit_code": 0,
+                    "stdout": json.dumps({
+                        "result": {
+                            "workspace": {
+                                "workspace_id": "workspace-claude",
+                                "label": command[command.index("--label") + 1],
+                            }
+                        }
+                    }),
+                    "stderr": "",
+                }
+            if command[1:] == ["agent", "--help"]:
+                return {"ok": False, "exit_code": 1, "stdout": "", "stderr": ""}
+            raise AssertionError(f"unexpected command: {command}")
+
+        with self.assertRaisesRegex(
+            HerdrSubmissionError,
+            "agent start.*unavailable",
+        ):
+            provision_herdr_agent_session(
+                "/test/herdr",
+                task_id="TASK-CLAUDE-FOREGROUND",
+                agent="claude",
+                project_root=Path("/example/project"),
+                launch_argv=["claude"],
+                existing_binding=None,
+                run_command=fake_run,
+            )
+
+        workspace_create = next(
+            command for command in calls if command[1:3] == ["workspace", "create"]
+        )
+        self.assertEqual(
+            workspace_create[-5:],
+            [
+                "--env",
+                "CLAUDE_CODE_FORK_SUBAGENT=0",
+                "--env",
+                "CLAUDE_CODE_WORKFLOWS=0",
+                "--no-focus",
+            ],
+        )
 
     def test_provision_creates_task_owned_session_instead_of_using_unrelated_pane(self) -> None:
         calls: list[list[str]] = []

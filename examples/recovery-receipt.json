@@ -1,0 +1,16 @@
+{
+  "schema_version": "valp-recovery-receipt.v1",
+  "receipt_id": "recovery-receipt-1234567890abcdef",
+  "receipt_digest": "sha256:5e1d9cf2e6199997a92b50475c242027ea71718e57476c1f7af5800f8b96c0e0",
+  "executed_at": "2026-08-26T10:00:03Z",
+  "plan_id": "recovery-c42398b3a00a43d0",
+  "plan_digest": "sha256:6c25601421ff3c86e82bada12648ce7ed6cb52daaabb278a4ab3e1e6a96b9c52",
+  "action_digest": "sha256:08446861f310750ef95a54d9b8b6ed095c6daa9104283bb2b3fd96803503b4ed",
+  "authority": {"mcp.process": "L2"},
+  "approval_binding": {"approval_id": "approval-example-1", "approval_ref": "approvals/example.json", "approval_digest": "sha256:71a9b374b9d2286303f6027be3cd9742cc9c9ca964b244be2f6d67ba50d44f9f"},
+  "status": "blocked",
+  "effect": {"status": "restarted"},
+  "verification": {"status": "fail"},
+  "rollback": {"status": "full"},
+  "proof_expires_at": "2026-08-26T10:05:03Z"
+}

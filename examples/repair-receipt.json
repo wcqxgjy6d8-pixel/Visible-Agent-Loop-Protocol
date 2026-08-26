@@ -1,0 +1,30 @@
+{
+  "schema_version": "valp-repair-receipt.v1",
+  "receipt_id": "repair-receipt-4444444444444444",
+  "receipt_digest": "sha256:3024726b5c09c571110b43e3979723cdd1e3f9e131bae2f55fc5d0d1e425dba4",
+  "executed_at": "2026-08-26T10:00:10Z",
+  "plan_id": "repair-1111111111111111",
+  "plan_digest": "sha256:8c079a7dc338bb158662dfad176dfc9533683c974f9a71297de127f302cf9460",
+  "workspace": "example-workspace",
+  "pre_state_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "post_state_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+  "status": "fixed",
+  "action_results": [
+    {
+      "action_id": "action-1",
+      "kind": "doctor.recheck",
+      "status": "fixed",
+      "attempts": 1,
+      "result": "all targeted diagnostics resolved"
+    }
+  ],
+  "verification": {
+    "status": "pass",
+    "verifier": "valp.doctor",
+    "resolved": [{"code": "SESSION_IDENTITY_UNKNOWN", "subject": "agent:example"}],
+    "unresolved": []
+  },
+  "approval_binding": {"status": "not_required"},
+  "rollback": {"status": "not_required", "reason": "reference actions are read-only"},
+  "proof_certificate_digest": "sha256:418da1e4d7d473aefa1e2f54f9cc0138aa9fc5d37e22221531cccd6b472c2dfb"
+}

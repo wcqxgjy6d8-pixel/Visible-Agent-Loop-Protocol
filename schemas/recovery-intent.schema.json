@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/recovery-intent.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "plan_digest", "action_digest", "approval_digest", "created_at", "state", "intent_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-recovery-intent.v1"}, "plan_digest": {"$ref": "#/$defs/digest"}, "action_digest": {"$ref": "#/$defs/digest"}, "approval_digest": {"$ref": "#/$defs/digest"}, "created_at": {"type": "string", "format": "date-time"}, "state": {"const": "accepted"}, "intent_digest": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}
+}

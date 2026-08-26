@@ -22,6 +22,36 @@ class HerdrSubmissionError(RuntimeError):
     pass
 
 
+def _agent_executable_name(value: str) -> str:
+    name = Path(str(value)).name
+    return name[:-4] if name.lower().endswith(".exe") else name
+
+
+def _launch_receipt_matches(
+    *,
+    actual_argv: list[str],
+    launch_argv: list[str],
+    requested_agent_args: list[str],
+    agent: str,
+    managed_kind_start: bool,
+) -> bool:
+    if actual_argv in (launch_argv, requested_agent_args):
+        return True
+    if (
+        actual_argv
+        and len(actual_argv) == len(launch_argv)
+        and Path(str(actual_argv[0])).name == Path(str(launch_argv[0])).name
+        and actual_argv[1:] == launch_argv[1:]
+    ):
+        return True
+    return bool(
+        managed_kind_start
+        and actual_argv
+        and _agent_executable_name(str(actual_argv[0])) == _agent_executable_name(agent)
+        and actual_argv[1:] == requested_agent_args
+    )
+
+
 class HerdrAutoVisibleWatcher:
     """Persisted HERDR intake that publishes each source event at most once."""
 
@@ -511,17 +541,27 @@ def provision_herdr_agent_session(
 
     generation = int((existing_binding or {}).get("generation") or 0) + 1
     workspace_label = _session_workspace_label(task_id, safe_agent, generation)
+    workspace_command = [
+        herdr,
+        "workspace",
+        "create",
+        "--cwd",
+        str(root),
+        "--label",
+        workspace_label,
+    ]
+    if agent == "claude":
+        workspace_command.extend(
+            [
+                "--env",
+                "CLAUDE_CODE_FORK_SUBAGENT=0",
+                "--env",
+                "CLAUDE_CODE_WORKFLOWS=0",
+            ]
+        )
+    workspace_command.append("--no-focus")
     workspace_result = run_command(
-        [
-            herdr,
-            "workspace",
-            "create",
-            "--cwd",
-            str(root),
-            "--label",
-            workspace_label,
-            "--no-focus",
-        ],
+        workspace_command,
         timeout=10.0,
     )
     _require_success(workspace_result, "HERDR task-owned workspace provisioning")
@@ -566,7 +606,8 @@ def provision_herdr_agent_session(
             "`herdr agent start` is unavailable"
         )
     initial_pane_id = ""
-    if "--pane" in agent_help_text and "--kind" in agent_help_text:
+    managed_kind_start = "--pane" in agent_help_text and "--kind" in agent_help_text
+    if managed_kind_start:
         pane_list_result = run_command(
             [herdr, "pane", "list", "--workspace", workspace_id], timeout=5.0
         )
@@ -624,11 +665,12 @@ def provision_herdr_agent_session(
     started = payload.get("result") if isinstance(payload.get("result"), dict) else payload
     runtime_agent = started.get("agent") if isinstance(started.get("agent"), dict) else {}
     actual_argv = list(started.get("argv") or [])
-    argv_matches = actual_argv in (launch_argv, requested_agent_args) or (
-        actual_argv
-        and len(actual_argv) == len(launch_argv)
-        and Path(str(actual_argv[0])).name == Path(str(launch_argv[0])).name
-        and actual_argv[1:] == launch_argv[1:]
+    argv_matches = _launch_receipt_matches(
+        actual_argv=actual_argv,
+        launch_argv=launch_argv,
+        requested_agent_args=requested_agent_args,
+        agent=agent,
+        managed_kind_start=managed_kind_start,
     )
     if started.get("type") != "agent_started" or not argv_matches:
         raise HerdrSubmissionError(

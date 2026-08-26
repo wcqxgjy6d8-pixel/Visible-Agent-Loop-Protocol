@@ -1,0 +1,18 @@
+{
+  "schema_version": "valp-doctor-proof-certificate.v1",
+  "certificate_id": "proof-6666666666666666",
+  "certificate_digest": "sha256:418da1e4d7d473aefa1e2f54f9cc0138aa9fc5d37e22221531cccd6b472c2dfb",
+  "issued_at": "2026-08-26T10:00:10Z",
+  "expires_at": "2026-08-26T10:05:10Z",
+  "subject": "doctor-remediation",
+  "subject_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+  "dependency_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "verifier": {"id": "valp.doctor", "version": "reference-v1"},
+  "binding": {
+    "workspace": "example-workspace",
+    "plan_digest": "sha256:8c079a7dc338bb158662dfad176dfc9533683c974f9a71297de127f302cf9460"
+  },
+  "claims": [{"code": "SESSION_IDENTITY_UNKNOWN", "subject": "agent:example"}],
+  "evidence_refs": ["repair-plan:repair-1111111111111111"],
+  "status": "valid"
+}

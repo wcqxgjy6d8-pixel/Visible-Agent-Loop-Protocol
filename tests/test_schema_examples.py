@@ -50,6 +50,14 @@ EXAMPLE_SCHEMA_BY_NAME = {
     "pricing-snapshots.json": "pricing-snapshots.schema.json",
     "cost-budget.json": "cost-budget.schema.json",
     "cost-report.json": "cost-report.schema.json",
+    "repair-plan.json": "repair-plan.schema.json",
+    "repair-receipt.json": "repair-receipt.schema.json",
+    "doctor-proof-certificate.json": "doctor-proof-certificate.schema.json",
+    "doctor-snapshot.json": "doctor-snapshot.schema.json",
+    "recovery-plan.json": "recovery-plan.schema.json",
+    "recovery-approval.json": "recovery-approval.schema.json",
+    "recovery-intent.json": "recovery-intent.schema.json",
+    "recovery-receipt.json": "recovery-receipt.schema.json",
 }
 
 

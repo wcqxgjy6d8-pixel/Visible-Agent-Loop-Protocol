@@ -28,6 +28,16 @@ from .adapter_starter import AdapterStarterError, initialize_adapter
 from .plugins import load_plugin_manifest
 from .task_control import TASK_STATUSES, init_task, replay_task, task_state, transition_task
 from .process_adapter import run_process
+from .remediation import (
+    RemediationError,
+    build_repair_plan,
+    build_recovery_plan,
+    collect_doctor_with_snapshot,
+    execute_repair_plan,
+    read_json_object as read_remediation_json,
+    verify_repair_receipt,
+    write_json_atomic as write_remediation_json,
+)
 from .langgraph_adapter import LangGraphAdapterError, resume_langgraph_run, submit_langgraph_run
 from .task_graph import build_task_graph, render_task_graph
 from .herdr_adapter import (
@@ -726,6 +736,56 @@ notes:
     doctor.add_argument("--task", dest="task_id", help="Optional task id to audit under <workspace>/.herdr-loop/tasks/")
     doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     doctor.add_argument("--report", help="Write a Markdown report to a path, or use 'desktop'")
+    doctor.add_argument(
+        "--snapshot",
+        help="Explicit opt-in Doctor snapshot path for TTL-bound proof reuse",
+    )
+    doctor.add_argument(
+        "--snapshot-ttl",
+        type=int,
+        default=300,
+        help="Snapshot TTL in seconds, between 1 and 3600 (default: 300)",
+    )
+
+    remediate = sub.add_parser(
+        "remediate",
+        help="Plan, apply, or verify bounded evidence-driven Doctor recovery",
+    )
+    remediate_sub = remediate.add_subparsers(dest="remediate_command", required=True)
+    remediate_plan = remediate_sub.add_parser(
+        "plan",
+        help="Build a digest-bound repair plan from a fresh Doctor observation",
+    )
+    remediate_plan.add_argument("--workspace", default=".", help="Workspace root")
+    remediate_plan.add_argument("--task", dest="task_id", help="Optional task id to include in Doctor")
+    remediate_plan.add_argument("--output", help="Optional JSON repair-plan output path")
+    remediate_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    recovery_plan = remediate_sub.add_parser(
+        "recovery-plan",
+        help="Build an approval-gated plan for one injected MCP process restart",
+    )
+    recovery_plan.add_argument("--workspace", default=".", help="Workspace root")
+    recovery_plan.add_argument("--resource-id", required=True, help="Versioned MCP process identity")
+    recovery_plan.add_argument("--resource-version", required=True, help="Observed process generation or version")
+    recovery_plan.add_argument("--rollback-token", required=True, help="Provider-issued rollback token; only its digest is stored in the plan")
+    recovery_plan.add_argument("--output", help="Optional JSON recovery-plan output path")
+    recovery_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    remediate_apply = remediate_sub.add_parser(
+        "apply",
+        help="Apply one ready low-risk repair plan through the closed reference executor",
+    )
+    remediate_apply.add_argument("plan", help="Repair-plan JSON path")
+    remediate_apply.add_argument("--workspace", default=".", help="Workspace root")
+    remediate_apply.add_argument("--receipt", required=True, help="Repair-receipt JSON output path")
+    remediate_apply.add_argument("--certificate", help="Proof-certificate JSON output path")
+    remediate_apply.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    remediate_verify = remediate_sub.add_parser(
+        "verify",
+        help="Recheck a repair receipt and report any regressed claims",
+    )
+    remediate_verify.add_argument("receipt", help="Repair-receipt JSON path")
+    remediate_verify.add_argument("--workspace", default=".", help="Workspace root")
+    remediate_verify.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     return parser
 
 
@@ -2049,19 +2109,125 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if report.status == FAIL else 0
 
     if args.command == "doctor":
-        report = collect_doctor_report(Path(args.workspace), task_id=args.task_id)
+        if args.snapshot and args.task_id:
+            parser.error("doctor --snapshot cannot be combined with --task")
+        if args.snapshot_ttl < 1 or args.snapshot_ttl > 3600:
+            parser.error("doctor --snapshot-ttl must be between 1 and 3600")
+        snapshot_result = None
+        if args.snapshot:
+            report, snapshot_result = collect_doctor_with_snapshot(
+                Path(args.workspace),
+                Path(args.snapshot).expanduser(),
+                ttl_seconds=args.snapshot_ttl,
+            )
+        else:
+            report = collect_doctor_report(Path(args.workspace), task_id=args.task_id)
         report_path = write_markdown_report(report, args.report) if args.report else None
         if args.json:
             data = doctor_report_to_dict(report)
             if report_path:
                 data["report_path"] = str(report_path)
+            if snapshot_result:
+                data["snapshot"] = snapshot_result
             print(json.dumps(data, indent=2, ensure_ascii=False))
         else:
             print(render_text_summary(report))
+            if snapshot_result:
+                print()
+                print(f"Snapshot: {snapshot_result['status']} ({snapshot_result['snapshot_path']})")
             if report_path:
                 print()
                 print(f"Report written: {report_path}")
         return 1 if report.status == FAIL else 0
+
+    if args.command == "remediate":
+        workspace = Path(args.workspace).resolve()
+        try:
+            if args.remediate_command == "plan":
+                report = collect_doctor_report(workspace, task_id=args.task_id)
+                plan = build_repair_plan(report, workspace)
+                output_path = write_remediation_json(Path(args.output), plan) if args.output else None
+                result = dict(plan)
+                if output_path:
+                    result["artifact_path"] = str(output_path.resolve())
+                if args.json:
+                    print(json.dumps(result, indent=2, ensure_ascii=False))
+                else:
+                    print(f"Repair plan: {plan['plan_id']}")
+                    print(f"Status: {plan['status']}")
+                    print(f"Risk: {plan['risk_classification']}")
+                    print(f"Diagnostics: {len(plan['diagnostics'])}")
+                    print(f"Actions: {len(plan['actions'])}")
+                    if output_path:
+                        print(f"Plan written: {output_path}")
+                return 1 if plan["status"] == "blocked" else 0
+
+            if args.remediate_command == "recovery-plan":
+                report = collect_doctor_report(workspace)
+                plan = build_recovery_plan(
+                    report,
+                    workspace,
+                    resource_id=args.resource_id,
+                    resource_version=args.resource_version,
+                    rollback_token=args.rollback_token,
+                )
+                output_path = write_remediation_json(Path(args.output), plan) if args.output else None
+                result = dict(plan)
+                if output_path:
+                    result["artifact_path"] = str(output_path.resolve())
+                if args.json:
+                    print(json.dumps(result, indent=2, ensure_ascii=False))
+                else:
+                    print(f"Recovery plan: {plan['plan_id']}")
+                    print("Status: approval_required")
+                    if output_path:
+                        print(f"Plan written: {output_path}")
+                return 0
+
+            if args.remediate_command == "apply":
+                plan = read_remediation_json(Path(args.plan))
+                receipt, certificate = execute_repair_plan(plan, workspace)
+                receipt_path = write_remediation_json(Path(args.receipt), receipt)
+                certificate_path = None
+                if certificate:
+                    raw_certificate_path = args.certificate or str(
+                        receipt_path.with_name(f"{receipt_path.stem}-proof.json")
+                    )
+                    certificate_path = write_remediation_json(
+                        Path(raw_certificate_path), certificate
+                    )
+                result = {
+                    "receipt": receipt,
+                    "receipt_path": str(receipt_path.resolve()),
+                    "certificate": certificate,
+                    "certificate_path": str(certificate_path.resolve()) if certificate_path else None,
+                }
+                if args.json:
+                    print(json.dumps(result, indent=2, ensure_ascii=False))
+                else:
+                    print(f"Repair receipt: {receipt['receipt_id']}")
+                    print(f"Status: {receipt['status']}")
+                    print(f"Receipt written: {receipt_path}")
+                    if certificate_path:
+                        print(f"Proof written: {certificate_path}")
+                return 0 if receipt["status"] == "fixed" else 1
+
+            if args.remediate_command == "verify":
+                receipt = read_remediation_json(Path(args.receipt))
+                result = verify_repair_receipt(receipt, workspace)
+                if args.json:
+                    print(json.dumps(result, indent=2, ensure_ascii=False))
+                else:
+                    print(f"Repair receipt: {result['receipt_id']}")
+                    print(f"Verification: {result['status']}")
+                    print(f"Regressed claims: {len(result['regressed'])}")
+                return 0 if result["status"] == "valid" else 1
+        except RemediationError as error:
+            if args.json:
+                print(json.dumps({"status": "error", "error": str(error)}, indent=2))
+            else:
+                print(f"Remediation blocked: {error}", file=sys.stderr)
+            return 1
 
     parser.print_help()
     return 2

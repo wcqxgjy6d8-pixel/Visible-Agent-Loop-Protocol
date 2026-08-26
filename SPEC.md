@@ -474,6 +474,42 @@ Historical task states created before this contract MAY omit
 preserve such tasks as historical evidence; they MUST NOT backfill a claimed
 task-start identity from a later observation.
 
+### Recovery Kernel
+
+The optional Recovery Kernel is a narrow provider-injected execution boundary,
+not a general shell or configuration interface. Source identity names recovery
+implementation bytes; dependency evidence records observed local inputs. They
+MUST remain separate. Observation digests MUST exclude collection-time metadata
+so equal health claims have equal digests; TTL remains separately bound.
+
+Authority is per surface: L0 observe; L1 VALP-owned ephemeral work; L2
+reversible runtime work with one-shot approval; L3 protected persistent work
+with exact-digest approval; and L4 irreversible or external work, which MUST
+never be automatic. The reference Kernel exposes exactly one L2 action:
+`mcp.process.restart`. Its plan MUST carry a provider rollback contract and a
+digest of the provider rollback token. An L2 approval MUST be external to the
+executor and name its identity, evidence reference, issued time, expiry, exact
+plan digest, and exact action digest. The executor MUST NOT mint or extend that
+approval.
+
+The recovery-dir kill-switch MUST be checked before locking and again while
+holding the exclusive lock, before intent creation. Before the provider call,
+the Kernel records an immutable accepted intent bound to plan, action, and
+approval digests, and fsyncs both artifact and parent directory. This is
+one-shot CAS consumption. An accepted intent without a receipt is `unknown`
+after restart and MUST NOT be retried. Replayed receipts MUST revalidate their
+receipt digest and all plan, action, and approval bindings; mismatches fail
+closed. Dry-run MUST not call the provider and MUST create neither accepted
+intent nor executable receipt, leaving the same plan executable. Failed
+independent verification MUST attempt the declared rollback and record a
+`full`, `partial`, or `failed` rollback result. Independent verification and a
+bounded proof TTL are required for any positive claim.
+
+The recovery plan records the action authority as L2; the act of planning is
+still VALP-owned L1 ephemeral work. If the provider call itself raises, the
+receipt remains `unknown` and the executor MUST NOT guess a rollback without a
+verified post-call failure classification.
+
 ### 4.1 Runtime Work Item State Mapping
 
 Runtimes may expose their own queue state machine. A VALP adapter may map states
@@ -969,6 +1005,136 @@ New installs must default to Manual trigger mode. `policy_auto`, `watcher`, and
 real `--submit` behavior are opt-in after the user can inspect doctor,
 preflight, the user-selected Leader, Leader-declared assignments, validation
 findings, expected evidence, and approval risks.
+
+### 4.6 Evidence-Driven Recovery
+
+Doctor recovery is a bounded control loop, not an unrestricted Agent with shell
+access. An implementation that supports recovery MUST keep three authorities
+separate:
+
+```text
+Doctor Observer   -> read-only facts, fingerprints, and diagnostic hypotheses
+Recovery Planner  -> a digest-bound counterfactual repair plan
+Repair Executor   -> typed actions, postcondition checks, receipts, and rollback
+```
+
+The Doctor Observer remains read-only. It MAY run bounded probes and compare a
+current observation with a prior proof certificate, but it MUST NOT mutate live
+Agent behavior, configuration, auth, task evidence, or assignment authority.
+Unknown and failed observations remain evidence; the planner MUST NOT replace
+them with an inferred success.
+
+#### Environment Snapshot And Delta
+
+A recovery-capable Doctor SHOULD build a dependency snapshot from the facts it
+can currently prove. The snapshot may cover:
+
+```text
+protocol and Doctor implementation digests
+capability registry and local-overlay digests
+Agent executable identity and version
+Skill inventory digest
+MCP server and tool inventory digest
+provider, model, reasoning, session, and generation binding
+permission envelope
+runtime adapter and submission-transport facts
+```
+
+Each snapshot MUST have one canonical digest. A prior proof may be reused only
+when its subject digest, dependency fingerprint, binding, verifier identity,
+and TTL still match. A changed dependency invalidates the proof for that node
+and every dependent node, not unrelated capability evidence. Current runtime
+facts, permissions, and bindings override historical success.
+
+An implementation that caches one complete Doctor report MUST NOT reuse a
+report with failed checks or unresolved transient, callability, session,
+model-mismatch, or freshness diagnostics. Its expiry MUST be no later than the
+earliest bound model-observation expiry. A per-node cache may still reuse
+unaffected healthy claims while refreshing failed or invalidated nodes, but it
+must preserve the mixed fresh/cached provenance visibly.
+
+#### Diagnostic Hypotheses And Active Probes
+
+For a degraded or failed subject, the planner SHOULD retain multiple explicit
+root-cause hypotheses rather than immediately selecting a mutation. Each
+hypothesis records a cause code, confidence, evidence refs, and the next
+read-only probe capable of distinguishing it. Confidence is advisory and MUST
+NOT override a failed hard gate.
+
+An active probe MUST be read-only, bounded by time and target count, and selected
+for information gain without increasing mutation authority. Probe output is
+added to the observation history; it does not rewrite the original failure.
+
+#### Repair Plan
+
+A repair plan MUST be canonical and digest-bound. It records:
+
+```text
+plan id and plan digest
+workspace and pre-state fingerprints
+diagnostics and ranked hypotheses
+selected strategy and risk classification
+typed actions and exact targets
+preconditions and predicted changed fields
+fields that must remain unchanged
+postconditions and verification strength
+rollback contract
+approval requirement and stop conditions
+```
+
+The predicted changes and unchanged fields form a counterfactual contract. If
+the observed post-state changes outside the allowed set, the executor MUST stop,
+record the divergence, and attempt the declared rollback when rollback is both
+supported and safe.
+
+A ready read-only probe plan may coexist with protected findings. The plan MUST
+record that protected mutation remains deferred and approval-bound; successful
+execution of the probe cannot authorize or perform the deferred repair.
+
+The reference action vocabulary is closed. It MAY include read-only rechecks,
+fresh capability probes, proof issuance, and adapter-declared actions. It MUST
+NOT accept arbitrary model-generated shell text as an executable action. A
+runtime or plugin that adds an action must declare its input schema, risk,
+mutation surface, ownership proof, verifier, timeout, idempotency behavior, and
+rollback contract.
+
+#### Autonomy And Approval
+
+Automatic repair requires all of the following:
+
+```text
+high-confidence diagnosis from current evidence
+low-risk action with a single bounded principal
+no protected live-surface mutation
+reversible or side-effect-free execution
+deterministic strong postcondition
+bounded attempts and timeout
+```
+
+Skills, plugins, memory, MCP configuration, Agent configuration, auth, secrets,
+signing, privacy metadata, task evidence, publication, release, and destructive
+operations are protected. A repair that touches one of these surfaces MUST stop
+before mutation and use a separately scoped configuration task with prior
+approval naming the task id, target principal or artifact, exact operation,
+action digest, and expiry or one-shot boundary. The Repair Executor cannot grant
+that authority to itself.
+
+#### Repair Receipt And Proof Certificate
+
+Every attempted action MUST produce an append-only repair receipt containing the
+plan and action digests, pre-state digest, action result, post-state digest,
+verification result, approval binding, and rollback result when applicable. A
+failed attempt remains immutable even if a later attempt succeeds.
+
+A successful verification MAY issue a proof certificate. The certificate MUST
+bind the proved claims to the subject digest, dependency fingerprint, verifier,
+binding, issued time, expiry time, and evidence refs. Proof reuse is a
+performance optimization, not a weaker truth standard. Expired, mismatched, or
+dependency-invalidated proof MUST be refreshed or reported stale.
+
+Doctor recovery does not complete a VALP task. Expected task evidence,
+independent review, recommendation resolution, final synthesis, and `valp audit`
+remain separate gates.
 
 ## 5. Runtime Adapters
 

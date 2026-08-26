@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
+from valp_cli import remediation as remediation_module
 from tests.schema_helpers import schema_validator
 from valp_cli.doctor import DoctorCheck, DoctorReport
 from valp_cli.protocol_receipts import digest
@@ -81,6 +83,26 @@ def recovery_approval(plan: dict, *, expires_at: str = "2026-08-26T10:10:00Z") -
 
 
 class ValpRemediationTests(unittest.TestCase):
+    def test_recovery_directory_fsync_respects_platform_support(self) -> None:
+        directory = Path("recovery")
+        with (
+            mock.patch.object(remediation_module.os, "name", "nt"),
+            mock.patch.object(remediation_module.os, "open") as open_mock,
+        ):
+            remediation_module._fsync_directory(directory)
+        open_mock.assert_not_called()
+
+        with (
+            mock.patch.object(remediation_module.os, "name", "posix"),
+            mock.patch.object(
+                remediation_module.os,
+                "open",
+                side_effect=PermissionError("denied"),
+            ),
+        ):
+            with self.assertRaisesRegex(RemediationError, "cannot fsync recovery directory"):
+                remediation_module._fsync_directory(directory)
+
     def test_recovery_rejects_expired_approval_and_kill_switch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

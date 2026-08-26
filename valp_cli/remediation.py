@@ -953,6 +953,9 @@ def _recovery_disabled(directory: Path) -> bool:
 
 
 def _fsync_directory(directory: Path) -> None:
+    if os.name == "nt":
+        # Windows does not support opening directories for os.fsync().
+        return
     try:
         fd = os.open(directory, os.O_RDONLY)
     except OSError as error:

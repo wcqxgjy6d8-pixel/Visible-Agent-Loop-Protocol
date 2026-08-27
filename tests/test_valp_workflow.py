@@ -3276,6 +3276,66 @@ class ValpWorkflowTests(unittest.TestCase):
             "--submit",
         ]
 
+    def test_public_incomplete_recovery_can_fence_done_owned_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_id = "TASK-INCOMPLETE-DONE-SESSION"
+            task_dir, capabilities, preflight, coordinator = self.incomplete_recovery_fixture(
+                root,
+                task_id,
+            )
+            submitted = self.deterministic_receipt(
+                task_id,
+                coordinator,
+                "dispatch_submitted",
+                1,
+            )
+            submitted["proof"] = {
+                "runtime": "HERDR",
+                "transport_mode": "agent_prompt",
+                "pane_id": "pane-original",
+                "submission_id": "original",
+            }
+            with (task_dir / "dispatch-receipts.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(submitted) + "\n")
+
+            args = self.recover_incomplete_cli_args(root, task_id)
+            args.insert(-1, "--reprovision-done-session")
+            replacement = self.owned_session_projection(task_id, "pane-fresh")
+            replacement["bindings"]["codex"]["generation"] = 2
+            invocation_proof = herdr_invocation_proof(pane_id="pane-fresh")
+            invocation_proof["session_binding"] = {
+                "ref": "agent-sessions.json",
+                "generation": 2,
+                "identity_token": "sha256:test-owned-session",
+                "ownership": replacement["bindings"]["codex"]["ownership"],
+            }
+            with patch("valp_cli.workflow.load_local_capabilities", return_value=capabilities):
+                with patch("valp_cli.workflow.collect_runtime_preflight", return_value=preflight):
+                    with patch(
+                        "valp_cli.workflow.ensure_herdr_agent_sessions",
+                        return_value=replacement,
+                    ) as ensure_sessions:
+                        with patch("valp_cli.workflow.shutil.which", return_value="/test/herdr"):
+                            with patch(
+                                "valp_cli.workflow.submit_herdr_dispatch",
+                                return_value=invocation_proof,
+                            ):
+                                self.assertEqual(main(args), 0)
+
+            self.assertTrue(ensure_sessions.call_args.kwargs["allow_done_session_reprovision"])
+            receipts = [
+                json.loads(line)
+                for line in (task_dir / "dispatch-receipts.jsonl").read_text(encoding="utf-8").splitlines()
+                if '"schema_version"' in line
+            ]
+            self.assertEqual(
+                [receipt["event"] for receipt in receipts],
+                ["dispatch_submitted", "dispatch_submitted"],
+            )
+            self.assertEqual(receipts[-1]["retry_generation"], 1)
+            self.assertEqual(receipts[-1]["proof"]["session_binding"]["generation"], 2)
+
     def write_exception_wake_evidence(
         self,
         task_dir: Path,

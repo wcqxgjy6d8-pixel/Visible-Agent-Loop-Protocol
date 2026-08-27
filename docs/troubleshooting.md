@@ -70,7 +70,9 @@ valp dispatch <task-id> --workspace <root> \
 If all expected refs arrived after the observer stopped, the command appends the
 completion for the original submission without preflight or resubmission. If
 all refs are still absent or invalid, prepare a fresh HERDR worker session; the
-same command performs at most one bounded resubmission. A partial evidence set,
+same command performs at most one bounded resubmission. When the bound session
+is already terminal, add `--reprovision-done-session`; the adapter fences it
+and advances only the task-owned session generation before resubmission. A partial evidence set,
 changed task or dispatch identity, changed control contract or slice, repeat or
 second-generation retry, and failed recovery transport all fail closed before
 another submission. Do not delete or edit the original receipt to make the

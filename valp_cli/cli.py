@@ -153,7 +153,7 @@ notes:
         action="store_true",
         help=(
             "Fence and replace one explicitly targeted done task-owned HERDR session "
-            "before any delivery receipt exists"
+            "before delivery, or during the one bounded incomplete-submission recovery"
         ),
     )
     dispatch.add_argument("--submit", action="store_true", help="Actually submit through the selected reference adapter when supported")

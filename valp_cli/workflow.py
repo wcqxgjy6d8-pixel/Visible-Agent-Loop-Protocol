@@ -8968,11 +8968,11 @@ def dispatch_task(
             "and cannot be combined with --recover-incomplete"
         )
     if reprovision_done_session and (
-        not submit or agent == "all" or role is None or recover_incomplete or replace_owned_session_launch
+        not submit or agent == "all" or role is None or replace_owned_session_launch
     ):
         raise SystemExit(
             "--reprovision-done-session requires --submit, one explicit --agent and --role, "
-            "and cannot be combined with --recover-incomplete or --replace-owned-session-launch"
+            "and cannot be combined with --replace-owned-session-launch"
         )
     root = workspace_root(root)
     directory = task_dir(root, task_id)
@@ -9010,7 +9010,7 @@ def dispatch_task(
     state = read_json(directory / "state.json")
     if not state:
         raise SystemExit(f"Missing state.json for task {task_id}")
-    if reprovision_done_session:
+    if reprovision_done_session and not recover_incomplete:
         prior_delivery = [
             receipt for receipt in load_dispatch_receipts(directory, task_id)
             if receipt.get("event") in DELIVERY_RECEIPT_EVENTS

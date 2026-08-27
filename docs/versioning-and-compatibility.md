@@ -13,7 +13,7 @@ branches for different purposes. They must not be treated as interchangeable.
 | `X.Y.ZrcN` package | Release-candidate CLI for exact-SHA evaluation | No, unless explicitly evaluating the candidate |
 | `codex/*`, feature branches | Review or development candidates | No |
 
-`v0.3.0` is the intended protocol version line and `0.3.0rc1` is the current
+`v0.3.0` is the intended protocol version line and `0.3.0` is the current
 reference CLI candidate. Evaluate it from a candidate branch at its exact SHA.
 Stable status also requires RFC 0001 Sections 20 and 21, profile-specific
 conformance, required checks, external review, merge, tag, release metadata,

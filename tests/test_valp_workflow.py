@@ -3370,7 +3370,7 @@ class ValpWorkflowTests(unittest.TestCase):
             with contextlib.redirect_stdout(output):
                 main(["--version"])
         self.assertEqual(raised.exception.code, 0)
-        self.assertIn("valp 0.3.0rc1", output.getvalue())
+        self.assertIn("valp 0.3.0", output.getvalue())
 
     def test_profile_classification_scores_all_matches(self) -> None:
         self.assertEqual(classify_profile("Fix the HERDR agent connector code"), "agent-runtime")

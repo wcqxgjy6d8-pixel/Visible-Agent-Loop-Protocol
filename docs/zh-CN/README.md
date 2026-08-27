@@ -52,7 +52,7 @@ required checks、external review、merge、不可变 tag 和 release 仍是发�
 
 ## v0.3.0：从任务验收到安装级控制平面
 
-当前协议候选版本是 `0.3.0`，reference CLI 候选版本是 `0.3.0rc1`。
+当前协议候选版本是 `0.3.0`，reference CLI 候选版本是 `0.3.0`。
 [RFC 0001](../rfcs/0001-v0.3-installation-control-plane.md) 已接受，其
 installation-control-plane core、schemas、claim/review、task reducer 和
 local-process adapter 已在 reference CLI 中落地。Runtime 支持范围仍以具体

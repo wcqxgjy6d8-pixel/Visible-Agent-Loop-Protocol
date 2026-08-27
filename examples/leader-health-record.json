@@ -1,0 +1,23 @@
+{
+  "schema_version": "valp-leader-health-record.v1",
+  "health_policy_id": "section20-leader-health-policy",
+  "leader_principal_id": "local-leader-a",
+  "leader_epoch": 1,
+  "attempts": [
+    {
+      "sequence": 1,
+      "result": "fail",
+      "process_status": "unavailable",
+      "evidence_ref": "health/attempt-1.json"
+    },
+    {
+      "sequence": 2,
+      "result": "fail",
+      "process_status": "unavailable",
+      "evidence_ref": "health/attempt-2.json"
+    }
+  ],
+  "policy_exhausted": true,
+  "recorded_at": "2026-08-27T08:07:24Z",
+  "record_digest": "sha256:f59bda3f12ae3dde060d0aedff7e25ea6201a80c049eebfb9250fc84da5e6217"
+}

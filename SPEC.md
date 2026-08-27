@@ -1332,6 +1332,14 @@ provision a fresh generation, and activate the next epoch only after new health
 proof succeeds. A failed replacement MUST NOT silently restore authority to an
 ambiguous or partially started session.
 
+Emergency rotation MUST also remain available after bounded health evidence
+transitions an active installation to `degraded`. The health failure is recorded
+as `leader_health_failed`; explicit approval of a different observed candidate
+records `emergency_leader_rotation_approved` and enters `rotating_leader`.
+Successful replacement health proof records `leader_rotation_completed`,
+activates the next Leader epoch, and fences every earlier epoch. A later message
+from a fenced epoch MUST fail with `VALP-E-LEADER-EPOCH` without mutating state.
+
 Every Agent session subsequently launched, assigned, or coordinated by the
 Leader is a Worker unless the user performs the explicit fenced Leader
 replacement operation above. This remains true for another session of the same

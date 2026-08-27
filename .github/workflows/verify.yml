@@ -46,16 +46,39 @@ jobs:
           PYTHON: python
         run: bash scripts/verify-examples.sh
 
+  section20:
+    name: Section 20 non-HERDR E2E
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Run the real non-HERDR release E2E
+        run: examples/langgraph-false-done/reproduce.sh
+
   smoke:
     name: Required smoke tests
-    needs: verify
+    needs:
+      - verify
+      - section20
     if: ${{ always() }}
     runs-on: ubuntu-latest
 
     steps:
-      - name: Fail unless the verify matrix succeeds
-        if: ${{ needs.verify.result != 'success' }}
+      - name: Fail unless verification and Section 20 E2E succeed
+        if: ${{ needs.verify.result != 'success' || needs.section20.result != 'success' }}
         run: exit 1
 
-      - name: Confirm verify matrix success
-        run: echo "All verify matrix jobs passed."
+      - name: Confirm required verification success
+        run: echo "All verify matrix jobs and the Section 20 E2E passed."

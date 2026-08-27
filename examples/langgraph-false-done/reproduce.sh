@@ -7,8 +7,9 @@ task_id="VALP-NON-HERDR-E2E-001"
 demo_port="${VALP_DEMO_PORT:-8124}"
 demo_workspace="$(mktemp -d "${TMPDIR:-/tmp}/valp-langgraph-repro.XXXXXX")"
 task_dir="$demo_workspace/.herdr-loop/tasks/$task_id"
-venv_dir="$case_dir/.venv-py312"
+venv_dir="${VALP_LANGGRAPH_VENV:-$case_dir/.venv-py312}"
 server_log="$demo_workspace/langgraph-server.log"
+section20_report="$demo_workspace/section20-runtime-report.json"
 server_pid=""
 
 stop_server() {
@@ -24,6 +25,9 @@ if [[ ! -x "$venv_dir/bin/langgraph" ]]; then
     echo "uv is required to create the Python 3.12 LangGraph environment" >&2
     exit 1
   fi
+  if [[ -e "$venv_dir" ]]; then
+    venv_dir="$demo_workspace/.venv-py312"
+  fi
   uv venv --python 3.12 "$venv_dir"
   uv pip install --python "$venv_dir/bin/python" -r "$case_dir/requirements.txt"
 fi
@@ -31,8 +35,12 @@ fi
 mkdir -p "$demo_workspace/.herdr-loop/tasks"
 cp -R "$case_dir/task" "$task_dir"
 "$repo_root/bin/valp" install init --workspace "$demo_workspace" >/dev/null
-"$repo_root/bin/valp" leader candidates --workspace "$demo_workspace" >/dev/null
-"$repo_root/bin/valp" leader select valp-reference-cli --workspace "$demo_workspace" >/dev/null
+python3 "$case_dir/installation_e2e.py" bootstrap \
+  --workspace "$demo_workspace" \
+  --report "$section20_report"
+python3 "$case_dir/installation_e2e.py" restart-and-rotate \
+  --workspace "$demo_workspace" \
+  --report "$section20_report"
 python3 - "$task_dir" <<'PY'
 import json
 import shutil
@@ -158,6 +166,9 @@ output_path.write_text(
     encoding="utf-8",
 )
 PY
+python3 "$case_dir/installation_e2e.py" block-task \
+  --workspace "$demo_workspace" \
+  --report "$section20_report"
 
 repair_json="$demo_workspace/repair.json"
 "$repo_root/bin/valp" adapter langgraph run "$task_id" \
@@ -245,11 +256,19 @@ if events != expected:
 print("receipt sequence PASS:", " -> ".join(events))
 ' "$task_dir/runtime/langgraph/receipts.v3.jsonl"
 
-"$repo_root/bin/valp" audit "$task_dir"
+final_audit="$demo_workspace/final-audit.txt"
+"$repo_root/bin/valp" audit "$task_dir" >"$final_audit"
+cat "$final_audit"
+python3 "$case_dir/installation_e2e.py" finalize \
+  --workspace "$demo_workspace" \
+  --task-dir "$task_dir" \
+  --audit-output "$final_audit" \
+  --report "$section20_report"
 
 echo "coordinator_run_id=$coordinator_run_id"
 echo "false_done_run_id=$first_run_id"
 echo "worker_thread_id=$thread_id"
 echo "repair_run_id=$repair_run_id"
 echo "review_run_id=$review_run_id"
+echo "section20_report=$section20_report"
 echo "reproduction_workspace=$demo_workspace"

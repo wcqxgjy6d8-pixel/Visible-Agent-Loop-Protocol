@@ -127,8 +127,11 @@ TRANSITION_CONTRACTS = {
     "leader_restart_requested": ("command.leader.restart", "human"),
     "leader_restart_rolled_back": ("result.leader.restart_rolled_back", "runtime-adapter"),
     "leader_activation_failed": ("result.leader.activation_failed", "runtime-adapter"),
+    "leader_health_failed": ("result.leader.health_failed", "runtime-adapter"),
     "leader_activated": ("event.leader.activated", "bootstrap-controller"),
     "leader_rotation_approved": ("command.leader.rotate", "human"),
+    "emergency_leader_rotation_approved": ("command.leader.rotate_emergency", "human"),
+    "leader_rotation_completed": ("event.leader.rotation_completed", "bootstrap-controller"),
     "capability_reconciliation_started": ("command.capabilities.reconcile", "installation-leader"),
     "capability_reconciliation_completed": ("result.capabilities.reconcile", "installation-leader"),
     "migration_apply_approved": ("command.protocol.migrate", "human"),
@@ -147,8 +150,11 @@ TRANSITION_TARGETS = {
     "leader_restart_requested": "restarting_leader",
     "leader_restart_rolled_back": "active",
     "leader_activation_failed": "blocked",
+    "leader_health_failed": "degraded",
     "leader_activated": "active",
     "leader_rotation_approved": "rotating_leader",
+    "emergency_leader_rotation_approved": "rotating_leader",
+    "leader_rotation_completed": "active",
     "capability_reconciliation_started": "reconciling_capabilities",
     "capability_reconciliation_completed": "active",
     "migration_apply_approved": "migrating",
@@ -161,6 +167,8 @@ TRANSITION_PAYLOAD_STATE_FIELDS = {
     "leader_selection_approved": {"selected_leader"},
     "leader_activated": {"active_leader", "active_leader_epoch"},
     "leader_rotation_approved": {"selected_leader"},
+    "emergency_leader_rotation_approved": {"selected_leader"},
+    "leader_rotation_completed": {"active_leader", "active_leader_epoch"},
     "capability_reconciliation_completed": {"registry_revision"},
 }
 
@@ -761,7 +769,7 @@ class InstallationCore:
                 "message": ["valp-message.v1"],
                 "event": ["valp-event.v1"],
             },
-            "required_core_message_kinds": sorted(BOOTSTRAP_READ_ONLY_KINDS | {"command.leader.select", "command.leader.start", "command.leader.recover_start", "command.leader.restart", "command.leader.rotate", "command.capabilities.reconcile"}),
+            "required_core_message_kinds": sorted(BOOTSTRAP_READ_ONLY_KINDS | {"command.leader.select", "command.leader.start", "command.leader.recover_start", "command.leader.restart", "command.leader.rotate", "command.leader.rotate_emergency", "command.capabilities.reconcile", "result.leader.health_failed"}),
             "enabled_extension_namespaces": [],
             "digest_algorithms": ["sha256"],
             "migration_paths": SUPPORTED_MIGRATION_PATHS,
@@ -1857,8 +1865,16 @@ class InstallationCore:
                 replaced_generation=prior_binding["generation"],
             )
         activated = self._transition(
-            event_kind="leader_activated",
-            message_kind="event.leader.activated",
+            event_kind=(
+                "leader_rotation_completed"
+                if rotating
+                else "leader_activated"
+            ),
+            message_kind=(
+                "event.leader.rotation_completed"
+                if rotating
+                else "event.leader.activated"
+            ),
             principal_id="bootstrap-controller",
             principal_kind="bootstrap-controller",
             epoch=0 if first_start else state["active_leader_epoch"],
@@ -1892,8 +1908,9 @@ class InstallationCore:
 
     def rotate_leader(self, principal_id: str) -> dict[str, Any]:
         state = self.state()
-        if state["status"] != "active":
-            raise ControlPlaneError("VALP-E-STATE-TRANSITION", "Leader rotation requires an active installation")
+        if state["status"] not in {"active", "degraded"}:
+            raise ControlPlaneError("VALP-E-STATE-TRANSITION", "Leader rotation requires an active or degraded installation")
+        emergency = state["status"] == "degraded"
         if principal_id == (state.get("active_leader") or {}).get("principal_id"):
             raise ControlPlaneError("VALP-E-PERMISSION-DENIED", "Replacement leader must be different")
         candidates = read_json(self._path("leader-candidates.json")).get("candidates") if self._path("leader-candidates.json").exists() else []
@@ -1938,8 +1955,16 @@ class InstallationCore:
             "runtime": candidate["runtime"],
         }
         rotating = self._transition(
-            event_kind="leader_rotation_approved",
-            message_kind="command.leader.rotate",
+            event_kind=(
+                "emergency_leader_rotation_approved"
+                if emergency
+                else "leader_rotation_approved"
+            ),
+            message_kind=(
+                "command.leader.rotate_emergency"
+                if emergency
+                else "command.leader.rotate"
+            ),
             principal_id="user",
             principal_kind="human",
             epoch=old_epoch,
@@ -1962,6 +1987,7 @@ class InstallationCore:
             "rotation": rotating,
             "proposed_leader_epoch": new_epoch,
             "generation": int(prior_binding["generation"]) + 1,
+            "emergency": emergency,
         }
 
     def reconcile_capabilities(self, observations: Iterable[dict[str, Any]]) -> dict[str, Any]:

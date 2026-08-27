@@ -1,0 +1,184 @@
+{
+  "schema_version": "valp-section20-runtime-report.v1",
+  "task_id": "VALP-NON-HERDR-E2E-001",
+  "adapter": "langgraph",
+  "herdr_used": false,
+  "installation_id": "inst-3d03235c58ac4fa4b393",
+  "bootstrap": {
+    "hello_schema": "valp-hello.v1",
+    "first_message_sequence": 1,
+    "selected_leader": "local-leader-a",
+    "active_epoch": 1,
+    "epoch_zero_rejection": "VALP-E-LEADER-EPOCH",
+    "plugin_manifest_digest": "sha256:94f501ca861e9565f9436ed64c95b07c8bf8afd675a7e7b1902ebda2f066469c",
+    "capability_registry_digest": "sha256:5d99975cf3ee1cad41526b2bb4bf2a9835c5aa098c69d959742f81532fca6baf",
+    "state_projection_digest": "sha256:9b4cbdb7a1cf3c10bdd65dfd19942cc699a960119b5770a8c5827189864ff6b5"
+  },
+  "checks": [
+    {
+      "id": 1,
+      "requirement": "fresh_installation",
+      "status": "pass",
+      "evidence_refs": [
+        ".valp/installation.json",
+        ".valp/state.json"
+      ]
+    },
+    {
+      "id": 2,
+      "requirement": "fixed_hello_exchange",
+      "status": "pass",
+      "evidence_refs": [
+        ".valp/protocol-manifest.json"
+      ]
+    },
+    {
+      "id": 3,
+      "requirement": "bootstrap_epoch_fencing",
+      "status": "pass",
+      "evidence_refs": [
+        ".valp/messages.jsonl",
+        ".valp/events.jsonl"
+      ]
+    },
+    {
+      "id": 4,
+      "requirement": "plugin_manifest_validation",
+      "status": "pass",
+      "evidence_refs": [
+        ".valp/plugins/section20-safe-discovery/manifest.json"
+      ]
+    },
+    {
+      "id": 5,
+      "requirement": "layered_capability_discovery",
+      "status": "pass",
+      "evidence_refs": [
+        ".valp/capability-registry.json",
+        ".valp/capability-observations.jsonl"
+      ]
+    },
+    {
+      "id": 6,
+      "requirement": "restart_projection_replay",
+      "status": "pass",
+      "evidence_refs": [
+        ".valp/state.json",
+        ".valp/capability-registry.json"
+      ]
+    },
+    {
+      "id": 7,
+      "requirement": "strict_task_lifecycle",
+      "status": "pass",
+      "evidence_refs": [
+        ".valp/tasks/VALP-NON-HERDR-E2E-001/events.jsonl"
+      ]
+    },
+    {
+      "id": 8,
+      "requirement": "real_adapter_submission",
+      "status": "pass",
+      "evidence_refs": [
+        ".herdr-loop/tasks/VALP-NON-HERDR-E2E-001/runtime/langgraph/receipts.v3.jsonl"
+      ]
+    },
+    {
+      "id": 9,
+      "requirement": "leader_outage_and_emergency_rotation",
+      "status": "pass",
+      "evidence_refs": [
+        ".valp/leader-health-policy.json",
+        ".valp/leader-health-record.json",
+        ".valp/leader-selections.jsonl"
+      ]
+    },
+    {
+      "id": 10,
+      "requirement": "deterministic_false_done_failure",
+      "status": "pass",
+      "evidence_refs": [
+        ".herdr-loop/tasks/VALP-NON-HERDR-E2E-001/evidence/first-failure-audit.md"
+      ]
+    },
+    {
+      "id": 11,
+      "requirement": "visible_recovery",
+      "status": "pass",
+      "evidence_refs": [
+        ".herdr-loop/tasks/VALP-NON-HERDR-E2E-001/correction-cycle.json"
+      ]
+    },
+    {
+      "id": 12,
+      "requirement": "digest_bound_claim",
+      "status": "pass",
+      "evidence_refs": [
+        ".valp/claims.jsonl",
+        ".valp/evidence-manifest.json"
+      ]
+    },
+    {
+      "id": 13,
+      "requirement": "independent_exact_digest_review",
+      "status": "pass",
+      "evidence_refs": [
+        ".valp/reviews.jsonl",
+        ".herdr-loop/tasks/VALP-NON-HERDR-E2E-001/agents/langgraph_reviewer/review.md"
+      ]
+    },
+    {
+      "id": 14,
+      "requirement": "approval_handling",
+      "status": "pass",
+      "evidence_refs": [
+        ".valp/leader-selections.jsonl",
+        ".herdr-loop/tasks/VALP-NON-HERDR-E2E-001/automation-policy.json"
+      ]
+    },
+    {
+      "id": 15,
+      "requirement": "final_synthesis_and_strict_audit",
+      "status": "pass",
+      "evidence_refs": [
+        ".herdr-loop/tasks/VALP-NON-HERDR-E2E-001/final-synthesis.md"
+      ]
+    },
+    {
+      "id": 16,
+      "requirement": "sanitized_reproduction_manifest",
+      "status": "pass",
+      "evidence_refs": [
+        "examples/langgraph-false-done/section20-runtime-report.json",
+        "examples/langgraph-false-done/reproduce.sh"
+      ]
+    }
+  ],
+  "restart_and_rotation": {
+    "state_digest_reproduced": true,
+    "registry_digest_reproduced": true,
+    "health_policy_digest": "sha256:50c8069c3d95e611a6d7dca917dfa33523fca6ea0656fc19caa3a35f2970a87a",
+    "health_record_digest": "sha256:f59bda3f12ae3dde060d0aedff7e25ea6201a80c049eebfb9250fc84da5e6217",
+    "replacement_leader": "local-leader-b",
+    "active_epoch": 2,
+    "stale_epoch_rejection": "VALP-E-LEADER-EPOCH"
+  },
+  "task_failure": {
+    "status": "blocked",
+    "failure_code": "missing_expected_evidence"
+  },
+  "task_completion": {
+    "control_task_status": "done",
+    "runtime_receipt_ref": ".herdr-loop/tasks/VALP-NON-HERDR-E2E-001/runtime/langgraph/receipts.v3.jsonl",
+    "verification_evidence_id": "evidence-cfa8b88ac31047e5abe3",
+    "verified_claim_id": "claim-904b093c8cd7486ab983",
+    "review_id": "review-f824c7ddd01640e3ab8b",
+    "reviewed_subject_digests": [
+      "sha256:c7cb218197644d575c45de2308ea2a93f7c5b13b174d82280371921f7b7f4632"
+    ],
+    "strict_audit": "pass",
+    "fail_count": 0
+  },
+  "completed_at": "2026-08-27T08:19:48Z",
+  "report_digest": "sha256:e60d2072ba198aaa0b272b52fb6b695ddfa3071e0d345015b38c6c0796b70a25"
+}

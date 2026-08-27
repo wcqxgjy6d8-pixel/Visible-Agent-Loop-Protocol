@@ -1,2 +1,2 @@
-langgraph>=1.2,<2
-langgraph-cli[inmem]>=0.4,<0.5
+langgraph==1.2.9
+langgraph-cli[inmem]==0.4.31

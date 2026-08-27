@@ -26,18 +26,42 @@ VALP 要求任务过程留下可审计的证据：
 
 所以 VALP 更像一个 acceptance system，而不是聊天提示词集合。
 
-## v0.3 Draft：从任务验收到安装级控制平面
+## 完整闭环
 
-当前发布版本仍是 `0.2.0`。
-[RFC 0001](../rfcs/0001-v0.3-installation-control-plane.md) 作为稳定版本仍未完成，
-但 installation-control-plane core、schemas、claim/review、task reducer 和
-local-process adapter 已在 reference CLI 中落地。不改变当前 Runtime 支持范围
-或稳定发布状态。
+```text
+Doctor 观察能力护照 -> 用户选择 Installation Leader -> 发布任务
+  -> Leader 声明 WorkItem 与 Agent 分工 -> VALP 验证并由 Adapter 绑定 Worker、可见派送
+  -> submission receipt -> Worker evidence -> completion receipt
+  -> 验证 -> 独立审查 -> 修复/复审 -> 建议处理 -> 审批
+  -> final synthesis + feedback -> valp audit -> PASS / WARN / FAIL
+  -> 独立受 gate 约束的任务状态 -> Done / Blocked / Failed
+  -> 可选 Task Graph（单任务、确定性、只读）
+```
 
-可以把变化理解成：`0.2.0` 主要检查“这个任务凭什么算 Done”，v0.3 提案
+完整时序见[可见工作流](../visual-flow.md)，图谱边界见
+[Task Graph 与 Ontology](../task-graph.md)。Task Graph 不能生成 proof，也不能
+改变 audit。Neo4j 不属于本候选版；下一版如采用，也只能作为读取现有 ledger 的
+可选 ontology 投影，不能成为路由、证据或审计权威。
+
+## 版本入口与兼容性
+
+当前使用版本线是 `v0.3.0`，可以从候选分支和精确 SHA 做明确评估。`v0.3` 的
+required checks、external review、merge、不可变 tag 和 release 仍是发布流程 gate；
+完成前，候选版本不是默认的公开安装入口。`v0.2.0` 只保留为旧运行复现与迁移来源；详细规则见
+[版本与兼容性](../versioning-and-compatibility.md)。
+
+## v0.3.0：从任务验收到安装级控制平面
+
+当前协议候选版本是 `0.3.0`，reference CLI 候选版本是 `0.3.0rc1`。
+[RFC 0001](../rfcs/0001-v0.3-installation-control-plane.md) 已接受，其
+installation-control-plane core、schemas、claim/review、task reducer 和
+local-process adapter 已在 reference CLI 中落地。Runtime 支持范围仍以具体
+adapter 证据为边界。
+
+可以把变化理解成：`0.2.0` 主要检查“这个任务凭什么算 Done”，`0.3.0`
 进一步检查“管理所有任务的安装级控制平面凭什么可信”。
 
-| 层面 | 当前 `0.2.0` | v0.3 Draft 实现 |
+| 层面 | `0.2.0` 任务层基线 | `0.3.0` 实现 |
 |---|---|---|
 | 控制主体 | 每个任务根据当前能力证据选择 coordinator | 用户明确选择 Installation Leader；确定性 core 和 epoch 负责约束与 fencing |
 | 能力真值 | 当前 scan、routing、provider matrix 和 task evidence | 持久 registry 分开记录 `official_claim`、`local_presence`、`live_callable`、`task_verified` |
@@ -49,11 +73,16 @@ local-process adapter 已在 reference CLI 中落地。不改变当前 Runtime �
 Leader；发现 CLI、Skill 或 MCP 不等于已经能调用；Runtime completed 仍不等于
 VALP Done；写完 RFC 更不等于功能已经发布。
 
-稳定 `0.3.0` 只有在 RFC 被接受并写入 `SPEC.md`、相关 schemas/reference
-behavior 已实现、重启和迁移等 conformance tests 通过，并补足跨 runtime
-continuation 与生产部署证明后才能成立。当前 LangGraph 本地开发 runtime 的
-公开脱敏 E2E 只证明该 adapter/runtime pair。请同时查看
-[当前项目状态](../project-status.md)，不要把 proposed target 当成当前证明。
+未来 `0.3.0` 的稳定称号只会覆盖协议与 reference CLI，不表示跨 runtime continuation
+或生产部署已经普遍成立。当前 LangGraph 开发 runtime 的公开脱敏 E2E 只证明
+该 adapter/runtime pair。请同时查看[当前项目状态](../project-status.md)，
+不要把局部证明扩张成通用平台承诺。
+
+对外完整性按证据包判断，不按愿景判断：协议、reference CLI、runtime adapter、
+Full Mode、跨重启 continuation、生产托管和平台支持分别需要自己的证据链。跨重启
+continuation 不仅需要完整到 `resume_consumed` 的 ledger，还需要在 provider 已消费、
+VALP 未落盘 receipt 之间注入崩溃后的重启对账与去重证据。缺少这些或独立生产运行证据时，
+公开文案只能声明已有的协议与审计能力，不能声明对应 runtime 或生产能力已经完成。
 
 ## 它不是什么
 
@@ -83,7 +112,7 @@ bin/valp audit examples/minimal-task
 
 ```text
 VALP audit: PASS
-Summary: pass=13 warn=0 fail=0
+Summary: pass=14 warn=0 fail=0
 ```
 
 再看这个演示：
@@ -105,6 +134,7 @@ Summary: pass=13 warn=0 fail=0
 | Audit | 用 `valp audit` 检查任务证据是否满足 Done Criteria |
 | Correction cycle | 退件、重试、blocked、invalid、superseded 后的修复闭环记录 |
 | Final synthesis | 最终总结，必须指出结果、决策、分歧和证据缺口 |
+| Task Graph | 单个任务的确定性只读视图；显示已有 receipt、evidence 与 audit 摘要，不是权威 |
 
 完整术语表见 [glossary.md](glossary.md)。
 

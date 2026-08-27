@@ -260,8 +260,8 @@ def _is_effectively_negated(prefix: str) -> bool:
     if re.search(
         r"\b(?:do not|don't|dont|never|refuse to|must not|should not|will not)\s+"
         r"(?:publish|create|prepare|make|perform|run|execute|deploy|submit|upload|"
-        r"change|modify|update|rotate|revoke|delete|remove)\s+"
-        r"(?:a|an|the|this|that|any|our|your)?$",
+        r"change|modify|update|rotate|revoke|delete|remove)"
+        r"(?:\s+(?:a|an|the|this|that|any|our|your))?$",
         normalized,
     ):
         return True

@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/adapter-abi.v1.json",
+  "title": "VALP Adapter ABI 1.0",
+  "oneOf": [
+    {"$ref": "#/$defs/manifest"},
+    {"$ref": "#/$defs/request"},
+    {"$ref": "#/$defs/observation"},
+    {"$ref": "#/$defs/policy"},
+    {"$ref": "#/$defs/assessment"}
+  ],
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "safeRef": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},
+    "operation": {"enum": ["probe", "submit", "observe", "cancel", "resume", "prove"]},
+    "proofKind": {"enum": ["process_bound", "content_bound", "manual_attested", "transport_only"]},
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "status"],
+      "properties": {
+        "operation": {"$ref": "#/$defs/operation"},
+        "status": {"enum": ["supported", "unsupported"]},
+        "reason": {"type": "string", "minLength": 1}
+      },
+      "if": {"properties": {"status": {"const": "unsupported"}}, "required": ["status"]},
+      "then": {"required": ["reason"]},
+      "else": {"not": {"required": ["reason"]}}
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "adapter_id", "adapter_class", "abi_version", "capabilities"],
+      "properties": {
+        "schema_version": {"const": "valp-adapter-manifest.v1"},
+        "adapter_id": {"type": "string", "minLength": 1},
+        "adapter_class": {"type": "string", "minLength": 1},
+        "abi_version": {"const": "1.0"},
+        "capabilities": {"type": "array", "minItems": 6, "maxItems": 6, "uniqueItems": true, "items": {"$ref": "#/$defs/capability"}}
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "request_id", "operation", "installation_id", "leader_epoch", "task_id", "work_item_id", "attempt_id", "dispatch_id", "dispatch_generation", "payload_digest", "expected_evidence_refs"],
+      "properties": {
+        "schema_version": {"const": "valp-adapter-request.v1"},
+        "request_id": {"type": "string", "minLength": 1},
+        "operation": {"$ref": "#/$defs/operation"},
+        "installation_id": {"type": "string", "minLength": 1},
+        "leader_epoch": {"type": "integer", "minimum": 0},
+        "task_id": {"type": "string", "minLength": 1},
+        "work_item_id": {"type": "string", "minLength": 1},
+        "attempt_id": {"type": "string", "minLength": 1},
+        "dispatch_id": {"type": "string", "minLength": 1},
+        "dispatch_generation": {"type": "integer", "minimum": 0},
+        "payload_digest": {"$ref": "#/$defs/digest"},
+        "expected_evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/safeRef"}}
+      }
+    },
+    "segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["segment_id", "sequence", "adapter_id", "abi_version", "input_identity", "input_digest", "output_identity", "output_digest", "proof_kind", "evidence_refs", "acknowledged"],
+      "properties": {
+        "segment_id": {"type": "string", "minLength": 1},
+        "sequence": {"type": "integer", "minimum": 0},
+        "adapter_id": {"type": "string", "minLength": 1},
+        "abi_version": {"const": "1.0"},
+        "input_identity": {"type": "string", "minLength": 1},
+        "input_digest": {"$ref": "#/$defs/digest"},
+        "output_identity": {"type": "string", "minLength": 1},
+        "output_digest": {"$ref": "#/$defs/digest"},
+        "proof_kind": {"$ref": "#/$defs/proofKind"},
+        "evidence_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/safeRef"}},
+        "acknowledged": {"type": "boolean"},
+        "failure_code": {"type": "string", "minLength": 1}
+      },
+      "if": {"properties": {"acknowledged": {"const": false}}, "required": ["acknowledged"]},
+      "then": {"required": ["failure_code"]},
+      "else": {"not": {"required": ["failure_code"]}}
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "observation_id", "request", "sequence", "status", "provenance", "evidence_refs"],
+      "properties": {
+        "schema_version": {"const": "valp-adapter-observation.v1"},
+        "observation_id": {"type": "string", "minLength": 1},
+        "request": {"$ref": "#/$defs/request"},
+        "sequence": {"type": "integer", "minimum": 0},
+        "status": {"enum": ["accepted", "waiting", "completed", "blocked", "cancelled", "unsupported"]},
+        "runtime_identity": {"type": "string", "minLength": 1},
+        "provenance": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/segment"}},
+        "evidence_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/safeRef"}},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "mode", "required_proof_kinds"],
+      "properties": {
+        "schema_version": {"const": "valp-composite-proof-policy.v1"},
+        "mode": {"enum": ["full", "remote", "manual"]},
+        "required_proof_kinds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/proofKind"}},
+        "remote_issuer": {"type": "string", "minLength": 1},
+        "remote_host": {"type": "string", "minLength": 1}
+      },
+      "if": {"properties": {"mode": {"const": "remote"}}, "required": ["mode"]},
+      "then": {"required": ["remote_issuer", "remote_host"]},
+      "else": {"not": {"anyOf": [{"required": ["remote_issuer"]}, {"required": ["remote_host"]}]}}
+    },
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "passed", "reasons"],
+      "properties": {
+        "schema_version": {"const": "valp-composite-proof-assessment.v1"},
+        "passed": {"type": "boolean"},
+        "reasons": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    }
+  }
+}

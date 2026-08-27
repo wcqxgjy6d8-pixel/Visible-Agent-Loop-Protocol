@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/repair-receipt.v1.json",
+  "title": "VALP Doctor Repair Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "receipt_id",
+    "receipt_digest",
+    "executed_at",
+    "plan_id",
+    "plan_digest",
+    "workspace",
+    "pre_state_digest",
+    "post_state_digest",
+    "status",
+    "action_results",
+    "verification",
+    "approval_binding",
+    "rollback",
+    "proof_certificate_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-repair-receipt.v1"},
+    "receipt_id": {"type": "string", "pattern": "^repair-receipt-[0-9a-f]{16}$"},
+    "receipt_digest": {"$ref": "#/$defs/digest"},
+    "executed_at": {"type": "string", "format": "date-time"},
+    "plan_id": {"type": "string", "pattern": "^repair-[0-9a-f]{16}$"},
+    "plan_digest": {"$ref": "#/$defs/digest"},
+    "workspace": {"type": "string", "minLength": 1},
+    "pre_state_digest": {"$ref": "#/$defs/digest"},
+    "post_state_digest": {"$ref": "#/$defs/digest"},
+    "status": {"enum": ["fixed", "blocked", "failed", "rolled_back"]},
+    "action_results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action_id", "kind", "status", "attempts", "result"],
+        "properties": {
+          "action_id": {"type": "string", "pattern": "^action-[1-9][0-9]*$"},
+          "kind": {"enum": ["doctor.recheck"]},
+          "status": {"enum": ["fixed", "blocked", "failed", "rolled_back"]},
+          "attempts": {"const": 1},
+          "result": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "verifier", "resolved", "unresolved"],
+      "properties": {
+        "status": {"enum": ["pass", "fail"]},
+        "verifier": {"const": "valp.doctor"},
+        "resolved": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+        "unresolved": {"type": "array", "items": {"$ref": "#/$defs/claim"}}
+      }
+    },
+    "approval_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {"status": {"const": "not_required"}}
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": {"const": "not_required"},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "proof_certificate_digest": {
+      "oneOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "fixed"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "verification": {
+            "properties": {
+              "status": {"const": "pass"},
+              "resolved": {"minItems": 1},
+              "unresolved": {"maxItems": 0}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "subject"],
+      "properties": {
+        "code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]+$"},
+        "subject": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

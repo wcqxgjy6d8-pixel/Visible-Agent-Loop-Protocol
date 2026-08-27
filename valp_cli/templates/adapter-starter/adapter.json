@@ -1,14 +1,14 @@
 {
-  "schema_version": "valp-runtime-adapter.v1",
+  "schema_version": "valp-adapter-manifest.v1",
   "adapter_id": "{{adapter_name}}",
-  "entrypoint": "adapter.py",
-  "capabilities": {
-    "runtime_submission_id": "required",
-    "submission_proof": "required",
-    "runtime_state": "required",
-    "output_and_evidence_refs": "required",
-    "failure_reason": "required",
-    "restart_or_replay_identity": "required",
-    "non_terminal_wait_timeout": "required"
-  }
+  "adapter_class": "external_runtime",
+  "abi_version": "1.0",
+  "capabilities": [
+    {"operation": "probe", "status": "supported"},
+    {"operation": "submit", "status": "supported"},
+    {"operation": "observe", "status": "supported"},
+    {"operation": "cancel", "status": "unsupported", "reason": "starter runtime cancellation is not implemented"},
+    {"operation": "resume", "status": "supported"},
+    {"operation": "prove", "status": "supported"}
+  ]
 }

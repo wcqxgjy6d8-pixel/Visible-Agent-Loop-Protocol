@@ -13,6 +13,19 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .control_plane import write_json
+from .adapter_abi import (
+    ABI_VERSION,
+    AdapterCapability,
+    AdapterManifest,
+    AdapterObservation,
+    AdapterOperation,
+    AdapterRequest,
+    AdapterStatus,
+    CapabilityStatus,
+    ProofKind,
+    ProvenanceSegment,
+    validate_observation,
+)
 from .protocol_receipts import (
     ApprovalBinding,
     ProofBinding,
@@ -33,6 +46,123 @@ DEFAULT_API_URL = "http://127.0.0.1:8123"
 
 class LangGraphAdapterError(RuntimeError):
     pass
+
+
+def langgraph_adapter_manifest() -> AdapterManifest:
+    return AdapterManifest(
+        "langgraph",
+        "hosted_local_platform",
+        ABI_VERSION,
+        tuple(
+            AdapterCapability(operation, CapabilityStatus.SUPPORTED)
+            for operation in AdapterOperation
+        ),
+    )
+
+
+def _abi_request(submission: dict[str, Any], operation: AdapterOperation) -> AdapterRequest:
+    return AdapterRequest(
+        request_id=digest({
+            "adapter_id": "langgraph",
+            "operation": operation.value,
+            "task_id": submission["task_id"],
+            "attempt_id": submission["attempt_id"],
+            "payload_digest": submission["payload_digest"],
+        }),
+        operation=operation,
+        installation_id=str(submission["installation_id"]),
+        leader_epoch=int(submission["leader_epoch"]),
+        task_id=str(submission["task_id"]),
+        work_item_id=str(submission["work_item_id"]),
+        attempt_id=str(submission["attempt_id"]),
+        dispatch_id=str(submission["dispatch_id"]),
+        dispatch_generation=int(submission["dispatch_generation"]),
+        payload_digest=str(submission["payload_digest"]),
+        expected_evidence_refs=tuple(str(ref) for ref in submission.get("expected_refs") or []),
+    )
+
+
+def langgraph_abi_observation(
+    submission: dict[str, Any],
+    operation: AdapterOperation,
+    status: AdapterStatus,
+    *,
+    receipt: dict[str, Any] | None = None,
+    evidence_refs: list[str] | None = None,
+) -> AdapterObservation:
+    request = _abi_request(submission, operation)
+    provenance = []
+    if receipt is not None:
+        bindings = {
+            str(item.get("proof_kind")): item
+            for item in receipt.get("proof_bindings") or []
+            if isinstance(item, dict)
+        }
+        process = bindings.get("process_bound")
+        content = bindings.get("content_bound")
+        if not isinstance(process, dict) or not isinstance(content, dict):
+            raise LangGraphAdapterError("LangGraph ABI observation requires process and content proof")
+        provenance = [
+            ProvenanceSegment(
+                segment_id=f"{receipt['receipt_id']}:process",
+                sequence=0,
+                adapter_id="langgraph",
+                abi_version=ABI_VERSION,
+                input_identity=request.request_id,
+                input_digest=request.payload_digest,
+                output_identity=str(submission["attempt_id"]),
+                output_digest=str(process["proof_digest"]),
+                proof_kind=ProofKind.PROCESS_BOUND,
+                evidence_refs=(str(process["proof_ref"]),),
+                acknowledged=True,
+            ),
+            ProvenanceSegment(
+                segment_id=f"{receipt['receipt_id']}:content",
+                sequence=1,
+                adapter_id="langgraph",
+                abi_version=ABI_VERSION,
+                input_identity=str(submission["attempt_id"]),
+                input_digest=str(process["proof_digest"]),
+                output_identity=str(receipt["receipt_id"]),
+                output_digest=str(content["proof_digest"]),
+                proof_kind=ProofKind.CONTENT_BOUND,
+                evidence_refs=(str(content["proof_ref"]),),
+                acknowledged=True,
+            ),
+        ]
+    observation = AdapterObservation(
+        observation_id=digest({
+            "request_id": request.request_id,
+            "status": status.value,
+            "receipt_id": receipt.get("receipt_id") if receipt else None,
+        }),
+        request=request,
+        sequence=int(receipt.get("ledger_revision", 0)) if receipt else 0,
+        status=status,
+        runtime_identity=str(submission["run_id"]),
+        provenance=tuple(provenance),
+        evidence_refs=tuple(evidence_refs or []),
+    )
+    validate_observation(langgraph_adapter_manifest(), observation)
+    return observation
+
+
+def _write_abi_observation(
+    directory: Path,
+    submission: dict[str, Any],
+    observation: AdapterObservation,
+) -> None:
+    run_directory = directory / "runtime" / "langgraph" / str(submission["run_id"])
+    write_json(run_directory / f"abi-{observation.request.operation.value}.json", observation.canonical())
+    write_json(
+        directory / "runtime" / "langgraph" / "abi-adoption.json",
+        {
+            "schema_version": "valp-adapter-abi-adoption.v1",
+            "adapter_id": "langgraph",
+            "abi_version": ABI_VERSION,
+            "manifest": langgraph_adapter_manifest().canonical(),
+        },
+    )
 
 
 def _api_url(value: str | None = None) -> str:
@@ -207,7 +337,18 @@ def submit_langgraph_run(
             submission_record = prior_intent.get("submission")
             if prior_intent.get("status") != "accepted" or not isinstance(submission_record, dict):
                 raise LangGraphAdapterError("LangGraph submission intent has an unsupported state")
-            _append_receipt(directory, submission_record, "dispatch_submitted", proof=prior_intent["proof"])
+            submitted_receipt = _append_receipt(
+                directory, submission_record, "dispatch_submitted", proof=prior_intent["proof"])
+            _write_abi_observation(
+                directory,
+                submission_record,
+                langgraph_abi_observation(
+                    submission_record,
+                    AdapterOperation.SUBMIT,
+                    AdapterStatus.ACCEPTED,
+                    receipt=submitted_receipt,
+                ),
+            )
             return _wait_for_run(
                 directory,
                 submission_record,
@@ -300,7 +441,18 @@ def submit_langgraph_run(
             "proof": proof,
         },
     )
-    _append_receipt(directory, submission_record, "dispatch_submitted", proof=proof)
+    submitted_receipt = _append_receipt(
+        directory, submission_record, "dispatch_submitted", proof=proof)
+    _write_abi_observation(
+        directory,
+        submission_record,
+        langgraph_abi_observation(
+            submission_record,
+            AdapterOperation.SUBMIT,
+            AdapterStatus.ACCEPTED,
+            receipt=submitted_receipt,
+        ),
+    )
     return _wait_for_run(
         directory,
         submission_record,
@@ -343,6 +495,172 @@ def resume_langgraph_run(
     )
 
 
+def _cancel_obligation_payload(obligation: str) -> dict[str, Any]:
+    prefix = "adapter_cancel:"
+    if not isinstance(obligation, str) or not obligation.startswith(prefix):
+        raise LangGraphAdapterError("LangGraph cancellation obligation is malformed")
+    try:
+        payload = json.loads(obligation[len(prefix):])
+    except json.JSONDecodeError as error:
+        raise LangGraphAdapterError("LangGraph cancellation obligation is malformed") from error
+    if not isinstance(payload, dict) or set(payload) != {
+        "task_id", "work_item_id", "attempt_id", "dispatch_id", "dispatch_generation",
+    }:
+        raise LangGraphAdapterError("LangGraph cancellation obligation is incomplete")
+    return payload
+
+
+def cancel_langgraph_run(
+    workspace: Path,
+    task_id: str,
+    run_id: str,
+    *,
+    obligation: str,
+    wait_seconds: float = 10.0,
+    poll_interval_seconds: float = 0.1,
+) -> dict[str, Any]:
+    """Execute one accepted Kernel cancellation obligation against LangGraph."""
+
+    _validate_wait_window(wait_seconds, poll_interval_seconds)
+    directory = _task_directory(workspace, task_id)
+    installation_id, leader_epoch = _reference_identity(workspace, directory, task_id)
+    _require_unmixed_v3_ledger(directory)
+    submission_path = directory / "runtime" / "langgraph" / run_id / "submission.json"
+    try:
+        submission = json.loads(submission_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise LangGraphAdapterError(f"Cannot load LangGraph submission {run_id}: {error}") from error
+    expected = {
+        "task_id": task_id,
+        "work_item_id": submission.get("work_item_id"),
+        "attempt_id": submission.get("attempt_id"),
+        "dispatch_id": submission.get("dispatch_id"),
+        "dispatch_generation": submission.get("dispatch_generation"),
+    }
+    if (
+        submission.get("task_id") != task_id
+        or submission.get("run_id") != run_id
+        or submission.get("installation_id") != installation_id
+        or submission.get("leader_epoch") != leader_epoch
+        or submission.get("attempt_id") != f"langgraph:{run_id}"
+        or _cancel_obligation_payload(obligation) != expected
+    ):
+        raise LangGraphAdapterError("LangGraph cancellation obligation does not match submission identity")
+    _load_validated_v3_ledger(directory, installation_id, leader_epoch, task_id)
+
+    run_directory = directory / "runtime" / "langgraph" / run_id
+    proof_path = run_directory / "cancellation-proof.json"
+    proof_ref = proof_path.relative_to(directory).as_posix()
+    if proof_path.is_file():
+        try:
+            prior = json.loads(proof_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise LangGraphAdapterError("LangGraph cancellation proof is malformed") from error
+        prior_body = {key: value for key, value in prior.items() if key != "proof_digest"}
+        if (
+            prior.get("schema_version") != "valp-adapter-cancellation-proof.v1"
+            or prior.get("adapter_id") != "langgraph"
+            or prior.get("obligation") != obligation
+            or prior.get("proof_digest") != digest(prior_body)
+        ):
+            raise LangGraphAdapterError("LangGraph cancellation proof conflicts")
+        observation_path = run_directory / "abi-cancel.json"
+        try:
+            observation = json.loads(observation_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise LangGraphAdapterError("LangGraph cancellation ABI observation is missing") from error
+        return {
+            "status": "cancelled",
+            "run_ref": f"runtime/langgraph/{run_id}",
+            "proof_ref": proof_ref,
+            "proof": prior,
+            "observation": observation,
+        }
+
+    endpoint = str(submission["api_url"])
+    thread_id = str(submission["thread_id"])
+    run_path = f"/threads/{thread_id}/runs/{run_id}"
+    current = _request(endpoint, "GET", run_path)
+    current_status = str((current or {}).get("status") or "unknown")
+    if current_status in TERMINAL_RUN_STATUSES:
+        raise LangGraphAdapterError(
+            f"LangGraph run is already terminal and cannot prove cancellation: {current_status}"
+        )
+    response = _request(endpoint, "POST", run_path + "/cancel")
+    deadline = time.monotonic() + wait_seconds
+    terminal: dict[str, Any] = {}
+    while True:
+        value = _request(endpoint, "GET", run_path)
+        terminal = value if isinstance(value, dict) else {}
+        if terminal.get("status") == "interrupted":
+            break
+        if terminal.get("status") in TERMINAL_RUN_STATUSES or time.monotonic() >= deadline:
+            raise LangGraphAdapterError(
+                "LangGraph cancellation was not confirmed by an interrupted terminal observation"
+            )
+        time.sleep(max(0.01, poll_interval_seconds))
+
+    proof = {
+        "schema_version": "valp-adapter-cancellation-proof.v1",
+        "adapter_id": "langgraph",
+        "abi_version": ABI_VERSION,
+        "task_id": task_id,
+        "work_item_id": str(submission["work_item_id"]),
+        "attempt_id": str(submission["attempt_id"]),
+        "dispatch_id": str(submission["dispatch_id"]),
+        "dispatch_generation": int(submission["dispatch_generation"]),
+        "obligation": obligation,
+        "runtime_identity": {
+            "thread_id": thread_id,
+            "run_id": run_id,
+        },
+        "pre_cancel_status": current_status,
+        "provider_response_digest": digest(response),
+        "terminal_observation_digest": digest(terminal),
+        "terminal_status": "interrupted",
+        "acknowledged": True,
+    }
+    proof["proof_digest"] = digest(proof)
+    write_json(proof_path, proof)
+
+    request = _abi_request(submission, AdapterOperation.CANCEL)
+    segment = ProvenanceSegment(
+        segment_id=f"{request.request_id}:cancel",
+        sequence=0,
+        adapter_id="langgraph",
+        abi_version=ABI_VERSION,
+        input_identity=request.request_id,
+        input_digest=request.payload_digest,
+        output_identity=f"langgraph:{thread_id}:{run_id}:interrupted",
+        output_digest=str(proof["proof_digest"]),
+        proof_kind=ProofKind.PROCESS_BOUND,
+        evidence_refs=(proof_ref,),
+        acknowledged=True,
+    )
+    observation = AdapterObservation(
+        observation_id=digest({
+            "request_id": request.request_id,
+            "operation": "cancel",
+            "proof_digest": proof["proof_digest"],
+        }),
+        request=request,
+        sequence=1,
+        status=AdapterStatus.CANCELLED,
+        runtime_identity=f"{thread_id}:{run_id}:interrupted",
+        provenance=(segment,),
+        evidence_refs=(proof_ref,),
+    )
+    validate_observation(langgraph_adapter_manifest(), observation)
+    _write_abi_observation(directory, submission, observation)
+    return {
+        "status": "cancelled",
+        "run_ref": f"runtime/langgraph/{run_id}",
+        "proof_ref": proof_ref,
+        "proof": proof,
+        "observation": dict(observation.canonical()),
+    }
+
+
 def _wait_for_run(
     directory: Path,
     submission: dict[str, Any],
@@ -374,6 +692,15 @@ def _wait_for_run(
                 "observed_at": _now_iso(),
             }
             write_json(directory / "runtime" / "langgraph" / run_id / "run.json", waiting)
+            _write_abi_observation(
+                directory,
+                submission,
+                langgraph_abi_observation(
+                    submission,
+                    AdapterOperation.OBSERVE,
+                    AdapterStatus.WAITING,
+                ),
+            )
             return {"status": "waiting", "run": waiting, "run_ref": f"runtime/langgraph/{run_id}"}
         time.sleep(max(0.01, poll_interval_seconds))
 
@@ -433,6 +760,22 @@ def _wait_for_run(
         common_proof["failure_reason"] = terminal_record["failure_reason"]
         common_proof["missing_refs"] = missing_refs
         receipt = _append_receipt(directory, submission, "dispatch_blocked", proof=common_proof)
+    abi_status = (
+        AdapterStatus.COMPLETED
+        if terminal_record["status"] == "completed"
+        else AdapterStatus.BLOCKED
+    )
+    _write_abi_observation(
+        directory,
+        submission,
+        langgraph_abi_observation(
+            submission,
+            AdapterOperation.OBSERVE,
+            abi_status,
+            receipt=receipt,
+            evidence_refs=refs if abi_status == AdapterStatus.COMPLETED else [],
+        ),
+    )
     return {
         "status": terminal_record["status"],
         "run": terminal_record,

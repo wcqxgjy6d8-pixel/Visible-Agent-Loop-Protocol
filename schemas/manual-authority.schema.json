@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:valp:schema:manual-authority:v1",
+  "title": "VALP Manual Authority Declaration",
+  "type": "object",
+  "required": ["schema_version", "task_id", "authority", "allowed_actions", "issued_by", "statement"],
+  "properties": {
+    "schema_version": {"const": "valp-manual-authority.v1"},
+    "task_id": {"type": "string", "minLength": 1},
+    "authority": {"type": "string", "minLength": 1},
+    "allowed_actions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"enum": ["manual_delivery_attested", "manual_result_attested", "manual_blocked", "revoke", "adjudicate"]}
+    },
+    "issued_by": {"type": "string", "minLength": 1},
+    "statement": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

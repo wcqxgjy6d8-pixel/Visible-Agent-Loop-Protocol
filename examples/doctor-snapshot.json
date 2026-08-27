@@ -1,0 +1,32 @@
+{
+  "schema_version": "valp-doctor-snapshot.v1",
+  "snapshot_digest": "sha256:2e8e84c37f0deaa49973fa7494af129d5f25afdcd3a38f36bd7682768a7a6bd3",
+  "issued_at": "2026-08-26T10:00:00Z",
+  "expires_at": "2026-08-26T10:05:00Z",
+  "requested_ttl_seconds": 300,
+  "effective_ttl_seconds": 300,
+  "reuse_eligible": true,
+  "ineligible_reasons": [],
+  "workspace": "example-workspace",
+  "dependency_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "report_digest": "sha256:2926f0fbb7f5cdb32d4e37931a73469f338ec0088f0fe9b31e270d3e74a08640",
+  "report": {
+    "workspace": "example-workspace",
+    "generated_at": "2026-08-26T10:00:00Z",
+    "status": "pass",
+    "pass_count": 1,
+    "warn_count": 0,
+    "fail_count": 0,
+    "checks": [
+      {
+        "id": "runtime_manual",
+        "title": "Manual runtime adapter is available",
+        "status": "pass",
+        "message": "Manual Mode is always available.",
+        "evidence": [],
+        "suggestion": null
+      }
+    ],
+    "capability_passports": []
+  }
+}

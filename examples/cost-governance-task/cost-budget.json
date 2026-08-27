@@ -1,0 +1,1 @@
+{"schema_version":"valp-cost-budget.v1","task_id":"TASK-COST-001","max_projected_official_list":"10.00","planned_usage":[{"agent":"example-agent","snapshot_id":"example-20260809","input_tokens":100000,"output_tokens":0}]}

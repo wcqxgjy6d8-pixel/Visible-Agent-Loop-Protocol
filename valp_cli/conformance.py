@@ -12,10 +12,49 @@ from .task_control import init_task, task_state, transition_task
 from .process_adapter import run_process
 
 
+# RFC 0001 section 19.1 requires claims by profile.  These are deliberately
+# distinct: a successful writer run is not evidence that a plugin host or
+# migration implementation conforms.
+PROFILE_REQUIRED_CHECKS: dict[str, tuple[str, ...]] = {
+    "core-reader": (
+        "fixed-hello",
+        "event-replay-digest",
+    ),
+    "core-writer": (
+        "bootstrap-selection-epoch",
+        "bootstrap-epoch-fencing",
+        "revision-cas",
+        "capability-layered-registry",
+        "content-addressed-claim-review",
+        "task-done-gate-reducer",
+        "non-herdr-process-adapter",
+    ),
+    "plugin-host": (
+        "plugin-boundary",
+    ),
+    "migration": (
+        "legacy-migration-dry-run",
+    ),
+}
+
+UNIMPLEMENTED_RFC_PROFILES = (
+    "manual-mode",
+    "full-mode-adapter",
+    "remote-mode-adapter",
+)
+
+
 def run_conformance(profile: str = "core-writer") -> dict[str, Any]:
+    if profile not in PROFILE_REQUIRED_CHECKS:
+        supported = ", ".join(PROFILE_REQUIRED_CHECKS)
+        raise ValueError(f"unsupported conformance profile {profile!r}; supported profiles: {supported}")
+
     checks: list[dict[str, Any]] = []
+    required_checks = PROFILE_REQUIRED_CHECKS[profile]
 
     def check(name: str, operation: Callable[[], None]) -> None:
+        if name not in required_checks:
+            return
         try:
             operation()
         except Exception as error:  # conformance output must record the exact failed check
@@ -87,7 +126,13 @@ def run_conformance(profile: str = "core-writer") -> dict[str, Any]:
             assert core.state()["status"] == "active"
             assert core.state()["active_leader_epoch"] == 1
 
-        check("bootstrap-selection-epoch", setup)
+        # All profile fixtures need a valid isolated installation.  For the
+        # writer profile bootstrap is itself a required behavior; elsewhere it
+        # remains fixture setup rather than a profile claim.
+        if "bootstrap-selection-epoch" in required_checks:
+            check("bootstrap-selection-epoch", setup)
+        else:
+            setup()
 
         def hello() -> None:
             response = InstallationCore(root).hello("YWJjMTIz")
@@ -197,7 +242,7 @@ def run_conformance(profile: str = "core-writer") -> dict[str, Any]:
             assert state["revision"] == core.state()["revision"]
             event_path = root / "events.jsonl"
             original = event_path.read_text(encoding="utf-8")
-            event_path.write_text(original.replace('"event_kind": "capability_reconciliation_completed"', '"event_kind": "tampered"', 1), encoding="utf-8")
+            event_path.write_text(original.replace('"event_kind": "leader_activated"', '"event_kind": "tampered"', 1), encoding="utf-8")
             try:
                 core.replay()
             except ControlPlaneError as error:
@@ -214,8 +259,8 @@ def run_conformance(profile: str = "core-writer") -> dict[str, Any]:
                 "plugin_id": "safe-discovery",
                 "implementation_id": "test-plugin",
                 "plugin_kind": "discovery",
-                "protocol_read_versions": ["0.3.0-draft"],
-                "protocol_write_versions": ["0.3.0-draft"],
+                "protocol_read_versions": ["0.3.0"],
+                "protocol_write_versions": ["0.3.0"],
                 "entrypoint": "test.plugin:run",
                 "permissions": ["capability.observe"],
                 "provided_capabilities": ["coordination"],
@@ -252,6 +297,14 @@ def run_conformance(profile: str = "core-writer") -> dict[str, Any]:
         "schema_version": "valp-conformance-report.v1",
         "profile": profile,
         "implementation_id": "valp-reference-cli",
+        "claim_scope": "reference-smoke",
+        "conformance_claim": False,
+        "unimplemented_rfc_profiles": list(UNIMPLEMENTED_RFC_PROFILES),
+        "limitations": [
+            "PASS covers only the required_checks listed in this report.",
+            "It is not a complete RFC 0001 Section 19 profile conformance claim.",
+        ],
+        "required_checks": list(required_checks),
         "checks": checks,
         "pass_count": passed,
         "fail_count": failed,

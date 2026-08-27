@@ -3,12 +3,17 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 from tests.schema_helpers import schema_validator
-from valp_cli.audit import FAIL, TaskAudit
-from valp_cli.model_identity import model_aware_provider_errors, model_identity_for
+from valp_cli.audit import FAIL, PASS, TaskAudit
+from valp_cli.model_identity import (
+    model_aware_provider_errors,
+    model_aware_role_errors,
+    model_identity_for,
+)
 from valp_cli.workflow import (
     collect_herdr_preflight,
     collect_queue_preflight,
@@ -63,7 +68,7 @@ class ModelAwareRoutingTests(unittest.TestCase):
         self.assertEqual(probe["status"], "unsupported")
         self.assertEqual(probe["model"]["model_id"], "unknown")
 
-    def test_herdr_preflight_emits_supported_model_probe_from_pane_metadata(self) -> None:
+    def test_herdr_preflight_consumes_public_model_probe_instead_of_pane_metadata(self) -> None:
         def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
             if command[1:] == ["agent", "--help"]:
                 return {
@@ -97,9 +102,9 @@ class ModelAwareRoutingTests(unittest.TestCase):
                                 "pane_id": "pane-7",
                                 "terminal_id": "terminal-9",
                                 "generation": 4,
-                                "model_id": "model-live",
-                                "provider": "provider-live",
-                                "reasoning_mode": "high",
+                                "model_id": "pane-spoofed",
+                                "provider": "pane-spoofed",
+                                "reasoning_mode": "pane-spoofed",
                             }
                         ]
                     }
@@ -115,6 +120,57 @@ class ModelAwareRoutingTests(unittest.TestCase):
                                 }
                             ]
                         }
+                    }
+                }
+            elif command[1:3] == ["agent", "readiness"]:
+                payload = {
+                    "result": {
+                        "type": "agent_readiness",
+                        "readiness": {
+                            "schema_version": "valp-named-agent-readiness.v1",
+                            "ready": True,
+                            "reason_code": "ready",
+                            "addressable": True,
+                            "detected_agent": "codex",
+                            "agent_status": "idle",
+                            "interactive_ready": True,
+                            "prompt_eligible": True,
+                            "session_identity": {
+                                "status": "known",
+                                "identity": {
+                                    "source": "herdr:codex",
+                                    "agent": "codex",
+                                    "kind": "id",
+                                    "value": "session:1234",
+                                },
+                            },
+                            "state_change_seq": 1,
+                        },
+                    }
+                }
+            elif command[1:3] == ["agent", "model-probe"]:
+                payload = {
+                    "result": {
+                        "type": "agent_model_probe",
+                        "probe": {
+                            "schema_version": "valp-model-probe.v1",
+                            "status": "observed",
+                            "source": "herdr:codex",
+                            "observed_at": datetime.now(timezone.utc).isoformat(),
+                            "ttl_seconds": 3600,
+                            "model": {
+                                "model_id": "model-live",
+                                "provider": "provider-live",
+                                "reasoning_mode": "high",
+                                "confidence": "high",
+                            },
+                            "session_identity": {
+                                "status": "known",
+                                "token": "sha256:session",
+                                "source": "herdr:codex",
+                                "generation": "session:1234",
+                            },
+                        },
                     }
                 }
             else:
@@ -140,7 +196,7 @@ class ModelAwareRoutingTests(unittest.TestCase):
                 )
 
         probe = preflight["agents"]["codex"]["model_probe"]
-        self.assertEqual(preflight["status"], "pass")
+        self.assertEqual(preflight["status"], "pass", preflight)
         self.assertEqual(probe["status"], "observed")
         self.assertEqual(probe["model"]["model_id"], "model-live")
         self.assertEqual(probe["session_identity"]["status"], "known")
@@ -205,11 +261,11 @@ class ModelAwareRoutingTests(unittest.TestCase):
                 preflight = collect_herdr_preflight(["codex"])
 
         probe = preflight["agents"]["codex"]["model_probe"]
-        self.assertEqual(probe["status"], "unsupported")
-        self.assertEqual(probe["model"]["model_id"], "unknown")
-        self.assertEqual(probe["session_identity"]["status"], "known")
+        self.assertEqual(probe["status"], "unavailable")
+        self.assertIsNone(probe["model"])
+        self.assertIsNone(probe["session_identity"])
 
-    def test_herdr_preflight_session_token_changes_with_foreground_process(self) -> None:
+    def test_herdr_preflight_does_not_derive_session_identity_from_process_changes(self) -> None:
         foreground_pid = 4321
 
         def fake_run(command: list[str], **_kwargs: object) -> dict[str, object]:
@@ -277,10 +333,11 @@ class ModelAwareRoutingTests(unittest.TestCase):
                 foreground_pid = 9876
                 second = collect_herdr_preflight(["codex"])
 
-        first_token = first["agents"]["codex"]["model_probe"]["session_identity"]["token"]
-        second_token = second["agents"]["codex"]["model_probe"]["session_identity"]["token"]
+        first_probe = first["agents"]["codex"]["model_probe"]
+        second_probe = second["agents"]["codex"]["model_probe"]
         serialized = json.dumps([first, second])
-        self.assertNotEqual(first_token, second_token)
+        self.assertEqual(first_probe["status"], "unavailable")
+        self.assertEqual(second_probe["status"], "unavailable")
         self.assertNotIn("4321", serialized)
         self.assertNotIn("9876", serialized)
 
@@ -1173,6 +1230,76 @@ class ModelAwareRoutingTests(unittest.TestCase):
         errors = model_aware_provider_errors(matrix)
 
         self.assertTrue(any("history binding fingerprint" in error for error in errors), errors)
+
+    def test_audit_uses_recorded_done_time_for_model_probe_freshness(self) -> None:
+        probe = {
+            "schema_version": "valp-model-probe.v1",
+            "status": "observed",
+            "source": "test adapter metadata",
+            "observed_at": "2026-07-15T12:00:00Z",
+            "ttl_seconds": 3600,
+            "model": {
+                "model_id": "model-a",
+                "provider": "provider-a",
+                "reasoning_mode": "high",
+                "confidence": "high",
+            },
+            "session_identity": {
+                "status": "known",
+                "token": "sha256:session-a",
+                "source": "test adapter generation",
+                "generation": "7",
+            },
+        }
+        identity = model_identity_for(
+            "codex",
+            {"model_identity": {"declared_model": {**probe["model"]}}},
+            {},
+            runtime_probe=probe,
+            evaluated_at="2026-07-15T12:01:00Z",
+        )
+        matrix = {
+            "model_awareness": {
+                "required": True,
+                "dynamic_discovery_required": True,
+                "status": "strong",
+            },
+            "providers": {"codex": {"model_selection": "observed_model", "model_identity": identity}},
+        }
+        routing = {"role_assignments": {"implementer": "codex"}, "provider_matrix": matrix}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp)
+            (task / "routing.json").write_text(json.dumps(routing), encoding="utf-8")
+            (task / "state.json").write_text(
+                json.dumps({"status": "done", "updated_at": "2026-07-15T12:02:00Z"}),
+                encoding="utf-8",
+            )
+            self.assertEqual(TaskAudit(task).check_provider_matrix().status, PASS)
+            self.assertEqual(
+                model_aware_role_errors(
+                    matrix,
+                    {"reviewer": "codex"},
+                    evaluated_at="2026-07-15T12:02:00Z",
+                ),
+                [],
+            )
+            self.assertIn(
+                "reviewer:codex",
+                " ".join(
+                    model_aware_role_errors(
+                        matrix,
+                        {"reviewer": "codex"},
+                        evaluated_at="2026-07-15T14:00:00Z",
+                    )
+                ),
+            )
+
+            (task / "state.json").write_text(json.dumps({"status": "dispatching"}), encoding="utf-8")
+            result = TaskAudit(task).check_provider_matrix()
+
+        self.assertEqual(result.status, FAIL)
+        self.assertIn("freshness", result.message)
 
     def test_iteration_budget_allows_three_fix_review_rounds(self) -> None:
         from valp_cli.workflow import iteration_budget_for

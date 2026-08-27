@@ -20,6 +20,10 @@ bin/valp doctor --workspace /path/to/Visible-Agent-Loop-Protocol --json
 bin/valp doctor --workspace /path/to/Visible-Agent-Loop-Protocol --report ./valp-doctor-report.md
 bin/valp doctor --workspace /path/to/Visible-Agent-Loop-Protocol --report desktop
 bin/valp doctor --workspace /path/to/Visible-Agent-Loop-Protocol --task TASK-001
+bin/valp doctor --workspace /path/to/Visible-Agent-Loop-Protocol --snapshot doctor-snapshot.json --snapshot-ttl 300
+bin/valp remediate plan --workspace /path/to/Visible-Agent-Loop-Protocol --output repair-plan.json
+bin/valp remediate apply repair-plan.json --workspace /path/to/Visible-Agent-Loop-Protocol --receipt repair-receipt.json
+bin/valp remediate verify repair-receipt.json --workspace /path/to/Visible-Agent-Loop-Protocol
 ```
 
 `--report desktop` is an explicit convenience alias. The CLI does not write to a
@@ -56,6 +60,11 @@ local_presence  -> installed surface, version, and local source
 live_callable   -> current runtime/session probe
 task_verified   -> passed task history bound to this exact model and session
 ```
+
+The commissioned set is the union of registry entries, local overlay profiles,
+and runtime-discovered surfaces. Doctor must not silently omit an overlay-only
+or live runtime surface merely because the static registry is stale. Facts that
+the discovering source did not prove remain `unknown`.
 
 Each passport records:
 
@@ -108,6 +117,108 @@ that discovered capability facts were recorded. It does not mean the scan found
 every possible Agent, that every passport is eligible for every role, or that a
 live runtime task has completed.
 
+## Evidence-Driven Recovery
+
+Recovery keeps observation, planning, and execution separate:
+
+```text
+Doctor Observer
+  -> dependency and observation fingerprints
+  -> explicit diagnostics
+  -> ranked root-cause hypotheses
+Recovery Planner
+  -> predicted changes and unchanged invariants
+  -> typed actions, postconditions, and stop conditions
+Repair Executor
+  -> one bounded attempt
+  -> fresh Doctor verification
+  -> repair receipt and optional proof certificate
+```
+
+`valp remediate plan` always starts from a fresh Doctor report. The resulting
+`valp-repair-plan.v1` artifact is canonical and digest-bound. A ready plan may
+contain only the closed reference action `doctor.recheck`, which is a read-only
+fresh observation intended to resolve transient runtime, stale model,
+session-identity, or callability evidence. The reference executor rejects
+arbitrary commands, changed workspace fingerprints, more than one attempt,
+mutation surfaces, non-low risk actions, and approval-gated plans.
+
+A ready recheck plan may also list protected findings. In that case
+`approval.deferred_mutation_required` is true: the read-only recheck itself does
+not need approval, but any later persistent-state repair still does. If the
+workspace dependency fingerprint changes while the recheck is running, the
+receipt records `COUNTERFACTUAL_DIVERGENCE`, remains blocked, and issues no
+proof.
+
+Persistent source, installation, task-audit, Git, Auth, Agent configuration, or
+MCP configuration findings produce an approval-required or blocked plan. They
+are not silently repaired. A protected repair requires a separately scoped
+configuration task and prior approval bound to the exact target and action
+digest. The current reference executor deliberately does not implement that
+mutation path.
+
+When the recheck resolves every targeted diagnostic, the executor writes a
+`valp-repair-receipt.v1` artifact and a short-lived
+`valp-doctor-proof-certificate.v1` artifact. The certificate binds the resolved
+claims to the post-state digest, dependency fingerprint, verifier, plan, and
+TTL. `valp remediate verify` reruns Doctor and reports `regressed` if a proved
+diagnostic returns.
+
+### Recovery Kernel
+
+`valp remediate recovery-plan` creates an approval-gated plan for a versioned
+MCP process resource; it does not restart anything. The sole mutable reference
+action is `mcp.process.restart` through an injected provider boundary. L2
+approval carries an external approver identity/reference, issue/expiry times,
+and exact plan/action digests; it is L2 authority, not an executor-generated
+permission. The plan requires a provider rollback contract and stores only the
+rollback token digest. Source identity and local dependency evidence are
+distinct. A recovery-dir kill-switch is checked before and under the exclusive
+lock. Immutable intent and receipt writes fsync their parent directory. An
+intent without a receipt is `unknown`, not permission to retry; receipt replay
+revalidates receipt, plan, action, and approval bindings. Dry-run never calls
+the provider and creates neither intent nor executable receipt. Failed
+independent verification attempts rollback and records `full`, `partial`, or
+`failed`; a positive result still requires bounded-TTL Doctor verification.
+
+If the provider call itself raises, the receipt remains `unknown`; rollback is
+not guessed because the external effect was not classified as a failed
+independent verification. Only a verified post-call failure enters the declared
+rollback path.
+
+This first reference action is intentionally narrow. Runtime or plugin adapters
+may later add typed repair actions only when they declare an input schema,
+ownership proof, risk, timeout, deterministic verifier, idempotency behavior,
+and rollback contract. They cannot add free-form model-generated shell text.
+
+Snapshot reuse is explicit opt-in. With `--snapshot`, Doctor stores the full
+report in a digest-protected `valp-doctor-snapshot.v1` envelope. A later run may
+reuse it only before expiry and only when the workspace and dependency
+fingerprint are unchanged. Failed reports and reports containing transient,
+callability, session-identity, model-mismatch, or freshness diagnostics are not
+reused. Snapshot expiry is also capped by the earliest bound model-observation
+expiry. A digest mismatch, changed dependency, different workspace, stricter
+TTL policy, or expired TTL forces a fresh scan and replaces the snapshot. Task
+audits always require fresh task evidence, so `--snapshot` and `--task` cannot be
+combined. The default invocation without `--snapshot` remains a fresh scan.
+
+Schemas and examples:
+
+```text
+schemas/repair-plan.schema.json
+schemas/repair-receipt.schema.json
+schemas/doctor-proof-certificate.schema.json
+schemas/doctor-snapshot.schema.json
+schemas/recovery-plan.schema.json
+schemas/recovery-approval.schema.json
+schemas/recovery-intent.schema.json
+schemas/recovery-receipt.schema.json
+examples/repair-plan.json
+examples/repair-receipt.json
+examples/doctor-proof-certificate.json
+examples/doctor-snapshot.json
+```
+
 ## Status
 
 | Status | Meaning |
@@ -138,6 +249,10 @@ Doctor must not:
 - infer an observed model from a configured default or another Agent surface;
 - submit, publish, deploy, release, upload, or fetch from the network;
 - treat a runtime's internal "completed" state as VALP completion.
+
+The Recovery Planner and Repair Executor must not use Doctor as a way around
+these restrictions. Repair receipts prove only the named recovery claims; they
+do not prove task completion or authorize protected live-surface mutation.
 
 Use `valp audit` for task evidence gates. Use code review and verification
 evidence for semantic correctness. Doctor reports workspace health and

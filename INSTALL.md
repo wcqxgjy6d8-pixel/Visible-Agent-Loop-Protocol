@@ -37,6 +37,13 @@ includes its HERDR bridge, so clean installs do not need a separate
 `herdr-loop` command. HERDR itself remains an external reference runtime and is
 not installed or replaced by VALP.
 
+For the `0.3.0rc1` candidate, the exact-SHA source checkout or release source
+archive is the complete protocol distribution. It contains `SPEC.md`, schemas,
+docs, examples, tests, and the reference CLI. A Python wheel is a CLI-only
+artifact and does not replace that protocol bundle. Installed wheel provenance
+is recorded as `unavailable` rather than inventing a Git revision; the release
+manifest must bind the wheel digest to the reviewed source SHA.
+
 ## First Run Health Gate
 
 The first action after installing VALP should be diagnosis, not dispatch. This

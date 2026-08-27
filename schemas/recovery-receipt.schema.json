@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/recovery-receipt.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "receipt_id", "receipt_digest", "executed_at", "plan_id", "plan_digest", "action_digest", "authority", "approval_binding", "status", "effect", "verification", "rollback", "proof_expires_at"],
+  "properties": {
+    "schema_version": {"const": "valp-recovery-receipt.v1"},
+    "receipt_id": {"type": "string", "pattern": "^recovery-receipt-[0-9a-f]{16}$"},
+    "receipt_digest": {"$ref": "#/$defs/digest"},
+    "executed_at": {"type": "string", "format": "date-time"},
+    "plan_id": {"type": "string", "pattern": "^recovery-[0-9a-f]{16}$"},
+    "plan_digest": {"$ref": "#/$defs/digest"}, "action_digest": {"$ref": "#/$defs/digest"},
+    "authority": {"type": "object", "additionalProperties": false, "required": ["mcp.process"], "properties": {"mcp.process": {"const": "L2"}}},
+    "approval_binding": {"type": "object", "additionalProperties": false, "required": ["approval_id", "approval_ref", "approval_digest"], "properties": {"approval_id": {"type": "string", "minLength": 1}, "approval_ref": {"type": "string", "minLength": 1}, "approval_digest": {"$ref": "#/$defs/digest"}}},
+    "status": {"enum": ["fixed", "blocked", "unknown"]},
+    "effect": {"type": "object"}, "verification": {"type": "object"}, "rollback": {"type": "object", "required": ["status"], "properties": {"status": {"enum": ["not_required", "full", "partial", "failed", "unknown"]}}},
+    "proof_expires_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}
+}

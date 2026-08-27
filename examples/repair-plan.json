@@ -1,0 +1,82 @@
+{
+  "schema_version": "valp-repair-plan.v1",
+  "plan_id": "repair-1111111111111111",
+  "plan_digest": "sha256:8c079a7dc338bb158662dfad176dfc9533683c974f9a71297de127f302cf9460",
+  "generated_at": "2026-08-26T10:00:00Z",
+  "workspace": "example-workspace",
+  "workspace_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "pre_state_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "status": "ready",
+  "risk_classification": "low",
+  "selected_strategy": "bounded_recheck_then_stop",
+  "diagnostics": [
+    {
+      "diagnostic_id": "agent:example:session-identity",
+      "code": "SESSION_IDENTITY_UNKNOWN",
+      "severity": "warn",
+      "subject": "agent:example",
+      "observed_status": "unknown",
+      "repairability": "bounded_recheck",
+      "evidence": ["runtime session identity unavailable"]
+    }
+  ],
+  "hypotheses": [
+    {
+      "hypothesis_id": "agent:example:session-identity:h1",
+      "diagnostic_id": "agent:example:session-identity",
+      "cause_code": "TRANSIENT_OR_STALE_OBSERVATION",
+      "confidence": 0.6,
+      "subject": "agent:example",
+      "evidence": ["runtime session identity unavailable"],
+      "next_probe": "doctor.recheck"
+    },
+    {
+      "hypothesis_id": "agent:example:session-identity:h2",
+      "diagnostic_id": "agent:example:session-identity",
+      "cause_code": "PERSISTENT_BINDING_OR_RUNTIME_DRIFT",
+      "confidence": 0.3,
+      "subject": "agent:example",
+      "evidence": ["runtime session identity unavailable"],
+      "next_probe": "operator.inspect-config"
+    },
+    {
+      "hypothesis_id": "agent:example:session-identity:h3",
+      "diagnostic_id": "agent:example:session-identity",
+      "cause_code": "UNSUPPORTED_RUNTIME_CAPABILITY",
+      "confidence": 0.1,
+      "subject": "agent:example",
+      "evidence": ["runtime session identity unavailable"],
+      "next_probe": "operator.inspect-adapter"
+    }
+  ],
+  "actions": [
+    {
+      "action_id": "action-1",
+      "kind": "doctor.recheck",
+      "risk": "low",
+      "target": "current-workspace",
+      "mutation_surface": "none",
+      "preconditions": ["workspace fingerprint matches plan", "action remains read-only"],
+      "expected_changed": ["agent:example:session-identity"],
+      "must_remain_unchanged": ["agent_config", "auth", "mcp_config", "task_evidence"],
+      "postconditions": ["diagnostic_resolved:SESSION_IDENTITY_UNKNOWN:agent:example"],
+      "timeout_seconds": 30,
+      "max_attempts": 1,
+      "reversible": true,
+      "verification_strength": "deterministic"
+    }
+  ],
+  "approval": {
+    "required": false,
+    "status": "not_required",
+    "deferred_mutation_required": false,
+    "protected_categories": []
+  },
+  "stop_conditions": [
+    "workspace fingerprint changed",
+    "action is not in the closed reference vocabulary",
+    "postcondition remains unresolved",
+    "protected mutation is required",
+    "observed state diverges outside the counterfactual contract"
+  ]
+}

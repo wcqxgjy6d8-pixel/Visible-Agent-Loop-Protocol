@@ -1,15 +1,13 @@
 # RFC 0002: VALP Layered Architecture
 
-Status: Draft; based on frozen Blueprint 0001 layered-architecture semantics
+Status: Accepted semantics for the VALP `0.3.0` release candidate
 
-Target: VALP 0.3 design line
+Target: VALP `0.3.0`
 
 Created: 2026-07-29
 
-Source basis: frozen-source provenance carried from Blueprint 0001. The source
-artifacts and artifact manifest are not distributed in this repository, so the
-metadata below is traceability context, not locally reproducible verification
-evidence.
+Source basis: the public decisions and contracts in this RFC, `SPEC.md`, schemas,
+and tests. Private design artifacts are not normative protocol inputs.
 
 ## 1. Abstract
 
@@ -35,38 +33,23 @@ and runtime proof belong in separate acceptance artifacts.
 
 ## 2. Status And Normative Language
 
-This RFC is a draft and does not change the stable `0.2.0` protocol or release.
-Selected `0.3.0-draft` schemas and Reference System CLI slices are incorporated
-in the current candidate through reviewed changes; they remain non-stable and
-do not imply complete Kernel, Adapter, platform, or production conformance.
+This RFC's semantics are accepted for the `0.3.0` protocol candidate. Its
+schemas and Reference System slices are incorporated through reviewed changes.
+Acceptance does not close stable-version, Kernel, Adapter, platform, or
+production conformance beyond the evidence in the project status matrix.
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are normative.
 
-## 3. Frozen Source Provenance
+## 3. Public Provenance Boundary
 
-The semantics in this document were derived from four frozen Blueprint 0001
-artifacts. Their SHA-256 digests and byte sizes were recorded during the source
-review. They cannot be re-verified from this public repository because neither
-the artifacts nor their manifest are included here.
+The public normative lineage is this RFC, `SPEC.md`, the referenced schemas,
+and executable tests. Historical private design material is intentionally
+excluded because an external implementer cannot inspect or reproduce it. No
+undistributed artifact digest is needed to interpret or implement this RFC.
 
-Blueprint 0001 is a design-source identifier only. It is not
-[RFC 0001: VALP v0.3 Installation Control Plane](0001-v0.3-installation-control-plane.md),
-which is the public RFC 0001 in this repository. This RFC is the public
-layered-architecture RFC 0002.
-
-| Artifact | SHA-256 digest | Size |
-|---|---|---|
-| `AGENT-DECISION-LEDGER.md` | `6ef30a36a78065490275a230451eea799ecd596d007550fc4abadda0d2c69159` | 17693 bytes |
-| `RFC-0001-LAYERED-ARCHITECTURE.md` | `75aa3739c48be35daa74638c1afc13c88b167c9d5b350c4d4855cba11b96f30a` | 31556 bytes |
-| `CORE-CONTRACTS.md` | `5a7a3e45c129bbd2ea4f4ba2425269c337cb239610486ea7ec6c07164a82ee4a` | 29946 bytes |
-| `ACCEPTANCE-PLAN.md` | `15c7a8be062f2d31e9e9ca082d6933ff3d9a99e4cac464da44250f417d71168b` | 15919 bytes |
-
-Input artifact digests:
-
-- Architecture preview:
-  `f5565273d646981cce3dfe2225b04f3b2774b5333bf55db9cdc55b74582ccef8`
-- Leader synthesis report:
-  `97115cada60f2c76efc4fbce0a58715ad458b7adfec899f13e0eda0b3337294d`
+[RFC 0001: VALP v0.3 Installation Control Plane](0001-v0.3-installation-control-plane.md)
+is the separate public installation-control-plane RFC. This document is the
+public layered-architecture RFC 0002.
 
 ## 4. Design Decision Traceability
 
@@ -174,7 +157,7 @@ network, allocate an external identity, inspect a UI, or perform a side effect.
 Time, runtime status, content digests, and identity observations enter as typed
 Events and Evidence created by the System or Adapter.
 
-For the `0.3.0-draft` Kernel contracts, canonical JSON bytes use UTF-8, sorted
+For the `0.3.0` Kernel contracts, canonical JSON bytes use UTF-8, sorted
 object keys, no insignificant whitespace, declared protocol array order,
 Evidence-set ordering by each Evidence canonical byte representation, unescaped
 non-ASCII UTF-8, no non-finite numbers, and one trailing LF byte. Digests are
@@ -233,6 +216,13 @@ runtime segments. Each segment MUST append its own provenance record. The final
 claim requires every proof kind and segment declared by its policy. A missing
 kind or a transport-only segment limits the claim even when another segment is
 strong.
+
+The bounded ABI 1.0 implementation freezes the six-operation capability table,
+typed request and observation envelopes, closed proof kinds, contiguous
+Composite provenance chain, and mode-specific proof assessment. LangGraph,
+atomic HERDR, Queue acceptance, and Manual Mode have explicit task-local
+adoption paths. Each additional runtime still requires its own adoption and
+conformance evidence; a runtime name never inherits conformance automatically.
 
 ### 5.5 Layer 04: External Runtime And Ecosystem
 
@@ -364,6 +354,16 @@ control to the Leader. It does not satisfy missing evidence or completion gates.
 versioned intent change. Work that no longer applies is cancelled, superseded,
 or moved to a scoped follow-up; it is not erased.
 
+The bounded Stage 3 control implementation makes these rules executable in the
+pure Kernel. Cancellation binds the principal, authority Evidence, closed
+reason, exact scope, target generation, and active suspension epoch when Task
+cancellation crosses a wait. Submitted or running work emits a deterministic
+Adapter cancellation obligation. Interrupt freezes ordinary progression until
+an identity-bound resume Event is accepted. Redirect requires exactly the next
+intent version, cancels the named Work Items, preserves immutable history, and
+returns the Task to `fixing`. Replay verifies the accepted Results but never
+re-emits an Adapter effect.
+
 ## 10. Dependency And Partial-Result Semantics
 
 Dependency edges are `hard` (failure blocks dependent), `soft` (failure permits
@@ -436,7 +436,7 @@ The following versions evolve independently (D10):
 |---|---|---|
 | Blueprint | `RFC-0001/1.x` | `1.0` defines Protocol `0.3` |
 | Protocol | `>=0.3.0,<0.4.0` | Semantic changes require version bump |
-| Protocol 0.2 compatibility input | `0.2.0-draft` | Read-only through declared compatibility |
+| Protocol 0.2 compatibility input | `0.2.0` | Read-only through declared compatibility |
 | State schema | read v1/v2; write v3 | Migration preserves original bytes |
 | Receipt schema | read legacy/v2; write v3 | Old receipts remain historical |
 | New core schemas | `v1` | Start at v1 |
@@ -550,9 +550,10 @@ revocation, conflict handling, audit evidence, and operations that are never
 leaseable. This follow-up is not required for the first Kernel slice and cannot
 weaken current approval gates.
 
-Interrupt and Redirect Event contracts are required before Stage 3
-human-intervention work. Budget Record contracts are also deferred to Stage 3.
-Neither area is implementation-authorized by RFC prose alone.
+The bounded authority-bound Cancel, Interrupt, and Redirect Event contracts are
+implemented by the pure Kernel and durable journal. Budget Record contracts
+remain deferred to later Stage 3 work. RFC prose alone does not authorize
+broader budget or provider-specific control behavior.
 
 The Phase 1 structural Checkpoint Root contract binds State, State digest,
 identity tuple, revision, accepted-entry count, prefix digest, tail bindings,
@@ -561,9 +562,13 @@ Stage 2 pure-Kernel path: an independently supplied canonical trust policy,
 identity-bound Evidence over the canonical checkpoint statement, exact accepted
 tail Result/State verification, and reducer-recomputed suffix replay with zero
 emitted obligations. A bare or self-asserted non-zero State remains invalid.
-This is local Layer 02 correctness evidence; it does not implement checkpoint
-storage, effect reconciliation, wait/wake, Adapter continuation, or runtime
-recovery.
+This is local Layer 02 correctness evidence. The subsequent bounded Reference
+System slice adds a locked canonical Kernel journal, authenticated checkpoint
+envelope persistence, exact-prefix validation, and restart suffix recovery.
+The adopted runtime slice binds that journal to ABI 1.0 LangGraph, atomic
+HERDR, Queue, and Manual paths. A local subprocess runtime now proves approved
+provider continuation plus status-only crash reconciliation; HERDR and
+production-provider continuation remain external runtime proof gates.
 
 MVP-B implements the closed Layer 02 Task transition graph for the 13 Kernel
 truth statuses. Its typed Event contract covers the forward, fix/redispatch,
@@ -572,19 +577,28 @@ edges; `done`, `failed`, and `cancelled` are terminal. The first bounded Stage
 2 pure-Kernel slice adds Work Item and Attempt graphs, dependency-gated
 eligibility, identity/generation binding, and Attempt fencing. MVP-H adds
 authenticated Checkpoint Root suffix replay at the same pure-Kernel boundary.
-These slices do not implement wait/wake semantics, checkpoint persistence,
-effect recovery, or Adapter adoption.
+The subsequent bounded Stage 2 slice adds an independent `Suspension` machine,
+closed `waiting`/`resumed` states, exact suspension epoch and Wait Policy
+binding, and Kernel-computed `dependency_ready` wake from the bound Work Item
+frontier. Its accepted start/wake Events preserve Task `executing`, emit no
+obligations, and replay with exact canonical Result equality. Later bounded
+slices add authority-bound cancellation, Interrupt, versioned Redirect,
+checkpoint persistence, a digest-chained Adapter-effect ledger with strict
+reconciliation, and explicit Adapter adoption. Local subprocess continuation
+consumption is now covered with provider-owned status reconciliation;
+provider-specific exception wake breadth, HERDR continuation, and production
+provider hosting remain outside this local machine-contract proof.
 
 ## 19. Acceptance Criteria
 
-This RFC is ready for implementation only when:
+This RFC's implementation acceptance criteria are:
 
 - all five resolved decisions remain visibly closed;
 - an independent Reviewer checks the exact RFC digest;
 - core entities, `ReplayEntry`, legal replay roots, and transition rules have
-  machine-contract drafts;
+  machine contracts;
 - State, status enums, all three Result variants, and the four-dimensional
-  evaluation boundary have machine-contract drafts and negative tests;
+  evaluation boundary have machine contracts and negative tests;
 - replay tests prove reducer re-execution, complete canonical Result equality,
   zero re-emitted obligations, and rejection of malformed genesis/checkpoint
   roots and impossible revision/history combinations;

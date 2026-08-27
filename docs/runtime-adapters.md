@@ -121,10 +121,46 @@ bindings, receipts, and failed-attempt evidence. A present old pane or an
 implicit capability change still fails closed.
 
 Freshly launched workers may publish structured active-model metadata after the
-session itself is addressable. The bridge performs a bounded read-only
-readiness observation before the dispatch-time model gate. Unstructured pane or
-footer text is not model evidence. A timeout may be rechecked once for the same
-owned binding; an observed wrong or ineligible model remains fail-closed.
+session itself is addressable. A task-owned provisioning receipt may record an
+explicit, unambiguous launch selection as `launch_attested`, with freshness
+anchored to its immutable provisioning time. That attestation is not
+`runtime_observed` and cannot satisfy the dispatch-time model gate. The bridge
+performs a bounded read-only runtime observation before that gate. Unstructured
+pane or footer text, product-name inference, and inferred launch defaults are
+not model evidence. A timeout may be rechecked once for the same owned binding;
+an observed wrong or ineligible model remains fail-closed.
+
+For a fresh Codex session whose structured readiness is exactly
+`session_identity_unknown`, the HERDR adapter may issue the one-time non-task
+bootstrap probe defined by the specification. The bootstrap input gives the
+Worker the exact task directory and requires any relative
+`control_contract_ref` to resolve from that directory before the response. Its
+response matcher is closed to the bare `BOOTSTRAP_READY` line, the Codex
+renderer's exact list-marker form `• BOOTSTRAP_READY`, and the Claude renderer's
+exact action-marker form `⏺ BOOTSTRAP_READY`. All three normalize to the bare
+protocol response. The matcher is anchored to the whole unwrapped line,
+requires HERDR's concrete `matched_line`, scans the bounded pre-probe snapshot
+through the same normalizer, and rejects prompt text, arbitrary markers,
+whitespace variants, or additional text. The recorded raw line and renderer
+envelope are response-only proof; native identity and model still require
+their structured HERDR reports. HERDR binds those reports with
+`token = sha256(native_session_id)` and
+`generation = "session:" + sha256(native_session_id)[:16]`; both derived
+fields must match exactly before VALP accepts the model observation.
+
+For a fresh task-owned Claude session, HERDR may already report a known native
+session while its model probe remains `unsupported` until the first completed
+turn. The adapter may use the same control-contract-first non-task probe only
+for that exact state. It must preserve the pre-probe native session across the
+turn and accept model/provider/reasoning only from the resulting structured,
+session-bound model observation. An already-observed, unavailable, stale, or
+session-changing result fails closed.
+
+Formal delivery receipts are scoped to the task-owned Agent binding
+generation. Receipts from an earlier generation or phase remain immutable
+history and do not block bootstrap of a new generation. A current-generation
+receipt, or a same-Agent receipt without an unambiguous binding generation,
+fails closed.
 
 If that readiness recheck exhausts before structured metadata arrives, the same
 public dispatch command may reconcile late metadata without spending another
@@ -291,6 +327,22 @@ Trigger adapters should write:
 Watcher support is optional. A runtime that cannot export trigger evidence is
 not implementing Auto Visible Mode, even if it starts agents automatically.
 
+For a watcher source, the runtime persists a deduplication identity derived
+from the source event and matched rule. A byte-identical repeat returns the
+same task result without republishing; a changed event under that identity is a
+conflict. High-risk events can create visible task evidence, but their action
+is recorded as `block_for_approval` until approval is present.
+
+The reference HERDR source adapter exposes this behavior through
+`HerdrAutoVisibleWatcher`. Its watcher evidence includes `task_id`,
+`source_event_id`, `matched_signal`, `rule_ref`, `approval_required`, and the
+digest-shaped `deduplication_identity`. An identity-scoped atomic lock covers
+the record check, publication, and record commit, so concurrent identical
+events cannot publish twice. A stranded lock is indeterminate and fails closed
+instead of republishing. This is a source implementation, not
+evidence that a background watcher is installed or active in a particular
+HERDR installation.
+
 ## Full Mode Requirements
 
 A Full Mode adapter must export:
@@ -451,9 +503,19 @@ The adapter must map runtime queue states into VALP:
 | running | maps to `executing` |
 | completed | maps to `dispatch_completed` only after expected evidence exists |
 | failed | maps to `failed` or `blocked` with reason |
-| cancelled | maps to `cancelled` |
+| cancellation_requested | remains pending until the exact claimed worker acknowledges |
+| cancelled | maps to ABI `cancelled` only from unclaimed CAS cancellation or exact worker acknowledgement |
 
 Queue success is not enough. VALP still requires evidence.
+
+The reference Queue runtime stores an append-only, digest-chained lifecycle at
+`runtime/queue/lifecycle.v1.jsonl`. Claim and cancellation share one
+cross-process lock and revision frontier. A queued item can be claimed or
+cancelled, never both. Once claimed, cancellation is two-phase: the controller
+records `cancellation_requested`, and only the exact worker/run, claim token,
+and claim event can acknowledge `cancelled`. Terminal worker observations use
+`valp-queue-worker-observation.v2` and must cite that same claim. Completion,
+blocking, and cancellation acknowledgement race on the same CAS frontier.
 
 Daemon adapters use the shared cross-adapter suspended-wait contract above. A
 queue wakeup is not completion proof.
@@ -493,11 +555,24 @@ bin/valp route TASK-QUEUE --workspace /path/to/workspace \
   --assignments /path/to/assignment-declaration.json --runtime queue
 bin/valp preflight --runtime queue --agent codex --json
 bin/valp dispatch TASK-QUEUE --workspace /path/to/workspace --runtime queue
+
+valp adapter queue claim TASK-QUEUE --workspace /path/to/workspace \
+  --agent AGENT --role ROLE --attempt-id ATTEMPT_ID \
+  --worker-id WORKER --run-id RUN --claim-token TOKEN --expected-revision 0
+
+valp adapter queue cancel TASK-QUEUE --workspace /path/to/workspace \
+  --agent AGENT --role ROLE --attempt-id ATTEMPT_ID \
+  --authority PRINCIPAL --reason REASON --expected-revision 1
+
+valp adapter queue ack-cancel TASK-QUEUE --workspace /path/to/workspace \
+  --agent AGENT --role ROLE --attempt-id ATTEMPT_ID \
+  --worker-id WORKER --run-id RUN --claim-token TOKEN \
+  --claim-event-id EVENT_ID --expected-revision 2
 ```
 
-The reference queue path writes queue-shaped records only. It does not replace a
-real queue worker, and it does not turn `dispatch_submitted` into completion.
-Completion still requires `dispatch_completed` receipts and expected evidence.
+The reference queue path does not replace a real queue worker, and it does not
+turn `dispatch_submitted` into completion. Completion still requires a
+claim-bound terminal observation, `dispatch_completed`, and expected Evidence.
 
 ## Hosted Or Local Platform Adapter
 
@@ -555,10 +630,36 @@ invocation. Post-commit `unknown_or_committed` outcomes are reconciled by strict
 reread; uncertainty never causes another LangGraph run submission. Dependency
 prerequisites are checked from the v3 ledger before runtime invocation.
 
-HERDR, Queue, Manual Mode, and workflow observation/recovery writers remain on
-their existing legacy/v2 compatibility paths. No in-place migration is executed
-and this adoption does not prove production hosting, sudden-power-loss
-durability, hostile-writer safety, or Windows parity.
+The LangGraph Adapter also implements ABI 1.0 `cancel`. The Reference System
+effect executor accepts only a cancellation obligation already present in the
+durable Kernel journal, resolves it to one exact LangGraph submission, and
+requires explicit approval before calling the provider cancellation endpoint.
+It then requires a later `interrupted` run observation, writes
+`valp-adapter-cancellation-proof.v1`, emits a `cancelled` ABI observation, and
+records the exact proof bytes in the Kernel effect ledger. Exact retry returns
+the prior fulfilled record without another provider call. Task-scoped
+reconciliation re-reads the proof and fails closed if its bytes no longer match
+the recorded digest:
+
+```bash
+valp kernel effects execute TASK_ID \
+  --obligation 'adapter_cancel:{...}' \
+  --workspace ROOT
+
+valp kernel effects execute TASK_ID \
+  --obligation 'adapter_cancel:{...}' \
+  --approve \
+  --workspace ROOT
+```
+
+HERDR, Queue, and Manual Mode now have separate task-local ABI 1.0 and v3
+adoption paths. Queue cancellation is supported by the reference lifecycle
+ledger and worker acknowledgement contract. HERDR cancellation remains
+unsupported without an atomic runtime operation, and Manual revocation is not
+runtime cancellation. Transport or queue-file mutation is never relabelled as
+runtime cancellation. No in-place migration is executed, and these adoption
+paths do not prove production hosting, sudden-power-loss durability,
+hostile-writer safety, or Windows parity.
 
 ## Remote Adapter
 
@@ -616,7 +717,7 @@ the VALP validation result.
 
 Provider-neutral continuation uses an immutable envelope on the typed
 `runtime_control` channel. The reference file-backed implementation is exposed
-provisionally by `valp_cli.continuation.ContinuationStore`; it separates wake persistence
+by `valp_cli.continuation.ContinuationStore`; it separates wake persistence
 (`pending`) from invocation CAS (`claim`) and provider consumption (`consume`).
 Only a receipt carrying a real provider/session invocation ID plus durable
 duplicate-suppression evidence can emit
@@ -630,8 +731,61 @@ resume, and `hermes chat -q --resume` uses the user-message channel. Neither is
 a typed `runtime_control` continuation API, so neither may produce the two
 provider-consumption events.
 
-The candidate store revalidates the exact persisted envelope, payload, control
+The reference source also exposes HERDR coordinator continuation adapters. The
+provider-neutral `HerdrCoordinatorContinuationAdapter` accepts an already-bound
+runtime callback, while `HerdrCoordinatorContinueAdapter` calls HERDR 0.8's
+local socket `coordinator.continue` API directly. Both require a consumed
+response carrying a complete invocation receipt and delegate ledger persistence
+and replay suppression to `ContinuationStore`. The request channel forbids user
+input and raw worker output. An identical replay returns the committed receipt
+without a second runtime call.
+
+If restart finds an HERDR invocation intent without a committed receipt, the
+adapter reconciles by replaying the exact `coordinator.continue` parameters and
+idempotency key. HERDR 0.8 exposes no separate continuation-status method, so a
+matching durable receipt closes the ledger while a conflict or malformed result
+fails closed. Source tests cover this recovery branch.
+
+This source contract does not make pane insertion, Enter, notifications, or
+`leader_resume_sent` into continuation proof. A HERDR installation may claim
+`automatic_full` only after it binds the adapter to a real runtime-owned API and
+exports the required identity and duplicate-suppression evidence. On the current
+macOS development host, HERDR 0.8.0 / protocol 19 exposed `coordinator.continue`
+and produced a live provider invocation receipt for
+`VALP-HERDR-AUTO-CONTINUATION-20260821`: the ledger reached
+`resume_pending -> resume_received -> digest_verified -> resume_accepted ->
+continuation_started -> resume_consumed`, strict continuation validation passed,
+and identical replay returned the committed receipt without a second HERDR
+`coordinator.continue` call. This proves the local HERDR normal continuation
+path on that host. The run did not inject a post-consumption/pre-receipt crash;
+live HERDR crash recovery, production hosting, cross-platform runtime proof,
+and repeated soak remain separate evidence gates.
+
+The store revalidates the exact persisted envelope, payload, control
 contract, full invocation key, target tuple, capability proof, and immutable
 provider receipt at each transition. Pending envelopes are recovered from disk
 after restart. Unsupported file-locking platforms fail closed; they do not
 append an unlocked ledger.
+
+The supported local subprocess path uses an explicit argv and JSON-RPC over
+stdin/stdout; it never invokes a shell. External execution is approval-gated by
+the CLI. Before `runtime_control.submit`, the store persists a correlated
+`valp-continuation-invocation-intent.v1`. If the provider consumes the envelope
+but the VALP process exits before committing the receipt, restart calls only
+`runtime_control.status`. A complete provider-owned receipt closes the missing
+events; pending, missing, malformed, or mismatched status remains indeterminate
+and never causes a second submit.
+
+```bash
+valp adapter continuation TASK_ID --workspace ROOT \
+  --command-json '["/path/to/provider-runtime"]' \
+  --provider-id PROVIDER --coordinator-surface COORDINATOR \
+  --identity-evidence-ref evidence/provider-identity.json \
+  --duplicate-suppression-ref evidence/provider-dedup.json
+
+valp adapter continuation TASK_ID --workspace ROOT \
+  --command-json '["/path/to/provider-runtime"]' \
+  --provider-id PROVIDER --coordinator-surface COORDINATOR \
+  --identity-evidence-ref evidence/provider-identity.json \
+  --duplicate-suppression-ref evidence/provider-dedup.json --approve
+```

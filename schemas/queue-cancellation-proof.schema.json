@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:valp:schema:queue-cancellation-proof:v1",
+  "title": "VALP Queue Cancellation Proof",
+  "type": "object",
+  "required": ["schema_version", "task_id", "work_item_id", "attempt_id", "dispatch_id", "dispatch_generation", "queue_id", "enqueue_transaction_id", "cancellation_kind", "cancellation_event_id", "lifecycle_entry_digest", "acknowledged"],
+  "properties": {
+    "schema_version": {"const": "valp-queue-cancellation-proof.v1"},
+    "task_id": {"type": "string", "minLength": 1},
+    "work_item_id": {"type": "string", "minLength": 1},
+    "attempt_id": {"type": "string", "minLength": 1},
+    "dispatch_id": {"type": "string", "minLength": 1},
+    "dispatch_generation": {"type": "integer", "minimum": 1},
+    "queue_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "enqueue_transaction_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "cancellation_kind": {"enum": ["queued_unclaimed", "worker_acknowledged"]},
+    "worker_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "claim_token": {"type": "string", "minLength": 1},
+    "claim_event_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "cancellation_event_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "lifecycle_entry_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "authority": {"type": "string", "minLength": 1},
+    "reason": {"type": "string", "minLength": 1},
+    "acknowledged": {"const": true}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"cancellation_kind": {"const": "worker_acknowledged"}}, "required": ["cancellation_kind"]},
+      "then": {"required": ["worker_id", "run_id", "claim_token", "claim_event_id"], "not": {"anyOf": [{"required": ["authority"]}, {"required": ["reason"]}]}},
+      "else": {"required": ["authority", "reason"], "not": {"anyOf": [{"required": ["worker_id"]}, {"required": ["run_id"]}, {"required": ["claim_token"]}, {"required": ["claim_event_id"]}]}}
+    }
+  ],
+  "additionalProperties": false
+}

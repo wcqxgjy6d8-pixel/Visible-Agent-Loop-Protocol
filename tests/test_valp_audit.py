@@ -10,8 +10,20 @@ from jsonschema import Draft202012Validator
 from tests.schema_helpers import schema_validator
 
 from valp_cli.audit import FAIL, PASS, SKIP, WARN, TaskAudit
+from valp_cli.continuation import (
+    ContinuationStore,
+    build_envelope,
+    capability_declaration,
+    file_digest,
+    idempotency_key,
+    persist_content_addressed_evidence,
+)
 from valp_cli.submission import build_submission_dependencies
-from valp_cli.workflow import resume_suspended_task, suspend_task
+from valp_cli.workflow import (
+    resume_suspended_task,
+    suspend_task,
+    write_herdr_invalid_session_binding_supersession,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +33,419 @@ REAL_DOC_EXAMPLE = ROOT / "examples" / "real-doc-calibration-task"
 
 
 class ValpAuditTests(unittest.TestCase):
+    def _continuation_fixture(self, task: Path, *, content_addressed: bool) -> tuple[Path, Path]:
+        task_id = "TASK-CONTINUATION-AUDIT"
+        suspension_id = "sha256:" + "a" * 64
+        wake_id = "sha256:" + "b" * 64
+        (task / "control-contract.json").write_text(
+            json.dumps({"task_id": task_id}) + "\n",
+            encoding="utf-8",
+        )
+        (task / "state.json").write_text(
+            json.dumps({
+                "task_id": task_id,
+                "suspension": {
+                    "suspension_id": suspension_id,
+                    "suspension_epoch": 1,
+                },
+            }) + "\n",
+            encoding="utf-8",
+        )
+        identity = {"schema_version": "identity.v1", "session_id": "session-a"}
+        dedup = {"schema_version": "dedup.v1", "mechanism": "idempotent replay"}
+        if content_addressed:
+            identity_ref = persist_content_addressed_evidence(
+                task, "continuation-herdr-identity", identity
+            )
+            dedup_ref = persist_content_addressed_evidence(
+                task, "continuation-herdr-dedup", dedup
+            )
+        else:
+            identity_ref = "evidence/provider-identity.json"
+            dedup_ref = "evidence/provider-dedup.json"
+            (task / identity_ref).parent.mkdir(parents=True, exist_ok=True)
+            (task / identity_ref).write_text(json.dumps(identity) + "\n", encoding="utf-8")
+            (task / dedup_ref).write_text(json.dumps(dedup) + "\n", encoding="utf-8")
+
+        payload = {"wake": "dependency_ready"}
+        envelope = build_envelope(
+            task_id=task_id,
+            suspension_id=suspension_id,
+            suspension_epoch=1,
+            wake_id=wake_id,
+            wake_event_id="sha256:" + "c" * 64,
+            wake_reason="dependency_ready",
+            accepted_state_revision=2,
+            control_contract_ref="control-contract.json",
+            control_contract_digest=file_digest(task / "control-contract.json"),
+            payload=payload,
+            coordinator_agent="codex",
+            adapter_id="test-adapter",
+            provider_id="fake-provider",
+            durable_boundary_ref="provider-session:session-1",
+            continuation_generation=1,
+        )
+        store = ContinuationStore(task, task_id)
+        store.register_capability(capability_declaration(
+            "test-adapter",
+            "1.0",
+            "fake-provider",
+            "codex",
+            automatic_full=True,
+            invocation_proof=True,
+            duplicate_suppression=True,
+            identity_evidence_ref=identity_ref,
+            duplicate_suppression_evidence_ref=dedup_ref,
+        ))
+        store.pending(envelope, payload)
+        store.receive(envelope, payload)
+        store.consume(envelope, lambda: {
+            "schema_version": "valp-continuation-invocation-receipt.v1",
+            "task_id": task_id,
+            "suspension_id": suspension_id,
+            "suspension_epoch": 1,
+            "wake_id": wake_id,
+            "continuation_generation": 1,
+            "idempotency_key": idempotency_key(envelope),
+            "payload_digest": envelope["payload_digest"],
+            "adapter": {"id": "test-adapter", "version": "1.0"},
+            "provider": {
+                "id": "fake-provider",
+                "invocation_id": "provider-turn-1",
+                "turn_id": "turn-1",
+            },
+            "durable_boundary_ref": envelope["target"]["durable_boundary_ref"],
+            "identity_evidence_ref": identity_ref,
+            "duplicate_suppression_ref": dedup_ref,
+            "started_at": "2026-08-21T00:00:00Z",
+            "consumed_at": "2026-08-21T00:00:01Z",
+            "result": "consumed",
+        })
+        return task / identity_ref, task / dedup_ref
+
+    def test_continuation_audit_rejects_tampered_content_addressed_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            identity_path, _ = self._continuation_fixture(task, content_addressed=True)
+            self.assertEqual(TaskAudit(task).check_continuation_ledger().status, PASS)
+
+            identity_path.write_text(
+                json.dumps({"schema_version": "identity.v1", "session_id": "session-b"}) + "\n",
+                encoding="utf-8",
+            )
+
+            result = TaskAudit(task).check_continuation_ledger()
+            self.assertEqual(result.status, FAIL)
+            self.assertIn("digest mismatches its ref", result.message)
+
+    def test_continuation_audit_preserves_legacy_fixed_evidence_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            self._continuation_fixture(task, content_addressed=False)
+            self.assertEqual(TaskAudit(task).check_continuation_ledger().status, PASS)
+
+    def _owned_session_supersession_fixture(self, task: Path) -> tuple[dict, dict, dict]:
+        task_id = "TASK-OWNED-SESSION-SUPERSESSION"
+        marker = {
+            "status": "ready",
+            "ref": "agent-sessions.json",
+            "receipts_ref": "agent-session-receipts.jsonl",
+        }
+        projection = json.loads(
+            (ROOT / "examples" / "agent-sessions.json").read_text(encoding="utf-8")
+        )
+        projection["task_id"] = task_id
+        binding = projection["bindings"]["example-agent"]
+        binding["ownership"]["task_id"] = task_id
+        (task / "agent-sessions.json").write_text(json.dumps(projection), encoding="utf-8")
+        session_receipt = json.loads(
+            (ROOT / "examples" / "agent-session-receipts.jsonl").read_text(encoding="utf-8")
+        )
+        session_receipt["task_id"] = task_id
+        session_receipt["ownership"]["task_id"] = task_id
+        (task / "agent-session-receipts.jsonl").write_text(
+            json.dumps(session_receipt) + "\n", encoding="utf-8"
+        )
+        runtime = {"id": "herdr", "class": "pane_controller", "name": "HERDR"}
+        for name in ("routing.json", "state.json"):
+            (task / name).write_text(json.dumps({
+                "task_id": task_id,
+                "runtime_adapter": runtime,
+                "agent_sessions": marker,
+            }), encoding="utf-8")
+        identity = {
+            "task_id": task_id,
+            "agent": "example-agent",
+            "role": "reviewer",
+            "work_item_id": "reviewer:example-agent",
+            "dispatch_id": f"{task_id}:reviewer:1",
+            "dispatch_generation": 1,
+            "dispatch_ref": "agents/example-agent/dispatch.md",
+            "expected_refs": ["agents/example-agent/review.md"],
+        }
+        original = {
+            "schema_version": "valp-dispatch-receipt.v2",
+            "receipt_id": "submission-invalid",
+            "event_sequence": 1,
+            "ts": "2026-08-12T00:00:00Z",
+            "event": "dispatch_submitted",
+            **identity,
+            "proof": {
+                "runtime": "HERDR",
+                "proof_class": "agent_invocation",
+                "submission_id": "invalid",
+                "session_binding": {
+                    "ref": "agent-sessions.json",
+                    "generation": 1,
+                    "identity_token": "sha256:" + "0" * 64,
+                    "ownership": binding["ownership"],
+                },
+            },
+        }
+        replacement = json.loads(json.dumps(original))
+        replacement.update({
+            "receipt_id": "submission-valid",
+            "event_sequence": 2,
+            "retry_generation": 1,
+        })
+        replacement["proof"]["submission_id"] = "valid"
+        replacement["proof"]["session_binding"]["identity_token"] = binding["runtime_identity"]["token"]
+        (task / "dispatch-receipts.jsonl").write_text(
+            json.dumps(original) + "\n" + json.dumps(replacement) + "\n",
+            encoding="utf-8",
+        )
+        return original, replacement, binding
+
+    def test_owned_session_audit_accepts_append_only_invalid_binding_supersession(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            original, replacement, _binding = self._owned_session_supersession_fixture(task)
+            supersession = write_herdr_invalid_session_binding_supersession(
+                task,
+                original["task_id"],
+                original["receipt_id"],
+                replacement["receipt_id"],
+            )
+            self.assertEqual(supersession["event"], "dispatch_superseded")
+            self.assertEqual(TaskAudit(task).check_agent_sessions().status, PASS)
+
+    def test_owned_session_supersession_rejects_valid_original_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            original, replacement, binding = self._owned_session_supersession_fixture(task)
+            original["proof"]["session_binding"]["identity_token"] = binding["runtime_identity"]["token"]
+            (task / "dispatch-receipts.jsonl").write_text(
+                json.dumps(original) + "\n" + json.dumps(replacement) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(SystemExit, "invalid original"):
+                write_herdr_invalid_session_binding_supersession(
+                    task,
+                    original["task_id"],
+                    original["receipt_id"],
+                    replacement["receipt_id"],
+                )
+
+    def test_owned_session_supersession_rejects_original_without_runtime_submission_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            original, replacement, _binding = self._owned_session_supersession_fixture(task)
+            original["proof"] = {
+                "runtime": "HERDR",
+                "session_binding": original["proof"]["session_binding"],
+            }
+            (task / "dispatch-receipts.jsonl").write_text(
+                json.dumps(original) + "\n" + json.dumps(replacement) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(SystemExit, "concrete submission proof"):
+                write_herdr_invalid_session_binding_supersession(
+                    task,
+                    original["task_id"],
+                    original["receipt_id"],
+                    replacement["receipt_id"],
+                )
+
+    def test_owned_session_supersession_rejects_completion_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            original, replacement, _binding = self._owned_session_supersession_fixture(task)
+            completion = {
+                **replacement,
+                "receipt_id": "completion-valid",
+                "event_sequence": 3,
+                "event": "dispatch_completed",
+                "suspension_epoch": 1,
+            }
+            (task / "dispatch-receipts.jsonl").write_text(
+                "\n".join(json.dumps(item) for item in (original, replacement, completion)) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(SystemExit, "exact existing submission receipts"):
+                write_herdr_invalid_session_binding_supersession(
+                    task,
+                    original["task_id"],
+                    completion["receipt_id"],
+                    replacement["receipt_id"],
+                )
+
+    def test_owned_session_supersession_rejects_identity_mismatch(self) -> None:
+        identity_changes = {
+            "task_id": "ANOTHER-TASK",
+            "agent": "another-agent",
+            "role": "implementer",
+            "work_item_id": "reviewer:another-agent",
+            "dispatch_id": "another-dispatch",
+            "dispatch_generation": 2,
+            "dispatch_ref": "agents/example-agent/other.md",
+            "expected_refs": ["agents/example-agent/other-review.md"],
+        }
+        for field, changed_value in identity_changes.items():
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                task = Path(tmp) / "task"
+                task.mkdir()
+                original, replacement, _binding = self._owned_session_supersession_fixture(task)
+                replacement[field] = changed_value
+                (task / "dispatch-receipts.jsonl").write_text(
+                    json.dumps(original) + "\n" + json.dumps(replacement) + "\n",
+                    encoding="utf-8",
+                )
+
+                expected_error = (
+                    "belongs to a different task"
+                    if field == "task_id"
+                    else "exact work-item identity"
+                )
+                with self.assertRaisesRegex(SystemExit, expected_error):
+                    write_herdr_invalid_session_binding_supersession(
+                        task,
+                        original["task_id"],
+                        original["receipt_id"],
+                        replacement["receipt_id"],
+                    )
+
+    def test_owned_session_supersession_rejects_reversed_submission_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            original, replacement, _binding = self._owned_session_supersession_fixture(task)
+            original["event_sequence"] = 2
+            replacement["event_sequence"] = 1
+            (task / "dispatch-receipts.jsonl").write_text(
+                json.dumps(replacement) + "\n" + json.dumps(original) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(SystemExit, "exact work-item identity"):
+                write_herdr_invalid_session_binding_supersession(
+                    task,
+                    original["task_id"],
+                    original["receipt_id"],
+                    replacement["receipt_id"],
+                )
+
+    def test_owned_session_audit_rejects_supersession_before_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            original, replacement, _binding = self._owned_session_supersession_fixture(task)
+            supersession = write_herdr_invalid_session_binding_supersession(
+                task,
+                original["task_id"],
+                original["receipt_id"],
+                replacement["receipt_id"],
+            )
+            replacement["event_sequence"] = supersession["event_sequence"] + 1
+            (task / "dispatch-receipts.jsonl").write_text(
+                "\n".join(json.dumps(item) for item in (original, supersession, replacement)) + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(TaskAudit(task).check_agent_sessions().status, FAIL)
+
+    def test_owned_session_audit_rejects_malformed_supersession_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            original, replacement, _binding = self._owned_session_supersession_fixture(task)
+            supersession = {
+                **original,
+                "receipt_id": "malformed-supersession",
+                "event_sequence": 3,
+                "event": "dispatch_superseded",
+                "proof": {"kind": "invalid_session_binding"},
+            }
+            (task / "dispatch-receipts.jsonl").write_text(
+                "\n".join(json.dumps(item) for item in (original, replacement, supersession)) + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(TaskAudit(task).check_agent_sessions().status, FAIL)
+
+    def test_owned_session_audit_rejects_supersession_of_non_runtime_submission(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            original, replacement, _binding = self._owned_session_supersession_fixture(task)
+            original["proof"] = {
+                "runtime": "HERDR",
+                "session_binding": original["proof"]["session_binding"],
+            }
+            supersession = {
+                "schema_version": "valp-dispatch-receipt.v2",
+                "receipt_id": "supersession-for-non-runtime-submission",
+                "event_sequence": 3,
+                "ts": "2026-08-12T00:00:02Z",
+                "event": "dispatch_superseded",
+                **{
+                    field: original[field]
+                    for field in (
+                        "task_id", "agent", "role", "work_item_id", "dispatch_id",
+                        "dispatch_generation", "dispatch_ref", "expected_refs",
+                    )
+                },
+                "proof": {
+                    "kind": "invalid_session_binding",
+                    "superseded_submission_receipt_id": original["receipt_id"],
+                    "replacement_submission_receipt_id": replacement["receipt_id"],
+                },
+            }
+            (task / "dispatch-receipts.jsonl").write_text(
+                "\n".join(json.dumps(item) for item in (original, replacement, supersession)) + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(TaskAudit(task).check_agent_sessions().status, FAIL)
+
+    def test_supersession_receipt_schema_requires_exact_proof_shape(self) -> None:
+        validator = schema_validator(ROOT / "schemas" / "receipts.schema.json")
+        receipt = {
+            "schema_version": "valp-dispatch-receipt.v2",
+            "receipt_id": "supersession-schema-test",
+            "task_id": "TASK-SUPERSESSION-SCHEMA",
+            "event_sequence": 3,
+            "ts": "2026-08-12T00:00:02Z",
+            "agent": "example-agent",
+            "role": "reviewer",
+            "work_item_id": "reviewer:example-agent",
+            "dispatch_id": "TASK-SUPERSESSION-SCHEMA:reviewer:1",
+            "dispatch_generation": 1,
+            "event": "dispatch_superseded",
+            "dispatch_ref": "agents/example-agent/dispatch.md",
+            "expected_refs": ["agents/example-agent/review.md"],
+            "proof": {"kind": "invalid_session_binding"},
+        }
+
+        self.assertTrue(list(validator.iter_errors(receipt)))
+
     def test_owned_agent_session_audit_binds_submission_to_provisioning_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             task = Path(tmp) / "task"
@@ -144,6 +569,122 @@ class ValpAuditTests(unittest.TestCase):
             failed = TaskAudit(task).check_agent_sessions()
             self.assertEqual(failed.status, FAIL)
             self.assertIn("absolute launch executable", failed.message)
+
+    def test_owned_agent_session_audit_accepts_verified_bootstrap_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task"
+            task.mkdir()
+            task_id = "TASK-BOOTSTRAP-SESSION-AUDIT"
+            marker = {
+                "status": "ready",
+                "ref": "agent-sessions.json",
+                "receipts_ref": "agent-session-receipts.jsonl",
+            }
+            projection = json.loads(
+                (ROOT / "examples" / "agent-sessions.json").read_text(encoding="utf-8")
+            )
+            binding = projection["bindings"]["example-agent"]
+            projection["task_id"] = task_id
+            binding["ownership"]["task_id"] = task_id
+            binding["lifecycle"] = "bootstrap_ready"
+            binding["bootstrap_verification"] = {
+                "status": "verified",
+                "evidence_ref": "evidence/bootstrap-probe-result.json",
+                "generation": 1,
+                "pane_id": binding["runtime_identity"]["pane_id"],
+                "native_session_id": "session-native",
+                "expected_response": "BOOTSTRAP_READY",
+                "actual_response": "BOOTSTRAP_READY",
+                "native_turn_error": None,
+                "session_identity_status": "known",
+                "model_probe_status": "observed",
+            }
+            provisioning = json.loads(
+                (ROOT / "examples" / "agent-session-receipts.jsonl").read_text(
+                    encoding="utf-8"
+                )
+            )
+            provisioning["task_id"] = task_id
+            provisioning["ownership"]["task_id"] = task_id
+            bootstrap = {
+                "schema_version": "valp-agent-session-receipt.v1",
+                "adapter": "herdr",
+                "task_id": task_id,
+                "event_sequence": 2,
+                "ts": "2026-08-07T09:15:59Z",
+                "agent": "example-agent",
+                "event": "agent_session_bootstrap_verified",
+                "binding_ref": "agent-sessions.json",
+                "generation": 1,
+                "identity_token": binding["runtime_identity"]["token"],
+                "evidence_ref": "evidence/bootstrap-probe-result.json",
+                "native_session_id": "session-native",
+            }
+            submission = {
+                "agent": "example-agent",
+                "event": "dispatch_submitted",
+                "proof": {
+                    "runtime": "HERDR",
+                    "session_binding": {
+                        "ref": "agent-sessions.json",
+                        "generation": 1,
+                        "identity_token": binding["runtime_identity"]["token"],
+                        "ownership": binding["ownership"],
+                    },
+                },
+            }
+            runtime = {"id": "herdr", "class": "pane_controller", "name": "HERDR"}
+            (task / "agent-sessions.json").write_text(json.dumps(projection), encoding="utf-8")
+            (task / "agent-session-receipts.jsonl").write_text(
+                json.dumps(provisioning) + "\n" + json.dumps(bootstrap) + "\n",
+                encoding="utf-8",
+            )
+            (task / "dispatch-receipts.jsonl").write_text(
+                json.dumps(submission) + "\n", encoding="utf-8"
+            )
+            for name in ("routing.json", "state.json"):
+                (task / name).write_text(
+                    json.dumps(
+                        {
+                            "task_id": task_id,
+                            "runtime_adapter": runtime,
+                            "agent_sessions": marker,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            item = TaskAudit(task).check_agent_sessions()
+
+            self.assertEqual(item.status, PASS, item.message)
+
+            (task / "agent-session-receipts.jsonl").write_text(
+                json.dumps(provisioning) + "\n",
+                encoding="utf-8",
+            )
+            missing_bootstrap_receipt = TaskAudit(task).check_agent_sessions()
+
+            self.assertEqual(missing_bootstrap_receipt.status, FAIL)
+            self.assertIn(
+                "verified bootstrap lifecycle has no matching receipt",
+                missing_bootstrap_receipt.message,
+            )
+
+            mismatched_bootstrap = {**bootstrap, "evidence_ref": "evidence/other.json"}
+            (task / "agent-session-receipts.jsonl").write_text(
+                json.dumps(provisioning)
+                + "\n"
+                + json.dumps(mismatched_bootstrap)
+                + "\n",
+                encoding="utf-8",
+            )
+            mismatched_bootstrap_receipt = TaskAudit(task).check_agent_sessions()
+
+            self.assertEqual(mismatched_bootstrap_receipt.status, FAIL)
+            self.assertIn(
+                "verified bootstrap lifecycle has no matching receipt",
+                mismatched_bootstrap_receipt.message,
+            )
 
     def test_owned_session_audit_binds_historical_submission_to_its_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

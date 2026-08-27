@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:valp:schema:manual-attestation:v1",
+  "title": "VALP Manual Attestation",
+  "type": "object",
+  "required": ["schema_version", "authority", "authority_ref", "authority_digest", "action", "statement", "task_id", "work_item_id", "attempt_id", "dispatch_id", "dispatch_generation", "payload_digest", "evidence", "validity", "receipt_id", "subject_digest", "proof_kind", "acknowledged", "source_proof_digest"],
+  "properties": {
+    "schema_version": {"const": "valp-manual-attestation.v1"},
+    "authority": {"type": "string", "minLength": 1},
+    "authority_ref": {"type": "string", "minLength": 1},
+    "authority_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "action": {"enum": ["manual_delivery_attested", "manual_result_attested", "manual_blocked"]},
+    "statement": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "work_item_id": {"type": "string", "minLength": 1},
+    "attempt_id": {"type": "string", "minLength": 1},
+    "dispatch_id": {"type": "string", "minLength": 1},
+    "dispatch_generation": {"type": "integer", "minimum": 1},
+    "payload_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "evidence": {"type": "array", "items": {"type": "object"}},
+    "validity": {"const": "active"},
+    "receipt_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "subject_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "proof_kind": {"const": "manual_attested"},
+    "acknowledged": {"const": true},
+    "source_proof_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

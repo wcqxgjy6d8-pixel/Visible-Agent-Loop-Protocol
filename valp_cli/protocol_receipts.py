@@ -9,7 +9,7 @@ import json
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
 
-PROTOCOL_VERSION = "0.3.0-draft"
+PROTOCOL_VERSION = "0.3.0"
 RECEIPT_SCHEMA_VERSION = "valp-dispatch-receipt.v3"
 MIGRATION_UNSUPPORTED_ERROR = "VALP-E-MIGRATION-UNSUPPORTED"
 STATE_CONFLICT_ERROR = "VALP-E-STATE-CONFLICT"
@@ -42,6 +42,7 @@ RECEIPT_EVENTS = frozenset(
         "dispatch_submitted",
         "dispatch_completed",
         "dispatch_blocked",
+        "dispatch_superseded",
         "manual_dispatch_written",
         "manual_delivery_attested",
         "manual_result_attested",
@@ -426,7 +427,15 @@ def _receipt_valid(receipt: ProtocolReceipt) -> bool:
         return False
     proof_kinds = {item.proof_kind for item in draft.proof_bindings}
     if draft.mode == ReceiptMode.MANUAL:
-        if draft.event not in MANUAL_EVENTS or ReceiptProofKind.MANUAL_ATTESTED not in proof_kinds:
+        manual_attestation = (
+            draft.event in MANUAL_EVENTS
+            and ReceiptProofKind.MANUAL_ATTESTED in proof_kinds
+        )
+        degraded_transport = (
+            draft.event == "dispatch_inserted"
+            and proof_kinds == {ReceiptProofKind.TRANSPORT_ONLY}
+        )
+        if not manual_attestation and not degraded_transport:
             return False
     elif draft.event in MANUAL_EVENTS:
         return False

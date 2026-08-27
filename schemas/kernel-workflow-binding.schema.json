@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:valp:schema:kernel-workflow-binding:v1",
+  "title": "VALP Kernel Workflow Binding",
+  "type": "object",
+  "required": ["schema_version", "task_id", "installation_id", "leader_epoch", "workflow_suspension_id", "workflow_suspension_epoch", "kernel_suspension_epoch", "wait_policy_id", "wait_policy_digest", "required_work_item_ids", "workflow_suspension", "status", "kernel_revision"],
+  "properties": {
+    "schema_version": {"const": "valp-kernel-workflow-binding.v1"},
+    "task_id": {"type": "string", "minLength": 1},
+    "installation_id": {"type": "string", "minLength": 1},
+    "leader_epoch": {"type": "integer", "minimum": 1},
+    "workflow_suspension_id": {"type": "string", "minLength": 1},
+    "workflow_suspension_epoch": {"type": "integer", "minimum": 1},
+    "kernel_suspension_epoch": {"type": "integer", "minimum": 0},
+    "wait_policy_id": {"type": "string", "minLength": 1},
+    "wait_policy_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "required_work_item_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "workflow_suspension": {"type": "object"},
+    "status": {"enum": ["waiting", "resumed"]},
+    "kernel_revision": {"type": "integer", "minimum": 1},
+    "accepted_wake_id": {"type": "string", "minLength": 1},
+    "wake_reason": {"const": "dependency_ready"},
+    "workflow_wake_projection": {"type": "object"}
+  },
+  "additionalProperties": false
+}

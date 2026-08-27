@@ -11,7 +11,7 @@
       "task": "run build and tests",
       "confidence": 0.9,
       "provider": "codex",
-      "path": "/Users/example/.codex/skills/verification-before-completion/SKILL.md",
+      "path": "skill://codex/verification-before-completion",
       "decision": "auto-load"
     }
   ],

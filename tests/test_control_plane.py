@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -18,8 +19,11 @@ from valp_cli.cli import main
 from valp_cli.control_plane import (
     ControlPlaneError,
     InstallationCore,
+    append_jsonl_atomic,
+    digest_value,
     digest_without,
     leader_installation_root,
+    safe_control_ref,
     write_json,
 )
 from valp_cli.herdr_adapter import HerdrSubmissionError
@@ -41,6 +45,17 @@ class ControlPlaneTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def test_control_refs_reject_cross_platform_absolute_paths(self) -> None:
+        for ref in (
+            "/etc/passwd",
+            "/Users/private/evidence.md",
+            "C:\\private\\evidence.md",
+            "\\\\server\\share\\evidence.md",
+        ):
+            with self.subTest(ref=ref), self.assertRaises(ControlPlaneError):
+                safe_control_ref(ref)
+        self.assertEqual(safe_control_ref("agents/codex/evidence.md"), "agents/codex/evidence.md")
+
     def test_leader_root_reuses_configured_installation_from_another_workspace(self) -> None:
         global_root = self.workspace / "global-control"
         caller_workspace = self.workspace / "another-window"
@@ -58,6 +73,116 @@ class ControlPlaneTests(unittest.TestCase):
         self.core.select_leader("agent-codex-session-a")
         self.core.prepare_leader_start()
         self.core.activate_leader(self._provisioned_leader())
+
+    def _mark_installation_as_draft(self) -> None:
+        installation = json.loads(
+            (self.root / "installation.json").read_text(encoding="utf-8")
+        )
+        installation["active_protocol_version"] = "0.3.0-draft"
+        write_json(self.root / "installation.json", installation)
+
+        manifest = json.loads(
+            (self.root / "protocol-manifest.json").read_text(encoding="utf-8")
+        )
+        manifest["active_protocol_version"] = "0.3.0-draft"
+        manifest["supported_protocol_read_versions"] = ["0.3.0-draft", "0.2.0"]
+        manifest["supported_protocol_write_versions"] = ["0.3.0-draft"]
+        manifest["migration_paths"] = ["0.2.0->0.3.0-draft"]
+        manifest["manifest_digest"] = digest_without(manifest, "manifest_digest")
+        write_json(self.root / "protocol-manifest.json", manifest)
+
+    def _mark_task_as_draft(self, task_id: str) -> dict:
+        events_path = self.root / "tasks" / task_id / "events.jsonl"
+        events = [
+            json.loads(line)
+            for line in events_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        prior_digest = None
+        for event in events:
+            projection = event["payload"]["state_projection"]
+            projection["protocol_version"] = "0.3.0-draft"
+            projection["last_event_digest"] = prior_digest
+            projection["projection_digest"] = digest_without(
+                projection, "projection_digest"
+            )
+            event["prior_event_digest"] = prior_digest
+            event["event_digest"] = digest_without(event, "event_digest")
+            prior_digest = event["event_digest"]
+        events_path.write_text(
+            "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events),
+            encoding="utf-8",
+        )
+        state = dict(events[-1]["payload"]["state_projection"])
+        state["last_event_id"] = events[-1]["event_id"]
+        state["last_event_digest"] = events[-1]["event_digest"]
+        state["projection_digest"] = digest_without(state, "projection_digest")
+        write_json(self.root / "tasks" / task_id / "task-state.json", state)
+        return task_state(self.root, task_id)
+
+    def _rewrite_task_history(
+        self,
+        task_id: str,
+        events: list[dict],
+        *,
+        genesis_prior_digest: str | None = None,
+    ) -> None:
+        prior_digest = genesis_prior_digest
+        for index, event in enumerate(events):
+            projection = event["payload"]["state_projection"]
+            event["prior_event_digest"] = prior_digest
+            projection["last_event_digest"] = None if index == 0 else prior_digest
+            projection["projection_digest"] = digest_without(
+                projection, "projection_digest"
+            )
+            event["event_digest"] = digest_without(event, "event_digest")
+            prior_digest = event["event_digest"]
+        task_root = self.root / "tasks" / task_id
+        (task_root / "events.jsonl").write_text(
+            "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events),
+            encoding="utf-8",
+        )
+        state = dict(events[-1]["payload"]["state_projection"])
+        state["last_event_id"] = events[-1]["event_id"]
+        state["last_event_digest"] = events[-1]["event_digest"]
+        state["projection_digest"] = digest_without(state, "projection_digest")
+        write_json(task_root / "task-state.json", state)
+
+    def _finish_task(self, task_id: str) -> dict:
+        init_task(self.root, task_id)
+        for status in (
+            "published",
+            "scanning_capabilities",
+            "scanning_context",
+            "loading_local_overlay",
+            "selecting_runtime_adapter",
+            "classifying_task",
+            "selecting_profile",
+            "decomposing_tasks",
+            "building_provider_matrix",
+            "scoring_routes",
+            "routing_capabilities",
+            "planned",
+            "locked",
+            "executing",
+            "verifying",
+            "recording",
+        ):
+            transition_task(self.root, task_id, status)
+        return transition_task(
+            self.root,
+            task_id,
+            "done",
+            gates={
+                "receipts": True,
+                "expected_evidence": True,
+                "verification": True,
+                "review": True,
+                "approvals": True,
+                "final_synthesis": True,
+                "audit": True,
+            },
+        )
 
     def _leader_passport(
         self,
@@ -172,6 +297,34 @@ class ControlPlaneTests(unittest.TestCase):
         self.assertRegex(candidate["passport_digest"], r"^sha256:[0-9a-f]{64}$")
         self.assertNotIn("manual-user", {item["principal_id"] for item in result["candidates"]})
         self.assertNotIn("valp-reference-cli", {item["principal_id"] for item in result["candidates"]})
+
+    def test_candidate_discovery_can_refresh_before_leader_selection(self) -> None:
+        self.core.init()
+        first = self.core.discover_candidates([])
+
+        refreshed = self.core.discover_candidates([self._leader_passport()])
+
+        self.assertEqual(first["candidates"], [])
+        self.assertEqual(
+            [candidate["principal_id"] for candidate in refreshed["candidates"]],
+            ["agent-codex-session-a"],
+        )
+        self.assertEqual(self.core.state()["status"], "awaiting_leader_selection")
+        events = [
+            json.loads(line)
+            for line in (self.root / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            [event["event_kind"] for event in events],
+            [
+                "installation_initialized",
+                "bootstrap_discovery_started",
+                "leader_candidate_discovery_completed",
+                "bootstrap_discovery_started",
+                "leader_candidate_discovery_completed",
+            ],
+        )
+        self.assertEqual(len({event["event_id"] for event in events}), 5)
 
     def test_leader_candidates_cli_uses_fresh_doctor_passports(self) -> None:
         self.core.init()
@@ -633,12 +786,20 @@ class ControlPlaneTests(unittest.TestCase):
 
         with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
             "valp_cli.cli.open_herdr_leader_session",
-            return_value={
-                "status": "missing",
-                "action": "reprovision_required",
-                "reason": "leader_attachment_not_found",
-            },
-        ), patch(
+            side_effect=[
+                {
+                    "status": "missing",
+                    "action": "reprovision_required",
+                    "reason": "leader_attachment_not_found",
+                },
+                {
+                    "status": "opened",
+                    "action": "focused_existing_attachment",
+                    "session_id": "pane-leader-reopened",
+                    "workspace_id": "workspace-leader",
+                },
+            ],
+        ) as opened, patch(
             "valp_cli.cli.provision_herdr_leader_session",
             return_value=replacement,
         ) as provision:
@@ -654,13 +815,49 @@ class ControlPlaneTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         provision.assert_called_once()
+        self.assertEqual(opened.call_count, 2)
         self.assertEqual(self.core.state()["active_leader_epoch"], 2)
+        self.assertEqual(json.loads(output.getvalue())["attachment"]["status"], "opened")
         self.assertEqual(
             json.loads((self.root / "leader-session-binding.json").read_text(encoding="utf-8"))[
                 "runtime_identity"
             ]["session_id"],
             "pane-leader-reopened",
         )
+
+    def test_leader_open_records_restart_failure_when_reprovisioning_fails(self) -> None:
+        self._bootstrap()
+
+        with patch("valp_cli.cli.shutil.which", return_value="/test/herdr"), patch(
+            "valp_cli.cli.open_herdr_leader_session",
+            return_value={
+                "status": "missing",
+                "action": "reprovision_required",
+                "reason": "leader_attachment_not_found",
+            },
+        ), patch(
+            "valp_cli.cli.provision_herdr_leader_session",
+            side_effect=HerdrSubmissionError("simulated open replacement failure"),
+        ):
+            with self.assertRaises(SystemExit) as context:
+                main([
+                    "leader",
+                    "open",
+                    "--workspace",
+                    str(self.workspace),
+                    "--json",
+                ])
+
+        self.assertIn("VALP-E-LEADER-UNREACHABLE", str(context.exception))
+        self.assertEqual(self.core.state()["status"], "active")
+        receipts = [
+            json.loads(line)
+            for line in (self.root / "leader-session-receipts.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(receipts[-1]["operation"], "restart")
 
     def test_explicit_leader_restart_fences_epoch_and_preserves_binding_history(self) -> None:
         self.core.init()
@@ -776,6 +973,36 @@ class ControlPlaneTests(unittest.TestCase):
         self.assertEqual(receipts[-1]["leader_epoch"], 2)
         self.assertEqual(receipts[-1]["generation"], 2)
         self.assertNotIn("replaced_binding_digest", receipts[-1])
+
+    def test_leader_restart_can_retry_after_failed_attempt_is_rolled_back(self) -> None:
+        self._bootstrap()
+
+        first_attempt = self.core.prepare_leader_restart()
+        with self.assertRaises(ControlPlaneError):
+            self.core.fail_leader_activation(
+                "restart",
+                adapter_id="herdr",
+                failure_class="HerdrSubmissionError",
+            )
+        self.core.restore_active_leader_after_failed_restart()
+        second_attempt = self.core.prepare_leader_restart()
+
+        self.assertEqual(first_attempt["proposed_leader_epoch"], 2)
+        self.assertEqual(second_attempt["proposed_leader_epoch"], 2)
+        self.assertNotEqual(
+            first_attempt["restart"]["message_id"],
+            second_attempt["restart"]["message_id"],
+        )
+        self.assertEqual(self.core.state()["status"], "restarting_leader")
+        with self.assertRaises(ControlPlaneError) as second_failure:
+            self.core.fail_leader_activation(
+                "restart",
+                adapter_id="herdr",
+                failure_class="HerdrSubmissionError",
+            )
+        self.assertEqual(second_failure.exception.code, "VALP-E-LEADER-UNREACHABLE")
+        self.core.restore_active_leader_after_failed_restart()
+        self.assertEqual(self.core.state()["status"], "active")
 
     def test_leader_rotation_provisions_replacement_before_changing_authority(self) -> None:
         replacement_passport = self._leader_passport(
@@ -935,21 +1162,24 @@ class ControlPlaneTests(unittest.TestCase):
         self._bootstrap()
         state = self.core.state()
         arguments = dict(
-            event_kind="test.degraded",
-            message_kind="command.test.degraded",
-            principal_id="manual-user",
+            event_kind="migration_apply_approved",
+            message_kind="command.protocol.migrate",
+            principal_id="user",
             principal_kind="human",
             epoch=state["active_leader_epoch"],
             expected_revision=state["revision"],
-            payload={"reason": "test"},
-            target_status="degraded",
+            payload={"migration_id": "migration-test", "plan_digest": "sha256:" + "1" * 64},
+            target_status="migrating",
             idempotency_key="test-idempotent",
         )
         first = self.core._transition(**arguments)
         second = self.core._transition(**arguments)
         self.assertEqual(first, second)
         self.assertEqual(self.core.state()["revision"], state["revision"] + 1)
-        arguments["payload"] = {"reason": "different"}
+        arguments["payload"] = {
+            "migration_id": "migration-test",
+            "plan_digest": "sha256:" + "2" * 64,
+        }
         with self.assertRaises(ControlPlaneError) as context:
             self.core._transition(**arguments)
         self.assertEqual(context.exception.code, "VALP-E-IDEMPOTENCY-CONFLICT")
@@ -965,6 +1195,1115 @@ class ControlPlaneTests(unittest.TestCase):
         self.assertEqual(set(entry["layers"]), {"official_claim", "local_presence", "live_callable"})
         self.assertEqual(entry["effective_status"], "pass")
 
+    def test_draft_installation_migration_preserves_leader_and_original_bytes(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        prior_legacy = self.root / "legacy" / "prior-import.txt"
+        prior_legacy.parent.mkdir(parents=True)
+        prior_legacy.write_text("preserve prior import\n", encoding="utf-8")
+        original_installation = (self.root / "installation.json").read_bytes()
+        original_manifest = (self.root / "protocol-manifest.json").read_bytes()
+        original_binding = (self.root / "leader-session-binding.json").read_bytes()
+        original_epoch = self.core.state()["active_leader_epoch"]
+
+        plan = self.core.migrate_plan(self.workspace, target_version="0.3.0")
+
+        plan_schema = json.loads(
+            (ROOT / "schemas" / "migration-plan.schema.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(list(Draft202012Validator(plan_schema).iter_errors(plan)), [])
+
+        self.assertEqual(plan["source_protocol_version"], "0.3.0-draft")
+        self.assertEqual(plan["target_protocol_version"], "0.3.0")
+        self.assertGreater(plan["task_file_count"], 2)
+        self.assertTrue(
+            {"installation.json", "protocol-manifest.json", "state.json"}.issubset(
+                {item["source_ref"] for item in plan["files"]}
+            )
+        )
+        self.assertIn("legacy/prior-import.txt", {item["source_ref"] for item in plan["files"]})
+
+        receipt = self.core.migrate_apply(self.workspace, approve=True)
+
+        receipt_schema = json.loads(
+            (ROOT / "schemas" / "migration-receipt.schema.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(list(Draft202012Validator(receipt_schema).iter_errors(receipt)), [])
+
+        self.assertEqual(receipt["status"], "applied")
+        self.assertEqual(receipt["source_protocol_version"], "0.3.0-draft")
+        self.assertEqual(receipt["target_protocol_version"], "0.3.0")
+        snapshot = Path(receipt["target_root"])
+        self.assertEqual((snapshot / "installation.json").read_bytes(), original_installation)
+        self.assertEqual((snapshot / "protocol-manifest.json").read_bytes(), original_manifest)
+        self.assertEqual((snapshot / "leader-session-binding.json").read_bytes(), original_binding)
+        self.assertEqual((snapshot / "legacy" / "prior-import.txt").read_bytes(), prior_legacy.read_bytes())
+        installation = json.loads(
+            (self.root / "installation.json").read_text(encoding="utf-8")
+        )
+        manifest = json.loads(
+            (self.root / "protocol-manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(installation["active_protocol_version"], "0.3.0")
+        self.assertEqual(installation["installation_status"], "active")
+        self.assertEqual(installation["active_leader_epoch"], original_epoch)
+        self.assertEqual(manifest["active_protocol_version"], "0.3.0")
+        self.assertEqual(manifest["supported_protocol_read_versions"], ["0.3.0", "0.2.0"])
+        self.assertEqual(manifest["supported_protocol_write_versions"], ["0.3.0"])
+        self.assertIn("0.3.0-draft->0.3.0", manifest["migration_paths"])
+        self.assertEqual(
+            manifest["manifest_digest"], digest_without(manifest, "manifest_digest")
+        )
+        self.assertEqual(
+            (self.root / "leader-session-binding.json").read_bytes(), original_binding
+        )
+        self.assertEqual(self.core.state()["active_leader_epoch"], original_epoch)
+
+        repeated = self.core.migrate_apply(self.workspace, approve=True)
+        self.assertEqual(repeated, receipt)
+
+    def test_draft_migration_plan_tracks_event_consistent_terminal_task(self) -> None:
+        self._bootstrap()
+        self._finish_task("legacy-draft-task")
+        task = self._mark_task_as_draft("legacy-draft-task")
+        original_task_state = (self.root / "tasks" / "legacy-draft-task" / "task-state.json").read_bytes()
+        original_task_events = (self.root / "tasks" / "legacy-draft-task" / "events.jsonl").read_bytes()
+        self._mark_installation_as_draft()
+
+        plan = self.core.migrate_plan(self.workspace, target_version="0.3.0")
+
+        self.assertEqual(task["status"], "done")
+        self.assertEqual(
+            plan["affected_tasks"],
+            [{
+                "task_id": "legacy-draft-task",
+                "protocol_version": "0.3.0-draft",
+                "status": "done",
+                "revision": task["revision"],
+                "handling": "legacy-read-only",
+            }],
+        )
+        receipt = self.core.migrate_apply(self.workspace, approve=True)
+        snapshot = Path(receipt["target_root"]) / "tasks" / "legacy-draft-task"
+        self.assertEqual((snapshot / "task-state.json").read_bytes(), original_task_state)
+        self.assertEqual((snapshot / "events.jsonl").read_bytes(), original_task_events)
+        with self.assertRaises(ControlPlaneError) as context:
+            transition_task(self.root, "legacy-draft-task", "blocked")
+        self.assertEqual(context.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+
+    def test_draft_migration_plan_rejects_task_directory_identity_mismatch(self) -> None:
+        self._bootstrap()
+        self._finish_task("claimed-task-id")
+        self._mark_task_as_draft("claimed-task-id")
+        (self.root / "tasks" / "claimed-task-id").rename(
+            self.root / "tasks" / "actual-task-directory"
+        )
+        self._mark_installation_as_draft()
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_plan(self.workspace, target_version="0.3.0")
+
+        self.assertEqual(context.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+
+    def test_draft_migration_plan_rejects_task_event_revision_discontinuity(self) -> None:
+        self._bootstrap()
+        self._finish_task("revision-drift-task")
+        self._mark_task_as_draft("revision-drift-task")
+        task_root = self.root / "tasks" / "revision-drift-task"
+        events_path = task_root / "events.jsonl"
+        events = [
+            json.loads(line)
+            for line in events_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        events[-1]["prior_revision"] = 999
+        events[-1]["new_revision"] = 1000
+        events[-1]["event_digest"] = digest_without(events[-1], "event_digest")
+        events_path.write_text(
+            "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in events),
+            encoding="utf-8",
+        )
+        state_path = task_root / "task-state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["last_event_digest"] = events[-1]["event_digest"]
+        state["projection_digest"] = digest_without(state, "projection_digest")
+        write_json(state_path, state)
+        self._mark_installation_as_draft()
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_plan(self.workspace, target_version="0.3.0")
+
+        self.assertEqual(context.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+
+    def test_task_state_rejects_rehashed_non_null_genesis_prior_event_digest(self) -> None:
+        self._bootstrap()
+        task_id = "forged-genesis-chain-task"
+        self._finish_task(task_id)
+        events_path = self.root / "tasks" / task_id / "events.jsonl"
+        events = [
+            json.loads(line)
+            for line in events_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self._rewrite_task_history(
+            task_id,
+            events,
+            genesis_prior_digest="sha256:" + "f" * 64,
+        )
+
+        with self.assertRaises(ControlPlaneError) as context:
+            task_state(self.root, task_id)
+
+        self.assertEqual(context.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+
+    def test_task_state_and_migration_plan_reject_rehashed_illegal_terminal_transition(self) -> None:
+        self._bootstrap()
+        task_id = "forged-terminal-transition-task"
+        self._finish_task(task_id)
+        self._mark_task_as_draft(task_id)
+        events_path = self.root / "tasks" / task_id / "events.jsonl"
+        events = [
+            json.loads(line)
+            for line in events_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        final_event = events[-1]
+        final_event["event_kind"] = "task_failed"
+        projection = final_event["payload"]["state_projection"]
+        projection["status"] = "failed"
+        projection["active_blockers"] = []
+        self._rewrite_task_history(task_id, events)
+        self._mark_installation_as_draft()
+
+        with self.assertRaises(ControlPlaneError) as state_context:
+            task_state(self.root, task_id)
+        self.assertEqual(state_context.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+
+        with self.assertRaises(ControlPlaneError) as migration_context:
+            self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        self.assertEqual(
+            migration_context.exception.code, "VALP-E-REGISTRY-CONSISTENCY"
+        )
+
+    def test_draft_migration_plan_rejects_task_installation_identity_mismatch(self) -> None:
+        self._bootstrap()
+        self._finish_task("installation-drift-task")
+        self._mark_task_as_draft("installation-drift-task")
+        task_root = self.root / "tasks" / "installation-drift-task"
+        events_path = task_root / "events.jsonl"
+        events = [
+            json.loads(line)
+            for line in events_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        events[-1]["installation_id"] = "forged-installation"
+        projection = events[-1]["payload"]["state_projection"]
+        projection["installation_id"] = "forged-installation"
+        projection["projection_digest"] = digest_without(
+            projection, "projection_digest"
+        )
+        events[-1]["event_digest"] = digest_without(events[-1], "event_digest")
+        events_path.write_text(
+            "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in events),
+            encoding="utf-8",
+        )
+        state_path = task_root / "task-state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["installation_id"] = "forged-installation"
+        state["last_event_digest"] = events[-1]["event_digest"]
+        state["projection_digest"] = digest_without(state, "projection_digest")
+        write_json(state_path, state)
+        self._mark_installation_as_draft()
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_plan(self.workspace, target_version="0.3.0")
+
+        self.assertEqual(context.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+
+    def test_draft_installation_migration_rejects_source_drift_before_transition(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        plan = self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        state_before = self.core.state()
+        installation = json.loads(
+            (self.root / "installation.json").read_text(encoding="utf-8")
+        )
+        installation["implementation_id"] = "tampered"
+        write_json(self.root / "installation.json", installation)
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(context.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+        self.assertEqual(self.core.state(), state_before)
+        self.assertFalse(Path(plan["target_root"]).exists())
+
+    def test_draft_installation_migration_rejects_new_control_root_file(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        plan = self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        (self.root / "new-authoritative.json").write_text("{}\n", encoding="utf-8")
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(context.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+        self.assertEqual(self.core.state()["status"], "active")
+        self.assertFalse(Path(plan["target_root"]).exists())
+
+    def test_draft_installation_migration_rejects_symlinked_snapshot_target(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        plan = self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        external_checkpoint = self.workspace / "external-checkpoint"
+        for item in plan["files"]:
+            source = self.root / item["source_ref"]
+            destination = external_checkpoint / item["source_ref"]
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source.read_bytes())
+        target = Path(plan["target_root"])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.symlink_to(external_checkpoint, target_is_directory=True)
+        state_before = self.core.state()
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(context.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+        self.assertEqual(self.core.state(), state_before)
+        self.assertTrue(target.is_symlink())
+
+    def test_draft_installation_migration_rejects_symlinked_snapshot_root(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        external_snapshots = self.workspace / "external-snapshots"
+        external_snapshots.mkdir()
+        snapshot_root = self.root / "migration-snapshots"
+        snapshot_root.symlink_to(external_snapshots, target_is_directory=True)
+        state_before = self.core.state()
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(context.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+        self.assertEqual(self.core.state(), state_before)
+        self.assertEqual(list(external_snapshots.iterdir()), [])
+
+    def test_legacy_migration_plan_rejects_symlinked_source_root(self) -> None:
+        self._bootstrap()
+        external_legacy = self.workspace / "external-legacy"
+        external_legacy.mkdir()
+        (external_legacy / "private-evidence.md").write_text(
+            "outside workspace\n", encoding="utf-8"
+        )
+        (self.workspace / ".herdr-loop").symlink_to(
+            external_legacy, target_is_directory=True
+        )
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_plan(self.workspace, target_version="0.3.0")
+
+        self.assertEqual(context.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+        self.assertFalse((self.root / "legacy").exists())
+
+    def test_draft_installation_migration_rejects_missing_applied_snapshot(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        plan = self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        self.core.migrate_apply(self.workspace, approve=True)
+        snapshot = Path(plan["target_root"])
+        shutil.rmtree(snapshot)
+        state_before = self.core.state()
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(context.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+        self.assertEqual(self.core.state(), state_before)
+        self.assertFalse(snapshot.exists())
+
+    def test_draft_installation_migration_rejects_rehashed_stable_document_drift(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        self.core.migrate_apply(self.workspace, approve=True)
+        state_before = self.core.state()
+
+        installation = self.core._installation()
+        installation["implementation_id"] = "forged-runtime"
+        write_json(self.core.installation_path, installation)
+        manifest_path = self.root / "protocol-manifest.json"
+        manifest = self.core._manifest()
+        manifest["implementation_id"] = "forged-runtime"
+        manifest["enabled_extension_namespaces"] = ["forged-extension"]
+        manifest["manifest_digest"] = digest_without(manifest, "manifest_digest")
+        write_json(manifest_path, manifest)
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(context.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+        self.assertEqual(self.core.state(), state_before)
+        self.assertEqual(self.core._installation()["implementation_id"], "forged-runtime")
+        self.assertEqual(
+            self.core._manifest()["enabled_extension_namespaces"],
+            ["forged-extension"],
+        )
+
+    def test_draft_installation_migration_recomputes_task_and_plugin_bindings(self) -> None:
+        self._bootstrap()
+        self._finish_task("bound-draft-task")
+        self._mark_task_as_draft("bound-draft-task")
+        plugin = self.root / "plugins" / "bound-plugin" / "manifest.json"
+        plugin.parent.mkdir(parents=True)
+        plugin.write_text("{}\n", encoding="utf-8")
+        self._mark_installation_as_draft()
+        plan = self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        plan["affected_tasks"] = []
+        plan["affected_plugins"] = []
+        plan["plan_digest"] = digest_without(plan, "plan_digest")
+        write_json(self.root / "migration-plan.json", plan)
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(context.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+        self.assertEqual(self.core.state()["status"], "active")
+
+    def test_migration_cli_applies_exact_external_plan(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        plan = self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        external_plan = self.workspace / "approved-migration-plan.json"
+        write_json(external_plan, plan)
+        write_json(self.root / "migration-plan.json", {"invalid": True})
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            code = main([
+                "protocol",
+                "migrate",
+                "--root",
+                str(self.root),
+                "--workspace",
+                str(self.workspace),
+                "--plan",
+                str(external_plan),
+                "--apply",
+                "--approve",
+                "--json",
+            ])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output.getvalue())["status"], "applied")
+        self.assertEqual(self.core.state()["status"], "active")
+
+    def test_draft_migration_schema_and_runtime_reject_missing_contract_field(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        plan = self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        plan.pop("expected_registry_revision")
+        plan["plan_digest"] = digest_without(plan, "plan_digest")
+        schema = json.loads(
+            (ROOT / "schemas" / "migration-plan.schema.json").read_text(encoding="utf-8")
+        )
+
+        self.assertTrue(list(Draft202012Validator(schema).iter_errors(plan)))
+        external_plan = self.workspace / "incomplete-migration-plan.json"
+        write_json(external_plan, plan)
+        with self.assertRaises(ControlPlaneError) as staged:
+            self.core.stage_migration_plan(external_plan)
+        self.assertEqual(staged.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+        write_json(self.root / "migration-plan.json", plan)
+        with self.assertRaises(ControlPlaneError) as applied:
+            self.core.migrate_apply(self.workspace, approve=True)
+        self.assertEqual(applied.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+
+    def test_migration_plan_rejects_unsafe_id_and_malformed_optional_fields(self) -> None:
+        self._bootstrap()
+        plan = self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        schema = json.loads(
+            (ROOT / "schemas" / "migration-plan.schema.json").read_text(encoding="utf-8")
+        )
+        external_plan = self.workspace / "unsafe-migration-plan.json"
+
+        plan["migration_id"] = "x/../../outside"
+        plan["plan_digest"] = digest_without(plan, "plan_digest")
+        self.assertTrue(list(Draft202012Validator(schema).iter_errors(plan)))
+        write_json(external_plan, plan)
+        with self.assertRaises(ControlPlaneError) as unsafe:
+            self.core.stage_migration_plan(external_plan)
+        self.assertEqual(unsafe.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+
+        plan = self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        plan["ordered_transforms"] = [1]
+        plan["plan_digest"] = digest_without(plan, "plan_digest")
+        self.assertTrue(list(Draft202012Validator(schema).iter_errors(plan)))
+        write_json(external_plan, plan)
+        with self.assertRaises(ControlPlaneError) as malformed:
+            self.core.stage_migration_plan(external_plan)
+        self.assertEqual(malformed.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+
+    def test_legacy_migration_resumes_after_applied_receipt_interruption(self) -> None:
+        self._bootstrap()
+        legacy_file = self.workspace / ".herdr-loop" / "tasks" / "legacy" / "evidence.md"
+        legacy_file.parent.mkdir(parents=True)
+        legacy_file.write_text("legacy evidence\n", encoding="utf-8")
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        original_transition = self.core._transition_unlocked
+
+        def interrupt_activation(**kwargs: object) -> dict:
+            if kwargs.get("event_kind") == "migration_activated":
+                raise KeyboardInterrupt("simulated legacy activation interruption")
+            return original_transition(**kwargs)
+
+        with patch.object(self.core, "_transition_unlocked", side_effect=interrupt_activation):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core.migrate_apply(self.workspace, approve=True)
+
+        interrupted_receipt = json.loads(
+            (self.root / "migration-receipt.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(interrupted_receipt["status"], "applied")
+        self.assertEqual(self.core.state()["status"], "migrating")
+        resumed = self.core.migrate_apply(self.workspace, approve=True)
+        self.assertEqual(resumed, interrupted_receipt)
+        self.assertEqual(self.core.state()["status"], "active")
+        self.assertEqual(
+            (self.root / "legacy" / "tasks" / "legacy" / "evidence.md").read_text(encoding="utf-8"),
+            "legacy evidence\n",
+        )
+
+    def test_legacy_migration_resumes_after_partial_staging_copy(self) -> None:
+        self._bootstrap()
+        legacy_file = self.workspace / ".herdr-loop" / "tasks" / "legacy" / "evidence.md"
+        legacy_file.parent.mkdir(parents=True)
+        legacy_file.write_text("legacy evidence\n", encoding="utf-8")
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+
+        def interrupt_copy(source: Path, target: Path) -> None:
+            partial = Path(target) / "tasks" / "legacy" / "evidence.md"
+            partial.parent.mkdir(parents=True)
+            partial.write_text("partial", encoding="utf-8")
+            raise KeyboardInterrupt("simulated legacy copy interruption")
+
+        with patch("valp_cli.control_plane.shutil.copytree", side_effect=interrupt_copy):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(self.core.state()["status"], "migrating")
+        receipt = self.core.migrate_apply(self.workspace, approve=True)
+        self.assertEqual(receipt["status"], "applied")
+        self.assertEqual(self.core.state()["status"], "active")
+        self.assertEqual(
+            (self.root / "legacy" / "tasks" / "legacy" / "evidence.md").read_text(encoding="utf-8"),
+            "legacy evidence\n",
+        )
+
+    def test_legacy_migration_rejects_corrupt_target_with_applied_receipt(self) -> None:
+        self._bootstrap()
+        legacy_file = self.workspace / ".herdr-loop" / "tasks" / "legacy" / "evidence.md"
+        legacy_file.parent.mkdir(parents=True)
+        legacy_file.write_text("legacy evidence\n", encoding="utf-8")
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        original_transition = self.core._transition_unlocked
+
+        def interrupt_activation(**kwargs: object) -> dict:
+            if kwargs.get("event_kind") == "migration_activated":
+                raise KeyboardInterrupt("simulated legacy activation interruption")
+            return original_transition(**kwargs)
+
+        with patch.object(self.core, "_transition_unlocked", side_effect=interrupt_activation):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core.migrate_apply(self.workspace, approve=True)
+        (self.root / "legacy" / "tasks" / "legacy" / "evidence.md").write_text(
+            "corrupt\n", encoding="utf-8"
+        )
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_apply(self.workspace, approve=True)
+        self.assertEqual(context.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+        self.assertEqual(self.core.state()["status"], "migrating")
+
+    def test_draft_installation_migration_rolls_back_activation_failure(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        plan = self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        original_installation = (self.root / "installation.json").read_bytes()
+        original_manifest = (self.root / "protocol-manifest.json").read_bytes()
+        failed_once = False
+
+        def fail_first_receipt(path: Path, value: dict) -> None:
+            nonlocal failed_once
+            if path.name == "migration-receipt.json" and not failed_once:
+                failed_once = True
+                raise OSError("simulated receipt write failure")
+            write_json(path, value)
+
+        with patch("valp_cli.control_plane.write_json", side_effect=fail_first_receipt):
+            with self.assertRaises(OSError):
+                self.core.migrate_apply(self.workspace, approve=True)
+
+        installation = json.loads(
+            (self.root / "installation.json").read_text(encoding="utf-8")
+        )
+        manifest = json.loads(
+            (self.root / "protocol-manifest.json").read_text(encoding="utf-8")
+        )
+        receipt = json.loads(
+            (self.root / "migration-receipt.json").read_text(encoding="utf-8")
+        )
+        snapshot = Path(plan["target_root"])
+        self.assertEqual(installation["active_protocol_version"], "0.3.0-draft")
+        self.assertEqual(installation["installation_status"], "active")
+        self.assertEqual(manifest["active_protocol_version"], "0.3.0-draft")
+        self.assertEqual(receipt["status"], "rolled_back")
+        self.assertEqual((snapshot / "installation.json").read_bytes(), original_installation)
+        self.assertEqual((snapshot / "protocol-manifest.json").read_bytes(), original_manifest)
+        self.assertEqual(self.core.state()["status"], "active")
+
+    def test_draft_installation_migration_resumes_after_activation_interruption(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        original_transition = self.core._transition_unlocked
+
+        def interrupt_activation(**kwargs: object) -> dict:
+            if kwargs.get("event_kind") == "migration_activated":
+                raise KeyboardInterrupt("simulated process interruption")
+            return original_transition(**kwargs)
+
+        with patch.object(
+            self.core,
+            "_transition_unlocked",
+            side_effect=interrupt_activation,
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core.migrate_apply(self.workspace, approve=True)
+
+        interrupted_receipt = json.loads(
+            (self.root / "migration-receipt.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(interrupted_receipt["status"], "applied")
+        self.assertEqual(self.core.state()["status"], "migrating")
+
+        resumed_receipt = self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(resumed_receipt, interrupted_receipt)
+        self.assertEqual(self.core.state()["status"], "active")
+        self.assertEqual(self.core._installation()["active_protocol_version"], "0.3.0")
+
+    def test_draft_installation_migration_resume_rejects_plugin_byte_drift(self) -> None:
+        self._bootstrap()
+        plugin = self.root / "plugins" / "bound-plugin" / "manifest.json"
+        plugin.parent.mkdir(parents=True)
+        plugin.write_text('{"version": 1}\n', encoding="utf-8")
+        self._mark_installation_as_draft()
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        original_transition = self.core._transition_unlocked
+
+        def interrupt_activation(**kwargs: object) -> dict:
+            if kwargs.get("event_kind") == "migration_activated":
+                raise KeyboardInterrupt("simulated process interruption")
+            return original_transition(**kwargs)
+
+        with patch.object(
+            self.core,
+            "_transition_unlocked",
+            side_effect=interrupt_activation,
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core.migrate_apply(self.workspace, approve=True)
+
+        plugin.write_text('{"version": 2}\n', encoding="utf-8")
+        self.assertEqual(self.core.state()["status"], "migrating")
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(context.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+        self.assertEqual(self.core.state()["status"], "migrating")
+
+    def test_draft_installation_migration_resume_rejects_leader_binding_drift(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        original_transition = self.core._transition_unlocked
+
+        def interrupt_activation(**kwargs: object) -> dict:
+            if kwargs.get("event_kind") == "migration_activated":
+                raise KeyboardInterrupt("simulated process interruption")
+            return original_transition(**kwargs)
+
+        with patch.object(
+            self.core,
+            "_transition_unlocked",
+            side_effect=interrupt_activation,
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core.migrate_apply(self.workspace, approve=True)
+
+        binding_path = self.root / "leader-session-binding.json"
+        binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        binding["runtime_identity"]["session_id"] = "forged-session"
+        binding["binding_digest"] = digest_without(binding, "binding_digest")
+        write_json(binding_path, binding)
+        self.assertEqual(self.core.state()["status"], "migrating")
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(context.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+        self.assertEqual(self.core.state()["status"], "migrating")
+
+    def test_draft_installation_migration_rolls_forward_pending_activation_journal(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        failed_once = False
+
+        def fail_activation_state_write(path: Path, value: dict) -> None:
+            nonlocal failed_once
+            if path.name == "state.json" and value.get("status") == "active" and not failed_once:
+                failed_once = True
+                raise OSError("simulated activation state write failure")
+            write_json(path, value)
+
+        with patch("valp_cli.control_plane.write_json", side_effect=fail_activation_state_write):
+            with self.assertRaises(OSError):
+                self.core.migrate_apply(self.workspace, approve=True)
+
+        interrupted_receipt = json.loads(
+            (self.root / "migration-receipt.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(interrupted_receipt["status"], "applied")
+        self.assertEqual(self.core.state()["status"], "migrating")
+        self.assertTrue((self.root / "transition-journal.json").is_file())
+        resumed = self.core.migrate_apply(self.workspace, approve=True)
+        self.assertEqual(resumed, interrupted_receipt)
+        self.assertEqual(self.core.state()["status"], "active")
+        self.assertEqual(self.core._installation()["active_protocol_version"], "0.3.0")
+        self.assertEqual(self.core._manifest()["active_protocol_version"], "0.3.0")
+        self.assertFalse((self.root / "transition-journal.json").exists())
+
+    def test_draft_installation_migration_resumes_after_partial_version_write(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+
+        def interrupt_manifest_write(path: Path, value: dict) -> None:
+            if (
+                path.name == "protocol-manifest.json"
+                and value.get("active_protocol_version") == "0.3.0"
+            ):
+                raise KeyboardInterrupt("simulated process interruption")
+            write_json(path, value)
+
+        with patch("valp_cli.control_plane.write_json", side_effect=interrupt_manifest_write):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(self.core.state()["status"], "migrating")
+        self.assertEqual(self.core._installation()["active_protocol_version"], "0.3.0")
+        self.assertEqual(self.core._manifest()["active_protocol_version"], "0.3.0-draft")
+
+        receipt = self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(receipt["status"], "applied")
+        self.assertEqual(self.core.state()["status"], "active")
+        self.assertEqual(self.core._manifest()["active_protocol_version"], "0.3.0")
+
+    def test_draft_installation_migration_recovers_partial_control_transition(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+
+        def interrupt_migration_event(path: Path, value: dict) -> None:
+            if (
+                path.name == "events.jsonl"
+                and value.get("event_kind") == "migration_apply_approved"
+            ):
+                raise KeyboardInterrupt("simulated transition interruption")
+            append_jsonl_atomic(path, value)
+
+        with patch("valp_cli.control_plane.append_jsonl_atomic", side_effect=interrupt_migration_event):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertTrue((self.root / "transition-journal.json").is_file())
+        self.assertEqual(self.core.state()["status"], "active")
+
+        receipt = self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(receipt["status"], "applied")
+        self.assertEqual(self.core.state()["status"], "active")
+        self.assertFalse((self.root / "transition-journal.json").exists())
+
+    def test_draft_installation_migration_recovers_before_state_commit(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+
+        def interrupt_state_write(path: Path, value: dict) -> None:
+            if path.name == "state.json" and value.get("status") == "migrating":
+                raise KeyboardInterrupt("simulated state commit interruption")
+            write_json(path, value)
+
+        with patch("valp_cli.control_plane.write_json", side_effect=interrupt_state_write):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertTrue((self.root / "transition-journal.json").is_file())
+
+        receipt = self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(receipt["status"], "applied")
+        self.assertEqual(self.core.state()["status"], "active")
+        self.assertFalse((self.root / "transition-journal.json").exists())
+
+    def test_draft_installation_migration_recovers_before_installation_commit(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+
+        def interrupt_installation_write(path: Path, value: dict) -> None:
+            if path.name == "installation.json" and value.get("installation_status") == "migrating":
+                raise KeyboardInterrupt("simulated installation commit interruption")
+            write_json(path, value)
+
+        with patch("valp_cli.control_plane.write_json", side_effect=interrupt_installation_write):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertTrue((self.root / "transition-journal.json").is_file())
+
+        receipt = self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(receipt["status"], "applied")
+        self.assertEqual(self.core.state()["status"], "active")
+        self.assertFalse((self.root / "transition-journal.json").exists())
+
+    def test_transition_recovery_rejects_rehashed_authority_mismatch(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+
+        def interrupt_migration_event(path: Path, value: dict) -> None:
+            if path.name == "events.jsonl" and value.get("event_kind") == "migration_apply_approved":
+                raise KeyboardInterrupt("simulated transition interruption")
+            append_jsonl_atomic(path, value)
+
+        with patch("valp_cli.control_plane.append_jsonl_atomic", side_effect=interrupt_migration_event):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core.migrate_apply(self.workspace, approve=True)
+
+        journal_path = self.root / "transition-journal.json"
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        journal["message"]["sender_principal_id"] = "forged-principal"
+        journal["message"]["message_digest"] = digest_without(
+            journal["message"], "message_digest"
+        )
+        journal["journal_digest"] = digest_without(journal, "journal_digest")
+        write_json(journal_path, journal)
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_apply(self.workspace, approve=True)
+        self.assertEqual(context.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+
+    def test_transition_recovery_rejects_self_consistent_forged_authority(self) -> None:
+        self._bootstrap()
+        state = self.core.state()
+        with patch.object(
+            self.core,
+            "_commit_transition_journal_unlocked",
+            side_effect=KeyboardInterrupt("stop before ledger append"),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core._transition(
+                    event_kind="migration_apply_approved",
+                    message_kind="command.protocol.migrate",
+                    principal_id="user",
+                    principal_kind="human",
+                    epoch=state["active_leader_epoch"],
+                    expected_revision=state["revision"],
+                    payload={"migration_id": "migration-test", "plan_digest": "sha256:" + "1" * 64},
+                    target_status="migrating",
+                    idempotency_key="test-forged-journal-authority",
+                )
+
+        journal_path = self.root / "transition-journal.json"
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        message = journal["message"]
+        event = journal["event"]
+        message["sender_principal_id"] = "forged-principal"
+        message["sender_kind"] = "human"
+        message["content_digest"] = digest_value({
+            "kind": message["kind"],
+            "principal_id": message["sender_principal_id"],
+            "epoch": message["leader_epoch"],
+            "expected_revision": message["expected_state_revision"],
+            "payload": message["payload"],
+        })
+        event["actor_principal_id"] = "forged-principal"
+        message["message_digest"] = digest_without(message, "message_digest")
+        event["event_digest"] = digest_without(event, "event_digest")
+        journal["next_state"]["last_event_digest"] = event["event_digest"]
+        journal["next_state"]["projection_digest"] = digest_without(
+            journal["next_state"], "projection_digest"
+        )
+        journal["journal_digest"] = digest_without(journal, "journal_digest")
+        write_json(journal_path, journal)
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core._recover_transition_unlocked()
+
+        self.assertEqual(context.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+        self.assertEqual(self.core.state(), state)
+        self.assertTrue(journal_path.exists())
+
+    def test_transition_recovery_rejects_rehashed_embedded_projection_mismatch(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+
+        def interrupt_migration_event(path: Path, value: dict) -> None:
+            if path.name == "events.jsonl" and value.get("event_kind") == "migration_apply_approved":
+                raise KeyboardInterrupt("simulated transition interruption")
+            append_jsonl_atomic(path, value)
+
+        with patch("valp_cli.control_plane.append_jsonl_atomic", side_effect=interrupt_migration_event):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core.migrate_apply(self.workspace, approve=True)
+
+        journal_path = self.root / "transition-journal.json"
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        projection = journal["event"]["payload"]["state_projection"]
+        projection["active_leader_epoch"] = projection["active_leader_epoch"] + 100
+        projection["projection_digest"] = digest_without(projection, "projection_digest")
+        journal["event"]["event_digest"] = digest_without(journal["event"], "event_digest")
+        journal["journal_digest"] = digest_without(journal, "journal_digest")
+        write_json(journal_path, journal)
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_apply(self.workspace, approve=True)
+        self.assertEqual(context.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+
+    def test_transition_recovery_validates_both_ledgers_before_append(self) -> None:
+        self._bootstrap()
+        state = self.core.state()
+        with patch.object(
+            self.core,
+            "_commit_transition_journal_unlocked",
+            side_effect=KeyboardInterrupt("stop before ledger append"),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core._transition(
+                    event_kind="migration_apply_approved",
+                    message_kind="command.protocol.migrate",
+                    principal_id="user",
+                    principal_kind="human",
+                    epoch=state["active_leader_epoch"],
+                    expected_revision=state["revision"],
+                    payload={"migration_id": "migration-test", "plan_digest": "sha256:" + "1" * 64},
+                    target_status="migrating",
+                    idempotency_key="test-pending-ledger-validation",
+                )
+        journal_path = self.root / "transition-journal.json"
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        journal["event"]["prior_event_digest"] = "sha256:" + "0" * 64
+        journal["event"]["event_digest"] = digest_without(journal["event"], "event_digest")
+        journal["journal_digest"] = digest_without(journal, "journal_digest")
+        write_json(journal_path, journal)
+        message_count = len((self.root / "messages.jsonl").read_text(encoding="utf-8").splitlines())
+        event_count = len((self.root / "events.jsonl").read_text(encoding="utf-8").splitlines())
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core._recover_transition_unlocked()
+
+        self.assertEqual(context.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+        self.assertEqual(
+            len((self.root / "messages.jsonl").read_text(encoding="utf-8").splitlines()),
+            message_count,
+        )
+        self.assertEqual(
+            len((self.root / "events.jsonl").read_text(encoding="utf-8").splitlines()),
+            event_count,
+        )
+
+    def test_transition_recovery_rejects_rehashed_illegal_migration_target_without_advancing_ledgers(self) -> None:
+        self._bootstrap()
+        state = self.core.state()
+        with patch.object(
+            self.core,
+            "_commit_transition_journal_unlocked",
+            side_effect=KeyboardInterrupt("stop before ledger append"),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core._transition(
+                    event_kind="migration_apply_approved",
+                    message_kind="command.protocol.migrate",
+                    principal_id="user",
+                    principal_kind="human",
+                    epoch=state["active_leader_epoch"],
+                    expected_revision=state["revision"],
+                    payload={"migration_id": "migration-test", "plan_digest": "sha256:" + "1" * 64},
+                    target_status="migrating",
+                    idempotency_key="test-illegal-migration-target",
+                )
+
+        journal_path = self.root / "transition-journal.json"
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        journal["message"]["result"]["status"] = "degraded"
+        journal["message"]["message_digest"] = digest_without(
+            journal["message"], "message_digest"
+        )
+        journal["next_state"]["status"] = "degraded"
+        journal["installation"]["installation_status"] = "degraded"
+        projection = dict(journal["next_state"])
+        projection["last_event_digest"] = journal["event"]["prior_event_digest"]
+        projection["projection_digest"] = digest_without(
+            projection, "projection_digest"
+        )
+        journal["event"]["payload"] = dict(
+            journal["message"]["payload"], state_projection=projection
+        )
+        journal["event"]["event_digest"] = digest_without(
+            journal["event"], "event_digest"
+        )
+        journal["next_state"]["last_event_digest"] = journal["event"]["event_digest"]
+        journal["next_state"]["projection_digest"] = digest_without(
+            journal["next_state"], "projection_digest"
+        )
+        journal["journal_digest"] = digest_without(journal, "journal_digest")
+        write_json(journal_path, journal)
+        state_bytes = self.core.state_path.read_bytes()
+        message_bytes = (self.root / "messages.jsonl").read_bytes()
+        event_bytes = (self.root / "events.jsonl").read_bytes()
+        installation_bytes = self.core.installation_path.read_bytes()
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core._recover_transition_unlocked()
+
+        self.assertEqual(context.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+        self.assertEqual(self.core.state_path.read_bytes(), state_bytes)
+        self.assertEqual((self.root / "messages.jsonl").read_bytes(), message_bytes)
+        self.assertEqual((self.root / "events.jsonl").read_bytes(), event_bytes)
+        self.assertEqual(self.core.installation_path.read_bytes(), installation_bytes)
+        self.assertTrue(journal_path.exists())
+
+    def test_transition_recovery_rejects_rehashed_matching_tail_chain_break(self) -> None:
+        self._bootstrap()
+        state = self.core.state()
+        failed_once = False
+
+        def interrupt_state_write(path: Path, value: dict) -> None:
+            nonlocal failed_once
+            if path.name == "state.json" and value.get("status") == "migrating" and not failed_once:
+                failed_once = True
+                raise OSError("stop after ledger append")
+            write_json(path, value)
+
+        with patch("valp_cli.control_plane.write_json", side_effect=interrupt_state_write):
+            with self.assertRaises(OSError):
+                self.core._transition(
+                    event_kind="migration_apply_approved",
+                    message_kind="command.protocol.migrate",
+                    principal_id="user",
+                    principal_kind="human",
+                    epoch=state["active_leader_epoch"],
+                    expected_revision=state["revision"],
+                    payload={"migration_id": "migration-test", "plan_digest": "sha256:" + "1" * 64},
+                    target_status="migrating",
+                    idempotency_key="test-matching-tail-chain-break",
+                )
+
+        journal_path = self.root / "transition-journal.json"
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        event = journal["event"]
+        invalid_prior_digest = "sha256:" + "0" * 64
+        event["prior_event_digest"] = invalid_prior_digest
+        projection = event["payload"]["state_projection"]
+        projection["last_event_digest"] = invalid_prior_digest
+        projection["projection_digest"] = digest_without(
+            projection, "projection_digest"
+        )
+        event["event_digest"] = digest_without(event, "event_digest")
+        journal["next_state"]["last_event_digest"] = event["event_digest"]
+        journal["next_state"]["projection_digest"] = digest_without(
+            journal["next_state"], "projection_digest"
+        )
+        journal["journal_digest"] = digest_without(journal, "journal_digest")
+        write_json(journal_path, journal)
+
+        events_path = self.root / "events.jsonl"
+        events = [
+            json.loads(line)
+            for line in events_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        events[-1] = event
+        events_path.write_text(
+            "".join(
+                json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n"
+                for item in events
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core._recover_transition_unlocked()
+
+        self.assertEqual(context.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+        self.assertEqual(self.core.state(), state)
+        self.assertTrue(journal_path.exists())
+
+    def test_draft_installation_migration_rejects_tampered_applied_receipt(self) -> None:
+        self._bootstrap()
+        self._mark_installation_as_draft()
+        self.core.migrate_plan(self.workspace, target_version="0.3.0")
+        self.core.migrate_apply(self.workspace, approve=True)
+        receipt_path = self.root / "migration-receipt.json"
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt["created_at"] = "tampered"
+        write_json(receipt_path, receipt)
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(context.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+        self.assertEqual(self.core.state()["status"], "active")
+
+    def test_draft_installation_migration_does_not_promote_degraded_state(self) -> None:
+        self._bootstrap()
+        state = json.loads(self.core.state_path.read_text(encoding="utf-8"))
+        state["status"] = "degraded"
+        state["active_blockers"] = ["test blocker"]
+        state["projection_digest"] = digest_without(state, "projection_digest")
+        write_json(self.core.state_path, state)
+        installation = self.core._installation()
+        installation["installation_status"] = "degraded"
+        write_json(self.core.installation_path, installation)
+        self._mark_installation_as_draft()
+        plan = self.core.migrate_plan(self.workspace, target_version="0.3.0")
+
+        with self.assertRaises(ControlPlaneError) as context:
+            self.core.migrate_apply(self.workspace, approve=True)
+
+        self.assertEqual(context.exception.code, "VALP-E-STATE-TRANSITION")
+        self.assertEqual(self.core.state()["status"], "degraded")
+        self.assertFalse(Path(plan["target_root"]).exists())
+
+    def test_draft_task_is_read_only_under_stable_installation(self) -> None:
+        self._bootstrap()
+        init_task(self.root, "legacy-draft-task")
+        self._mark_task_as_draft("legacy-draft-task")
+
+        with self.assertRaises(ControlPlaneError) as context:
+            transition_task(self.root, "legacy-draft-task", "published")
+
+        self.assertEqual(context.exception.code, "VALP-E-MIGRATION-UNSUPPORTED")
+
     def test_event_replay_detects_tampering(self) -> None:
         self._bootstrap()
         events = self.root / "events.jsonl"
@@ -974,6 +2313,72 @@ class ControlPlaneTests(unittest.TestCase):
         with self.assertRaises(ControlPlaneError) as context:
             self.core.replay()
         self.assertEqual(context.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+
+    def test_event_replay_detects_rehashed_projection_only_tampering(self) -> None:
+        self._bootstrap()
+        original = json.loads(self.core.state_path.read_text(encoding="utf-8"))
+        for field, value in (
+            ("active_leader_epoch", original["active_leader_epoch"] + 7),
+            ("registry_revision", original["registry_revision"] + 7),
+            ("active_blockers", ["forged-blocker"]),
+        ):
+            with self.subTest(field=field):
+                tampered = dict(original)
+                tampered[field] = value
+                tampered["projection_digest"] = digest_without(tampered, "projection_digest")
+                write_json(self.core.state_path, tampered)
+                with self.assertRaises(ControlPlaneError) as context:
+                    self.core.replay()
+                self.assertEqual(context.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+                write_json(self.core.state_path, original)
+
+    def test_event_replay_rejects_pending_journal_and_orphan_message(self) -> None:
+        self._bootstrap()
+        state = self.core.state()
+        with patch.object(
+            self.core,
+            "_commit_transition_journal_unlocked",
+            side_effect=KeyboardInterrupt("stop before ledger append"),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                self.core._transition(
+                    event_kind="migration_apply_approved",
+                    message_kind="command.protocol.migrate",
+                    principal_id="user",
+                    principal_kind="human",
+                    epoch=state["active_leader_epoch"],
+                    expected_revision=state["revision"],
+                    payload={"migration_id": "migration-test", "plan_digest": "sha256:" + "1" * 64},
+                    target_status="migrating",
+                    idempotency_key="test-pending-replay",
+                )
+        journal_path = self.root / "transition-journal.json"
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        with self.assertRaises(ControlPlaneError) as pending:
+            self.core.replay()
+        self.assertEqual(pending.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+
+        journal_path.unlink()
+        append_jsonl_atomic(self.root / "messages.jsonl", journal["message"])
+        with self.assertRaises(ControlPlaneError) as orphan:
+            self.core.replay()
+        self.assertEqual(orphan.exception.code, "VALP-E-REGISTRY-CONSISTENCY")
+
+    def test_state_cli_shows_and_replays_installation_and_task(self) -> None:
+        self._bootstrap()
+        init_task(self.root, "state-cli-task")
+        for arguments, expected_status in (
+            (["state", "show"], "active"),
+            (["state", "replay", "--check"], "active"),
+            (["state", "show", "--task", "state-cli-task"], "new"),
+            (["state", "replay", "--task", "state-cli-task", "--check"], "new"),
+        ):
+            with self.subTest(arguments=arguments):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    code = main(arguments + ["--root", str(self.root), "--json"])
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads(output.getvalue())["status"], expected_status)
 
     def test_generated_core_artifacts_match_schemas(self) -> None:
         self._bootstrap()
@@ -1012,8 +2417,8 @@ class ControlPlaneTests(unittest.TestCase):
             "plugin_id": "safe-discovery",
             "implementation_id": "test",
             "plugin_kind": "discovery",
-            "protocol_read_versions": ["0.3.0-draft"],
-            "protocol_write_versions": ["0.3.0-draft"],
+            "protocol_read_versions": ["0.3.0"],
+            "protocol_write_versions": ["0.3.0"],
             "entrypoint": "test:run",
             "permissions": ["capability.observe"],
             "provided_capabilities": ["coordination"],

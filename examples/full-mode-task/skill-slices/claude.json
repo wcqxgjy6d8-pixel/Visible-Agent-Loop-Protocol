@@ -11,7 +11,7 @@
       "task": "review the changed refs and risks",
       "confidence": 0.8,
       "provider": "claude",
-      "path": "/Users/example/.claude/skills/product-operating-layer/SKILL.md",
+      "path": "skill://claude/product-operating-layer",
       "decision": "auto-load"
     }
   ],

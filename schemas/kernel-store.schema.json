@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://visible-agent-loop.dev/schemas/kernel-store.schema.json",
+  "title": "VALP Kernel Store Checkpoint Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "root", "authentication"],
+  "properties": {
+    "schema_version": {"const": "valp-kernel-checkpoint-envelope.v1"},
+    "root": {
+      "$ref": "https://valp.dev/schema/protocol-kernel.v1.json#/$defs/checkpointRoot"
+    },
+    "authentication": {
+      "$ref": "https://valp.dev/schema/protocol-kernel.v1.json#/$defs/checkpointAuthentication"
+    }
+  }
+}

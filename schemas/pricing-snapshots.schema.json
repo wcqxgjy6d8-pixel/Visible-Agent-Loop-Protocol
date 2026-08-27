@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VALP Provider-Neutral Pricing Snapshots",
+  "type": "object",
+  "required": ["schema_version", "task_id", "snapshots"],
+  "properties": {
+    "schema_version": {"const": "valp-pricing-snapshots.v1"},
+    "task_id": {"type": "string"},
+    "snapshots": {"type": "array", "items": {"$ref": "#/$defs/snapshot"}}
+  },
+  "$defs": {
+    "snapshot": {
+      "type": "object",
+      "required": ["schema_version", "snapshot_id", "provider", "model", "currency", "effective_at", "rates_per_million_tokens"],
+      "properties": {
+        "schema_version": {"const": "valp-pricing-snapshot.v1"}, "snapshot_id": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1}, "model": {"type": "string", "minLength": 1}, "currency": {"const": "USD"},
+        "effective_at": {"type": "string", "format": "date-time"},
+        "rates_per_million_tokens": {"type": "object", "required": ["official_list", "relay_account", "subscription_marginal"], "additionalProperties": false,
+          "properties": {"official_list": {"$ref": "#/$defs/rate"}, "relay_account": {"$ref": "#/$defs/rate"}, "subscription_marginal": {"$ref": "#/$defs/rate"}}}
+      }, "additionalProperties": false
+    },
+    "rate": {"type": "object", "required": ["input", "output"], "properties": {"input": {"type": ["string", "number"]}, "output": {"type": ["string", "number"]}}, "additionalProperties": false}
+  }, "additionalProperties": false
+}

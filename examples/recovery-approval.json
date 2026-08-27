@@ -1,0 +1,12 @@
+{
+  "schema_version": "valp-recovery-approval.v1",
+  "approval_id": "approval-example-1",
+  "approval_ref": "approvals/example.json",
+  "approver_identity": "user:example",
+  "approved_at": "2026-08-26T10:00:01Z",
+  "expires_at": "2026-08-26T10:05:01Z",
+  "plan_digest": "sha256:6c25601421ff3c86e82bada12648ce7ed6cb52daaabb278a4ab3e1e6a96b9c52",
+  "action_digest": "sha256:08446861f310750ef95a54d9b8b6ed095c6daa9104283bb2b3fd96803503b4ed",
+  "authority": {"mcp.process": "L2"},
+  "approval_digest": "sha256:71a9b374b9d2286303f6027be3cd9742cc9c9ca964b244be2f6d67ba50d44f9f"
+}

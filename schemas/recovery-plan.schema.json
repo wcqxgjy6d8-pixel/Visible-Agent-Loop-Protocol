@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/recovery-plan.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "plan_id", "plan_digest", "generated_at", "workspace", "source_identity", "dependency_evidence", "pre_observation_digest", "diagnostics", "authority", "action", "proof_ttl_seconds", "status"],
+  "properties": {
+    "schema_version": {"const": "valp-recovery-plan.v1"},
+    "plan_id": {"type": "string", "pattern": "^recovery-[0-9a-f]{16}$"},
+    "plan_digest": {"$ref": "#/$defs/digest"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "workspace": {"type": "string", "minLength": 1},
+    "source_identity": {"$ref": "#/$defs/evidence"},
+    "dependency_evidence": {"$ref": "#/$defs/evidence"},
+    "pre_observation_digest": {"$ref": "#/$defs/digest"},
+    "diagnostics": {"type": "array"},
+    "authority": {"type": "object", "additionalProperties": false, "required": ["mcp.process"], "properties": {"mcp.process": {"const": "L2"}}},
+    "action": {"$ref": "#/$defs/action"},
+    "proof_ttl_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
+    "status": {"const": "approval_required"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "evidence": {"type": "object", "required": ["digest", "facts"], "properties": {"digest": {"$ref": "#/$defs/digest"}, "facts": {"type": "object"}}},
+    "action": {"type": "object", "additionalProperties": false, "required": ["action_id", "kind", "resource", "timeout_seconds", "max_attempts", "rollback", "verification", "action_digest"], "properties": {"action_id": {"const": "action-1"}, "kind": {"const": "mcp.process.restart"}, "resource": {"type": "object", "required": ["schema_version", "kind", "resource_id", "resource_version", "resource_digest"]}, "timeout_seconds": {"type": "integer", "minimum": 1}, "max_attempts": {"const": 1}, "rollback": {"type": "object", "additionalProperties": false, "required": ["kind", "token_digest"], "properties": {"kind": {"const": "provider.rollback"}, "token_digest": {"$ref": "#/$defs/digest"}}}, "verification": {"const": "independent-doctor-observation"}, "action_digest": {"$ref": "#/$defs/digest"}}}
+  }
+}

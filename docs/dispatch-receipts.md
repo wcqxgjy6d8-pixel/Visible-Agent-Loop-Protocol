@@ -123,10 +123,12 @@ valp dispatch <task-id> --workspace <root> \
 This is not the transport-failure retry. The command first requires one exact
 prior submission, no conflicting terminal receipt, the unchanged routed
 identity, and a matching immutable control contract and agent slice. If every
-expected ref is already valid, it appends the identity-bound
+expected ref is already valid and differs from the baseline captured by the
+submission it belongs to, it appends the identity-bound
 `dispatch_completed` receipt for the original submission without HERDR
 preflight, worker submission, or a retry receipt. If every ref remains absent
-or invalid, it performs the one bounded resubmission; that retry receipt
+or invalid, including unchanged pre-submission evidence, it performs the one
+bounded resubmission; that retry receipt
 preserves the original identity, adds `retry_generation: 1`, and binds both the
 originating receipt ID and control-contract digest in `proof.recovery`. Partial
 evidence, a repeat or different identity, retry generation 2, and any attempt

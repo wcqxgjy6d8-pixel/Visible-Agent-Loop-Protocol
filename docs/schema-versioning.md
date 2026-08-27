@@ -4,7 +4,7 @@ VALP has two version layers:
 
 | Layer | Example | Meaning |
 |---|---|---|
-| protocol version | `0.2.0` | Human-readable contract: lifecycle, receipts, adapters, gates, Done Criteria |
+| protocol version | `0.3.0` | Human-readable contract: lifecycle, receipts, adapters, gates, Done Criteria |
 | schema version | `valp-capability-routing.v1` | Machine-readable artifact shape for one JSON/JSONL file |
 
 Schema versions are independent from protocol versions. A protocol release can

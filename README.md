@@ -72,7 +72,7 @@ task ledger and can never become routing, evidence, or audit authority.
 ## Current Status
 
 VALP source defines the `0.3.0` protocol candidate and an MIT-licensed
-`0.3.0rc1` reference CLI. Evaluate it only from a candidate branch at its exact
+`0.3.0` reference CLI. Evaluate it only from a candidate branch at its exact
 SHA. It is not a stable release until the RFC-required real non-HERDR E2E,
 profile-specific conformance, required checks, external review, merge,
 immutable tag, release metadata, and post-release smoke checks are complete.
@@ -135,7 +135,7 @@ for the current evidence and gap matrix.
 ## v0.3.0 Protocol Candidate And Reference CLI
 
 The protocol wire/version target is `0.3.0`; the current reference CLI package
-is `0.3.0rc1`. RFC 0001 semantics are incorporated into `SPEC.md`, schemas, and
+is `0.3.0`. RFC 0001 semantics are incorporated into `SPEC.md`, schemas, and
 the reference CLI, but its stable-version Done Criteria are not yet closed.
 Read the [implementation guide](docs/v0.3-implementation.md) and the
 [accepted RFC](docs/rfcs/0001-v0.3-installation-control-plane.md).
@@ -750,7 +750,7 @@ Visible-Agent-Loop-Protocol/
 
 ## Status
 
-Protocol target `0.3.0` and reference CLI `0.3.0rc1` are publication
+Protocol target `0.3.0` and reference CLI `0.3.0` are publication
 candidates; external review, same-commit CI, merge, tag, release, and
 post-release smoke remain pending. HERDR remains the current reference runtime,
 not a protocol requirement.

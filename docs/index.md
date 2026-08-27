@@ -54,7 +54,7 @@ Neo4j is not part of this candidate. A future version may use it as an optional
 ontology projection, but never as protocol truth, completion proof, or audit
 authority.
 
-VALP source currently defines the `0.3.0` protocol candidate and `0.3.0rc1`
+VALP source currently defines the `0.3.0` protocol candidate and `0.3.0`
 reference CLI. Stable status, external review, same-commit CI, merge, tag,
 release, and post-release smoke remain pending. It is not a hosted production
 platform.
@@ -103,13 +103,13 @@ against real proof without replaying effects.
 This remains a bounded Kernel and Reference System implementation, not proof of
 every external runtime, platform, or production deployment. No cross-platform
 parity or release support is claimed. The protocol target is `0.3.0` and the
-current reference CLI is `0.3.0rc1`. See the [promotion-readiness matrix](layered-runtime-promotion-readiness.md)
+current reference CLI is `0.3.0`. See the [promotion-readiness matrix](layered-runtime-promotion-readiness.md)
 for the exact boundary between local implementation evidence and live or
 cross-platform gates.
 
 ## v0.3.0 Protocol Candidate And Reference CLI
 
-The protocol target is `0.3.0` and the current reference CLI is `0.3.0rc1`. The
+The protocol target is `0.3.0` and the current reference CLI is `0.3.0`. The
 [v0.3 installation control plane RFC](rfcs/0001-v0.3-installation-control-plane.md)
 is incorporated into the reference CLI, schemas, and conformance runner.
 Stable-version Done Criteria and release gates remain open; candidate status

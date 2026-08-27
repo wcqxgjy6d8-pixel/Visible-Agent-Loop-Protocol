@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+- Promotes the validated VALP 0.3 protocol and reference CLI release metadata
+  from the `0.3.0rc1` candidate line.
+- Keeps hosted runtime, platform, and production reliability claims scoped to
+  their separately verified evidence.
+
 ## 0.3.0-rc.1
 
 - Prepares the installation control plane, layered protocol kernel, adapter

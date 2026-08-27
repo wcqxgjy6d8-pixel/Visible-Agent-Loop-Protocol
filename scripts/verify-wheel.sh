@@ -39,9 +39,9 @@ required = {
 missing = sorted(required.difference(names))
 if missing:
     raise SystemExit(f"wheel is missing required CLI files: {missing}")
-if metadata.get("Version") != "0.3.0rc1":
+if metadata.get("Version") != "0.3.0":
     raise SystemExit(
-        f"wheel metadata is not the 0.3.0rc1 candidate: {metadata.get('Version')!r}"
+        f"wheel metadata is not the 0.3.0 release: {metadata.get('Version')!r}"
     )
 
 for name in names:
@@ -59,7 +59,7 @@ else
   VENV_VALP="$VENV_DIR/bin/valp"
 fi
 "$VENV_PYTHON" -m pip install --no-deps "$WHEEL_PATH" >/dev/null
-"$VENV_VALP" --version | grep -Fx "valp 0.3.0rc1" >/dev/null
+"$VENV_VALP" --version | grep -Fx "valp 0.3.0" >/dev/null
 for profile in core-reader core-writer plugin-host migration; do
   (
     cd "$AUDIT_ROOT"
@@ -73,11 +73,11 @@ done
 import valp_cli
 from valp_cli.workflow import observe_source_provenance
 
-if valp_cli.__version__ != "0.3.0rc1":
+if valp_cli.__version__ != "0.3.0":
     raise SystemExit(f"installed CLI version mismatch: {valp_cli.__version__}")
 if observe_source_provenance()["status"] != "unavailable":
     raise SystemExit("standalone wheel must not invent Git source provenance")
 PY
 )
 
-echo "VALP wheel smoke PASS: CLI-only 0.3.0rc1 artifact; full RFC profile conformance remains a separate release gate"
+echo "VALP wheel smoke PASS: CLI-only 0.3.0 artifact; full RFC profile conformance remains a separate release gate"

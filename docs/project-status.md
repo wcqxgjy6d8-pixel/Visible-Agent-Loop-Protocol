@@ -1,6 +1,6 @@
 # Project Status And Evidence
 
-VALP source currently defines the `0.3.0` protocol candidate and `0.3.0rc1`
+VALP source currently defines the `0.3.0` protocol candidate and `0.3.0`
 reference CLI. Stable status remains blocked on RFC 0001 Sections 20 and 21,
 same-commit CI, external review, merge, tag, release, and post-release smoke.
 Treat VALP as a portable evidence standard and coordination shape, not as a
@@ -10,7 +10,7 @@ finished multi-agent platform.
 
 | Area | Current state |
 |---|---|
-| Protocol | `0.3.0` protocol candidate and `0.3.0rc1` reference CLI |
+| Protocol | `0.3.0` protocol candidate and `0.3.0` reference CLI |
 | Repository license | MIT |
 | Reference CLI | `bin/valp` with task workflow, v0.3 installation, leader, capability, migration, plugin, hello, conformance, audit, and doctor commands |
 | Reference runtime | HERDR for the documented Full Mode path |
@@ -21,7 +21,7 @@ finished multi-agent platform.
 ## v0.3.0 Protocol Candidate And Reference CLI
 
 [RFC 0001: VALP v0.3 Installation Control Plane](rfcs/0001-v0.3-installation-control-plane.md)
-is implemented as the executable `0.3.0` protocol candidate and `0.3.0rc1`
+is implemented as the executable `0.3.0` protocol candidate and `0.3.0`
 reference CLI. Its stable-version Done Criteria remain open. Runtime, adapter,
 platform, and production claims remain limited to the evidence in this matrix.
 The implementation guide is [docs/v0.3-implementation.md](v0.3-implementation.md).

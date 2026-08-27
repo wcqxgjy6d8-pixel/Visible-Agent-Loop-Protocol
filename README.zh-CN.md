@@ -77,7 +77,7 @@ branch、push、pull request 或 merge 是用户与其 Agent 自己的后续工�
 ## 版本入口与兼容性
 
 当前候选协议版本线是 `v0.3.0`，reference CLI package 为
-`0.3.0rc1`，可以从候选分支和精确 SHA 做明确评估。RFC 要求的真实
+`0.3.0`，可以从候选分支和精确 SHA 做明确评估。RFC 要求的真实
 non-HERDR E2E、分 profile conformance、required checks、external review、merge、
 不可变 tag、GitHub release metadata 和 post-release smoke 尚未全部完成；
 在此之前它不是 stable release。`v0.2.0` 只保留为
@@ -87,7 +87,7 @@ non-HERDR E2E、分 profile conformance、required checks、external review、me
 ## v0.3.0 候选协议与参考 CLI
 
 协议 wire/version target 是 `0.3.0`，当前 reference CLI package 是
-`0.3.0rc1`。[RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)
+`0.3.0`。[RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)
 语义已纳入 `SPEC.md`、schemas 与 reference CLI，但 stable-version Done Criteria
 尚未闭合。请看 [v0.3 implementation guide](docs/v0.3-implementation.md)。
 

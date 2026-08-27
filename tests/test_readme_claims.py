@@ -118,14 +118,14 @@ class ReadmeClaimTests(unittest.TestCase):
         package_init = (ROOT / "valp_cli" / "__init__.py").read_text(encoding="utf-8")
         wheel_check = (ROOT / "scripts" / "verify-wheel.sh").read_text(encoding="utf-8")
 
-        self.assertRegex(pyproject, r'(?m)^version = "0\.3\.0rc1"$')
-        self.assertIn('__version__ = "0.3.0rc1"', package_init)
+        self.assertRegex(pyproject, r'(?m)^version = "0\.3\.0"$')
+        self.assertIn('__version__ = "0.3.0"', package_init)
         self.assertIn("CLI-only artifact", README.read_text(encoding="utf-8"))
         self.assertIn("complete protocol distribution", (ROOT / "INSTALL.md").read_text(encoding="utf-8"))
         for profile in ("core-reader", "core-writer", "plugin-host", "migration"):
             self.assertIn(profile, wheel_check)
         self.assertNotIn("--no-build-isolation", wheel_check)
-        self.assertIn('metadata.get("Version") != "0.3.0rc1"', wheel_check)
+        self.assertIn('metadata.get("Version") != "0.3.0"', wheel_check)
         self.assertIn('"$VENV_DIR/Scripts/python.exe"', wheel_check)
         self.assertIn('"$VENV_DIR/Scripts/valp.exe"', wheel_check)
         self.assertIn('"$VENV_VALP" --version', wheel_check)

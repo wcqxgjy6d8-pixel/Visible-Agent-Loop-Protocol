@@ -1,9 +1,19 @@
-# Visible Agent Loop Protocol
+# Oh! My Agent Teams
 
-Agent says done. VALP asks for proof.
+## Let one person run a real agent team
 
-VALP is an open protocol for visible, evidence-backed autonomous and
-multi-agent work.
+**Agents say done. VALP asks for proof.**
+
+Start with one machine, two agents, and one small task. One agent executes,
+another checks, and VALP records the evidence needed to decide whether the work
+is actually complete. For an OPC (one-person company), it is a way to turn
+research, building, testing, and review into a team you can supervise. For
+teams, enterprises, and runtime developers, it is a common evidence and audit
+path across agents, tools, and orchestrators.
+
+`Oh! My Agent Teams` is the human-facing entry point. **VALP — Visible Agent
+Loop Protocol** is the trust layer underneath: execution success is not the
+same thing as delivery completion.
 
 See the [minimal audit demo](minimal-audit-demo.md) for the text-based
 PASS / FAIL / PASS example.

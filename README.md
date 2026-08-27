@@ -1,6 +1,25 @@
-# Visible Agent Loop Protocol
+# Oh! My Agent Teams
 
-Agent says done. VALP asks for proof.
+## Let one person run a real agent team
+
+**Agents say done. VALP asks for proof.**
+
+You do not need a large company or ten agents to get started. Begin with one
+Windows, macOS, or Linux machine, two agents, and one small task: one agent does
+the work, another checks it, and VALP makes the completion claim inspectable.
+
+For an OPC (one-person company), this can mean a research agent, builder,
+testing agent, and review agent working as a team while you keep the decisions
+that matter. For teams and enterprises, it means a traceable path from
+assignment to artifact, verification, review, approval, and audit. For runtime
+developers, VALP provides common receipt, evidence, review, and audit semantics
+across models, tools, and orchestrators.
+
+`Oh! My Agent Teams` is the entry point that makes people curious. `VALP` is
+the evidence and acceptance protocol that makes the result believable.
+
+This repository remains the normative home of the **Visible Agent Loop
+Protocol** and the `valp` reference CLI.
 
 [![Verify VALP Examples](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/actions/workflows/verify.yml/badge.svg)](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/actions/workflows/verify.yml)
 ![GitHub Release](https://img.shields.io/github/v/release/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol?display_name=tag)

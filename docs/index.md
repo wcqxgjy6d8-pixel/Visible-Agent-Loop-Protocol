@@ -5,7 +5,8 @@ Agent says done. VALP asks for proof.
 VALP is an open protocol for visible, evidence-backed autonomous and
 multi-agent work.
 
-![VALP audit demo: PASS to FAIL to PASS](assets/valp-audit-demo.svg)
+See the [minimal audit demo](minimal-audit-demo.md) for the text-based
+PASS / FAIL / PASS example.
 
 Start here:
 
@@ -48,11 +49,14 @@ review, recommendation resolution, approval, synthesis, feedback, and
 `valp audit` close the task. The optional Task Graph then projects that one
 task without changing it. See the [visual flow](visual-flow.md).
 
-![VALP 0.3 Doctor to Audit workflow](assets/valp-v03-open-core-overview.gif)
+![VALP v0.3.0 ontology-guided complete workflow](assets/valp-workflow-loop-v0.3.0.gif)
 
-Neo4j is not part of the `v0.3.0` release. A future version may use it as an optional
-ontology projection, but never as protocol truth, completion proof, or audit
-authority.
+The animation is an ontology-guided explanatory map, not runtime or release
+proof. Ontology is advisory for routing and context projection; the task-local
+evidence ledger, independent review, and `valp audit` remain authoritative.
+Task Graph is a downstream read-only projection. Neo4j is not part of the
+`v0.3.0` release. A future version may use it as an optional ontology projection,
+but never as protocol truth, completion proof, or audit authority.
 
 VALP `v0.3.0` is the published protocol release and `0.3.0` reference CLI.
 The release completed external review, same-commit CI, merge, immutable tag,

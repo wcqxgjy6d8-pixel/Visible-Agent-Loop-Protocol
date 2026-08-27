@@ -22,7 +22,8 @@ bin/valp audit examples/minimal-task
 bin/valp graph examples/full-mode-task --format all
 ```
 
-![VALP audit demo: PASS to FAIL to PASS](docs/assets/valp-audit-demo.svg)
+See the [minimal audit demo](docs/minimal-audit-demo.md) for the text-based
+PASS / FAIL / PASS example.
 
 For automated Full Mode, [HERDR](https://github.com/ogulcancelik/herdr) is the
 current reference runtime. HERDR is not required by the protocol; any runtime
@@ -56,12 +57,19 @@ Doctor observes current capability truth
   -> optional deterministic single-task Task Graph projection
 ```
 
-![VALP 0.3 Doctor to Audit workflow](docs/assets/valp-v03-open-core-overview.gif)
+![VALP v0.3.0 ontology-guided complete workflow](docs/assets/valp-workflow-loop-v0.3.0.gif)
 
-The animation is an explanatory map, not runtime or release proof. The
-[visual timeline](docs/visual-flow.md) defines each handoff, while the
+This ontology-guided animation is an explanatory map, not runtime or release
+proof. Ontology is advisory for routing and context projection; the evidence
+ledger plus independent review and `valp audit` remain authoritative. Task
+Graph is a downstream read-only projection. The [visual timeline](docs/visual-flow.md)
+defines each handoff, while the
 [public process proof](docs/case-studies/visible-dispatch-process-proof.md)
 shows machine-checkable excerpts from a real publish-and-dispatch run.
+View the [PNG](docs/assets/valp-workflow-loop-v0.3.0.png),
+[GIF](docs/assets/valp-workflow-loop-v0.3.0.gif), editable
+[Excalidraw source](docs/assets/valp-workflow-loop-v0.3.0.excalidraw), or
+[asset specification](docs/assets/valp-workflow-loop-v0.3.0-spec.json).
 
 The Task Graph is a read-only view of one task's existing receipts, evidence,
 and audit summary. It never creates proof or changes audit state. Neo4j is not

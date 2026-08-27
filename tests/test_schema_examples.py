@@ -533,6 +533,30 @@ class SchemaExampleTests(unittest.TestCase):
                 document = (ROOT / relative_path).read_text(encoding="utf-8")
                 self.assertNotRegex(document, r"skip=\d+")
 
+    def test_public_workflow_asset_is_ontology_guided_and_current(self) -> None:
+        for filename in (
+            "valp-workflow-loop-v0.3.0.png",
+            "valp-workflow-loop-v0.3.0.gif",
+            "valp-workflow-loop-v0.3.0.excalidraw",
+            "valp-workflow-loop-v0.3.0-spec.json",
+        ):
+            self.assertTrue(
+                (ROOT / "docs/assets" / filename).is_file()
+            )
+        spec = json.loads(
+            (ROOT / "docs/assets/valp-workflow-loop-v0.3.0-spec.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        normalized = json.dumps(spec, ensure_ascii=False).casefold()
+        self.assertIn("protocol lifecycle (ontology-guided", normalized)
+        self.assertIn("independent review", normalized)
+        self.assertIn("evidence ledger", normalized)
+        self.assertIn("task graph", normalized)
+        self.assertIn("identity-bound runtime submission proof", normalized)
+        self.assertNotIn("0.3 rc", normalized)
+        self.assertNotIn("next: ontology", normalized)
+
     def test_dispatch_receipt_docs_show_concrete_v2_submission_identity(self) -> None:
         document = (ROOT / "docs" / "dispatch-receipts.md").read_text(encoding="utf-8")
         self.assertIn("Legacy/non-deterministic receipt example", document)

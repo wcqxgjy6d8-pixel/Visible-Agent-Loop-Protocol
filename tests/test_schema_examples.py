@@ -448,15 +448,29 @@ class SchemaExampleTests(unittest.TestCase):
         self.assertIn("I2 tracer bullet", tracer)
         self.assertIn("does not raise the whole State layer above I1", normalized_tracer)
 
-    def test_public_status_marks_v030_as_candidate_without_broad_runtime_claims(self) -> None:
-        for relative_path in ("README.md", "docs/index.md", "docs/project-status.md"):
+    def test_public_status_marks_v030_as_released_without_broad_runtime_claims(self) -> None:
+        for relative_path in (
+            "README.md",
+            "README.zh-CN.md",
+            "docs/index.md",
+            "docs/project-status.md",
+            "docs/v0.3-implementation.md",
+            "docs/versioning-and-compatibility.md",
+            "docs/zh-CN/README.md",
+        ):
             with self.subTest(path=relative_path):
                 document = (ROOT / relative_path).read_text(encoding="utf-8")
                 normalized = " ".join(document.split())
                 self.assertIn("`0.3.0`", normalized)
-                self.assertIn("candidate", normalized.casefold())
-                self.assertNotIn("locally stable `0.3.0`", normalized.casefold())
-                self.assertIn("production", normalized)
+                self.assertTrue(
+                    "published" in normalized.casefold()
+                    or "正式发布" in normalized
+                    or "已发布" in normalized
+                )
+                self.assertNotIn("release gates remain open", normalized.casefold())
+                self.assertTrue(
+                    "production" in normalized.casefold() or "生产" in normalized
+                )
 
     def test_remote_mode_public_claims_are_conditional_on_adapter_evidence(self) -> None:
         for relative_path in (

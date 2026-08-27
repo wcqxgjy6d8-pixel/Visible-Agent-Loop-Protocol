@@ -1,6 +1,6 @@
 # RFC 0002: VALP Layered Architecture
 
-Status: Accepted semantics for the VALP `0.3.0` release candidate
+Status: Accepted semantics for the VALP `0.3.0` release
 
 Target: VALP `0.3.0`
 
@@ -33,10 +33,10 @@ and runtime proof belong in separate acceptance artifacts.
 
 ## 2. Status And Normative Language
 
-This RFC's semantics are accepted for the `0.3.0` protocol candidate. Its
+This RFC's semantics are accepted for the released `0.3.0` protocol. Its
 schemas and Reference System slices are incorporated through reviewed changes.
-Acceptance does not close stable-version, Kernel, Adapter, platform, or
-production conformance beyond the evidence in the project status matrix.
+Acceptance alone does not establish Kernel, Adapter, platform, or production
+conformance beyond the evidence in the project status matrix.
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are normative.
 

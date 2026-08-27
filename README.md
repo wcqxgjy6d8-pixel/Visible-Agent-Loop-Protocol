@@ -65,17 +65,16 @@ shows machine-checkable excerpts from a real publish-and-dispatch run.
 
 The Task Graph is a read-only view of one task's existing receipts, evidence,
 and audit summary. It never creates proof or changes audit state. Neo4j is not
-implemented, required, or included in this candidate. A later version may use
+implemented, required, or included in the `v0.3.0` release. A later version may use
 it only as an optional ontology projection; it must remain downstream of the
 task ledger and can never become routing, evidence, or audit authority.
 
 ## Current Status
 
-VALP source defines the `0.3.0` protocol candidate and an MIT-licensed
-`0.3.0` reference CLI. Evaluate it only from a candidate branch at its exact
-SHA. It is not a stable release until the RFC-required real non-HERDR E2E,
-profile-specific conformance, required checks, external review, merge,
-immutable tag, release metadata, and post-release smoke checks are complete.
+VALP `v0.3.0` is the published protocol release and MIT-licensed reference CLI.
+Use the immutable `v0.3.0` tag or matching `main` commit for reproducible source.
+The release completed the required non-HERDR E2E, profile conformance, CI,
+review, merge, immutable tag, release metadata, and post-release smoke gates.
 The `v0.2.0` release remains available as legacy reproduction and migration
 history. See [versioning and compatibility](docs/versioning-and-compatibility.md).
 It is not a mature hosted platform and should not be described as
@@ -132,11 +131,11 @@ source repository, currently documented at
 depend on HERDR specifically. See [docs/project-status.md](docs/project-status.md)
 for the current evidence and gap matrix.
 
-## v0.3.0 Protocol Candidate And Reference CLI
+## v0.3.0 Protocol And Reference CLI
 
 The protocol wire/version target is `0.3.0`; the current reference CLI package
 is `0.3.0`. RFC 0001 semantics are incorporated into `SPEC.md`, schemas, and
-the reference CLI, but its stable-version Done Criteria are not yet closed.
+the reference CLI, and the protocol/reference-CLI release gates are closed.
 Read the [implementation guide](docs/v0.3-implementation.md) and the
 [accepted RFC](docs/rfcs/0001-v0.3-installation-control-plane.md).
 
@@ -158,8 +157,8 @@ The `0.3.0` core adds:
 - provider-neutral plugin manifest validation, explicit legacy migration plans,
   and a core conformance runner with negative and recovery tests.
 
-Candidate status applies to the protocol and reference CLI. No runtime,
-provider, platform, production, or stable-release reliability is implied.
+Release status applies to the protocol and reference CLI. No runtime,
+provider, platform, or production reliability is implied.
 
 Read the [full RFC](docs/rfcs/0001-v0.3-installation-control-plane.md) and the
 [current evidence matrix](docs/project-status.md) side by side: one describes
@@ -289,14 +288,15 @@ python -m pip install -e ".[dev]"
 valp audit examples/minimal-task
 ```
 
-The candidate distribution contract is explicit: an exact-SHA source checkout
-or release source archive is the complete protocol bundle containing `SPEC.md`,
+The release distribution contract is explicit: the immutable `v0.3.0` tag,
+matching `main` commit, or release source archive is the complete protocol bundle
+containing `SPEC.md`,
 schemas, docs, examples, tests, and the reference CLI. The Python wheel is a
 CLI-only artifact. It intentionally does not invent Git provenance or replace
 the public protocol bundle. `scripts/verify-wheel.sh` builds that wheel, checks
 its contents and version, installs it in isolation, and runs the currently
-implemented profile-scoped smoke checks. Full RFC profile conformance remains a
-separate stable-release gate.
+implemented profile-scoped smoke checks. Runtime, hosted-provider, and platform
+claims remain separate evidence gates.
 
 Reference-runtime trial:
 
@@ -750,7 +750,6 @@ Visible-Agent-Loop-Protocol/
 
 ## Status
 
-Protocol target `0.3.0` and reference CLI `0.3.0` are publication
-candidates; external review, same-commit CI, merge, tag, release, and
-post-release smoke remain pending. HERDR remains the current reference runtime,
+The `v0.3.0` protocol and reference CLI are published from reviewed,
+same-commit CI-verified `main` history. HERDR remains the current reference runtime,
 not a protocol requirement.

@@ -13,16 +13,17 @@ branches for different purposes. They must not be treated as interchangeable.
 | `X.Y.ZrcN` package | Release-candidate CLI for exact-SHA evaluation | No, unless explicitly evaluating the candidate |
 | `codex/*`, feature branches | Review or development candidates | No |
 
-`v0.3.0` is the intended protocol version line and `0.3.0` is the current
-reference CLI candidate. Evaluate it from a candidate branch at its exact SHA.
-Stable status also requires RFC 0001 Sections 20 and 21, profile-specific
-conformance, required checks, external review, merge, tag, release metadata,
-and post-release smoke. Before they close, the candidate is not the default
-public installation; `v0.2.0` remains legacy reproduction and migration history.
+`v0.3.0` is the current stable protocol release and `0.3.0` is the published
+reference CLI. Use the immutable tag or matching `main` commit for reproducible
+installs. The release completed the RFC 0001 Sections 20 and 21 release-gate
+evidence required for `v0.3.0`, profile-specific conformance, required checks,
+external review, merge, tag, release metadata, and post-release smoke. This
+does not claim live HERDR Full Mode or production conformance. `v0.2.0` remains
+legacy reproduction and migration history.
 
 The `v0.2.0` release remains available for legacy reproduction and migration
-only. Once the release gate closes, the immutable `v0.3.0` tag becomes the
-preferred reproducible install reference.
+only. The immutable `v0.3.0` tag is now the preferred reproducible install
+reference.
 
 ## Legacy versions
 
@@ -41,21 +42,20 @@ format. A user upgrading from `0.2.0` should use the documented migration
 plan, preserve a checkpoint, validate the digest-bound plan, and keep the old
 installation recoverable until activation and replay verification pass.
 
-Do not mix a `main` checkout, an old release tag, and a candidate branch in one
-installation. Select one release or candidate explicitly and record its exact
+Do not mix a `main` checkout, an old release tag, and a development branch in one
+installation. Select one release explicitly and record its exact
 commit SHA in the evidence for that installation.
 
 ## Release rule
 
-The public default changes only after:
+The public default changed for `v0.3.0` after:
 
 ```text
 candidate branch -> required checks -> external review -> merge to main
   -> immutable vX.Y.Z tag -> GitHub release -> post-release smoke tests
 ```
 
-Until that sequence completes, a candidate is reviewable source, not the
-recommended public installation.
+That sequence is complete for `v0.3.0`; future releases must repeat it.
 
 The release claim is scoped to the evidence package that ships with the
 release. Protocol and reference-CLI stability can be released independently

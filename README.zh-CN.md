@@ -44,7 +44,7 @@ Doctor 观察当前能力真值
 [公开过程证据](docs/case-studies/visible-dispatch-process-proof.md)。
 
 Task Graph 只读显示单个任务已有的 receipts、evidence 与 audit 摘要，不能生成
-证据或改变审计结果。Neo4j 不在本候选版中，也不是依赖；下一版可以把它作为
+证据或改变审计结果。Neo4j 不在 v0.3.0 发布版中，也不是依赖；后续版本可以把它作为
 可选 ontology 投影，但它只能读取既有 task ledger，永远不能成为路由、证据或
 审计权威。
 
@@ -76,20 +76,17 @@ branch、push、pull request 或 merge 是用户与其 Agent 自己的后续工�
 
 ## 版本入口与兼容性
 
-当前候选协议版本线是 `v0.3.0`，reference CLI package 为
-`0.3.0`，可以从候选分支和精确 SHA 做明确评估。RFC 要求的真实
-non-HERDR E2E、分 profile conformance、required checks、external review、merge、
-不可变 tag、GitHub release metadata 和 post-release smoke 尚未全部完成；
-在此之前它不是 stable release。`v0.2.0` 只保留为
+当前正式发布版本为 `v0.3.0`，reference CLI package 为 `0.3.0`。该发布已完成
+同提交验证、审查、合并、不可变 tag、GitHub Release 与发布后 smoke。`v0.2.0` 只保留为
 旧运行复现与迁移来源；旧 tag 和 release 会保留为不可变的历史记录。升级与兼容规则见
 [版本与兼容性](docs/versioning-and-compatibility.md)。
 
-## v0.3.0 候选协议与参考 CLI
+## v0.3.0 已发布协议与参考 CLI
 
 协议 wire/version target 是 `0.3.0`，当前 reference CLI package 是
 `0.3.0`。[RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)
-语义已纳入 `SPEC.md`、schemas 与 reference CLI，但 stable-version Done Criteria
-尚未闭合。请看 [v0.3 implementation guide](docs/v0.3-implementation.md)。
+语义已纳入 `SPEC.md`、schemas 与 reference CLI，协议与 reference CLI 发布关卡已闭合。
+请看 [v0.3 implementation guide](docs/v0.3-implementation.md)。
 
 如果把 Prompt、Tools、Agents 看成 Software 3.0 的执行层，VALP 更像外面的
 控制与验收层：它不负责让模型突然更聪明，而是让控制决策和 done claim
@@ -107,8 +104,8 @@ non-HERDR E2E、分 profile conformance、required checks、external review、me
 - Provider-neutral plugin manifest 检查、显式 migration，以及包含负面与恢复
   场景的 conformance tests。
 
-当前是协议与 reference CLI 候选版，不表示任何 Runtime、Provider、
-平台、生产部署或 stable release 已得到证明。
+v0.3.0 发布证明的是本仓库所测试的协议核心和 reference CLI；不表示任何
+Runtime、Provider、平台或生产部署已普遍得到证明。
 
 对外声明按证据包分层：协议与 reference CLI 由 schemas、测试和 bundled audits
 证明；自动 Full Mode 由具体 runtime adapter 的 dispatch/session/evidence/review

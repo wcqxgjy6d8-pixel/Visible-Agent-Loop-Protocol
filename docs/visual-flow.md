@@ -67,7 +67,7 @@ kernel. The adapter proves transport and runtime state; it does not decide that
 the task is Done. The Task Graph is downstream of the task ledger and audit. It
 cannot write evidence or feed authority back into the protocol.
 
-Neo4j is not part of the current candidate. A future version may use it as an
+Neo4j is not part of the `v0.3.0` release. A future version may use it as an
 optional Ontology projection across tasks, Agents, or Skills, but never as
 protocol truth or audit authority.
 

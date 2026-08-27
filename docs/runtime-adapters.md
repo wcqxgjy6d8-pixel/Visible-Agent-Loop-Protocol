@@ -197,6 +197,13 @@ attempt, and a failed recovery transport stop fail-closed; neither the ordinary
 runtime retry nor another explicit recovery may loop. The originating receipt
 is never rewritten.
 
+If the exact task-owned Agent session is already in a terminal runtime state,
+the bounded recovery may be combined with `--reprovision-done-session`. The
+adapter fences that workspace, advances the session binding generation, and
+then resubmits the unchanged work item. This exception applies only to the one
+identity-checked incomplete recovery; ordinary reprovision remains forbidden
+after a delivery receipt exists.
+
 Terminals are display surfaces, not automatically runtime adapters. A terminal
 that can open panes still needs an adapter layer that can submit dispatches,
 read or collect outputs, and write receipts/evidence.

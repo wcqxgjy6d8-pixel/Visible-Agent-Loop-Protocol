@@ -2264,6 +2264,14 @@ the originating submission receipt and current worker control-contract digest
 in its proof, and use a stable receipt ID for that retry generation. A partial
 evidence set MUST fail closed.
 
+When that bounded retry targets a task-owned Agent session that has already
+settled into a terminal runtime state, the adapter MAY fence and replace only
+that bound session before retrying. The replacement MUST advance the session
+binding generation and preserve the task, work item, role, dispatch ID,
+dispatch generation, expected refs, and control-contract identity. A terminal
+session MUST NOT be reused by bypassing the task-owned binding or receipt
+ledger.
+
 The reference recovery is bounded to one retry generation. Replay MUST be
 idempotent or fail closed, changed identity MUST fail closed, and a failed
 recovery transport MUST NOT feed the ordinary automatic dispatch retry or

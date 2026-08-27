@@ -120,6 +120,12 @@ valp dispatch <task-id> --workspace <root> \
   --recover-incomplete --retry-generation 1 --submit
 ```
 
+Add `--reprovision-done-session` to that same command only when the bound
+task-owned Agent session is already terminal. The adapter must fence the old
+workspace and advance the session binding generation before resubmission; it
+does not relax the work-item, dispatch, expected-ref, or control-contract
+identity checks.
+
 This is not the transport-failure retry. The command first requires one exact
 prior submission, no conflicting terminal receipt, the unchanged routed
 identity, and a matching immutable control contract and agent slice. If every

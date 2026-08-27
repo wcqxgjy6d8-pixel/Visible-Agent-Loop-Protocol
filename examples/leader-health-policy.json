@@ -1,0 +1,16 @@
+{
+  "schema_version": "valp-leader-health-policy.v1",
+  "health_policy_id": "section20-leader-health-policy",
+  "leader_principal_id": "local-leader-a",
+  "leader_epoch": 1,
+  "probe_kind": "local-process-liveness",
+  "per_attempt_timeout_seconds": 1,
+  "maximum_attempts": 2,
+  "maximum_observation_window_seconds": 2,
+  "success_predicate": "process_status == ready",
+  "failure_predicate": "process_status == unavailable",
+  "required_evidence_kinds": [
+    "process-status"
+  ],
+  "policy_digest": "sha256:50c8069c3d95e611a6d7dca917dfa33523fca6ea0656fc19caa3a35f2970a87a"
+}

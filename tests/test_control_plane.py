@@ -1057,6 +1057,88 @@ class ControlPlaneTests(unittest.TestCase):
         self.assertEqual(state["active_leader"]["principal_id"], "agent-claude-session-b")
         self.assertNotIn("session_id", state["active_leader"])
 
+    def test_emergency_leader_rotation_recovers_degraded_installation_and_fences_epoch(self) -> None:
+        replacement_passport = self._leader_passport(
+            principal_id="agent-claude-session-b",
+            agent_id="claude",
+            session_id="session-b",
+            launch_argv=["/test/bin/claude"],
+        )
+        self.core.init()
+        self.core.discover_candidates([self._leader_passport(), replacement_passport])
+        self.core.select_leader("agent-codex-session-a")
+        self.core.prepare_leader_start()
+        self.core.activate_leader(self._provisioned_leader())
+        state = self.core.state()
+        self.core._transition(
+            event_kind="leader_health_failed",
+            message_kind="result.leader.health_failed",
+            principal_id="reference-runtime-adapter",
+            principal_kind="runtime-adapter",
+            epoch=state["active_leader_epoch"],
+            expected_revision=state["revision"],
+            payload={
+                "health_policy_ref": "leader-health-policy.json",
+                "health_record_ref": "leader-health-record.json",
+            },
+            target_status="degraded",
+            idempotency_key="leader-health-failed-epoch-1",
+        )
+
+        prepared = self.core.rotate_leader("agent-claude-session-b")
+        self.assertEqual(prepared["rotation"]["status"], "rotating_leader")
+        self.assertEqual(prepared["proposed_leader_epoch"], 2)
+        self.assertEqual(
+            json.loads((self.root / "events.jsonl").read_text(encoding="utf-8").splitlines()[-1])["event_kind"],
+            "emergency_leader_rotation_approved",
+        )
+
+        replacement = self._provisioned_leader()
+        replacement.update({
+            "principal_id": "agent-claude-session-b",
+            "agent_id": "claude",
+            "generation": 2,
+            "launch": {"argv": ["/test/bin/claude"]},
+            "runtime_scope": {
+                "kind": "workspace",
+                "ownership": "installation",
+                "workspace_id": "workspace-claude-leader",
+            },
+            "runtime_identity": {
+                "session_id": "pane-claude-leader",
+                "pane_id": "pane-claude-leader",
+                "terminal_id": "terminal-claude-leader",
+                "workspace_id": "workspace-claude-leader",
+                "tab_id": "tab-claude-leader",
+                "token": "sha256:" + ("3" * 64),
+            },
+        })
+        self.core.activate_leader(replacement)
+
+        state = self.core.replay()
+        self.assertEqual(state["status"], "active")
+        self.assertEqual(state["active_leader_epoch"], 2)
+        self.assertEqual(state["active_leader"]["principal_id"], "agent-claude-session-b")
+        events = [
+            json.loads(line)["event_kind"]
+            for line in (self.root / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertIn("leader_rotation_completed", events)
+        with self.assertRaises(ControlPlaneError) as stale:
+            self.core._transition(
+                event_kind="test.stale_after_emergency_rotation",
+                message_kind="command.test.stale_after_emergency_rotation",
+                principal_id="agent-codex-session-a",
+                principal_kind="installation-leader",
+                epoch=1,
+                expected_revision=state["revision"],
+                payload={},
+                target_status="degraded",
+                idempotency_key="stale-after-emergency-rotation",
+            )
+        self.assertEqual(stale.exception.code, "VALP-E-LEADER-EPOCH")
+
     def test_leader_rotation_provisioning_failure_does_not_activate_replacement(self) -> None:
         replacement_passport = self._leader_passport(
             principal_id="agent-claude-session-b",

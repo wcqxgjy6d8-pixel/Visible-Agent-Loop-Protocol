@@ -58,6 +58,9 @@ EXAMPLE_SCHEMA_BY_NAME = {
     "recovery-approval.json": "recovery-approval.schema.json",
     "recovery-intent.json": "recovery-intent.schema.json",
     "recovery-receipt.json": "recovery-receipt.schema.json",
+    "leader-health-policy.json": "leader-health-policy.schema.json",
+    "leader-health-record.json": "leader-health-record.schema.json",
+    "section20-runtime-report.json": "section20-runtime-report.schema.json",
 }
 
 

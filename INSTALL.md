@@ -37,7 +37,7 @@ includes its HERDR bridge, so clean installs do not need a separate
 `herdr-loop` command. HERDR itself remains an external reference runtime and is
 not installed or replaced by VALP.
 
-For the `0.3.0rc1` candidate, the exact-SHA source checkout or release source
+For the `0.3.0` candidate, the exact-SHA source checkout or release source
 archive is the complete protocol distribution. It contains `SPEC.md`, schemas,
 docs, examples, tests, and the reference CLI. A Python wheel is a CLI-only
 artifact and does not replace that protocol bundle. Installed wheel provenance

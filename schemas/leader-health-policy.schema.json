@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-leader-health-policy.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "health_policy_id",
+    "leader_principal_id",
+    "leader_epoch",
+    "probe_kind",
+    "per_attempt_timeout_seconds",
+    "maximum_attempts",
+    "maximum_observation_window_seconds",
+    "success_predicate",
+    "failure_predicate",
+    "required_evidence_kinds",
+    "policy_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-leader-health-policy.v1"},
+    "health_policy_id": {"type": "string", "minLength": 1},
+    "leader_principal_id": {"type": "string", "minLength": 1},
+    "leader_epoch": {"type": "integer", "minimum": 1},
+    "probe_kind": {"type": "string", "minLength": 1},
+    "per_attempt_timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
+    "maximum_attempts": {"type": "integer", "minimum": 1},
+    "maximum_observation_window_seconds": {"type": "number", "exclusiveMinimum": 0},
+    "success_predicate": {"type": "string", "minLength": 1},
+    "failure_predicate": {"type": "string", "minLength": 1},
+    "required_evidence_kinds": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "policy_digest": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

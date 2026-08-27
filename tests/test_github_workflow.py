@@ -45,7 +45,13 @@ class GitHubWorkflowTests(unittest.TestCase):
     def test_required_smoke_tests_is_a_stable_aggregate_gate(self) -> None:
         self.assertRegex(
             self.workflow,
-            r"(?ms)^  smoke:\n    name: Required smoke tests\n    needs: verify\n    if: \$\{\{ always\(\) \}\}\n.*?^        if: \$\{\{ needs\.verify\.result != 'success' \}\}\n        run: exit 1\n",
+            r"(?ms)^  smoke:\n    name: Required smoke tests\n    needs:\n      - verify\n      - section20\n    if: \$\{\{ always\(\) \}\}\n.*?^        if: \$\{\{ needs\.verify\.result != 'success' \|\| needs\.section20\.result != 'success' \}\}\n        run: exit 1\n",
+        )
+
+    def test_section20_job_runs_the_real_non_herdr_reproduction(self) -> None:
+        self.assertRegex(
+            self.workflow,
+            r"(?ms)^  section20:\n    name: Section 20 non-HERDR E2E\n    runs-on: ubuntu-latest\n.*?^      - name: Run the real non-HERDR release E2E\n        run: examples/langgraph-false-done/reproduce\.sh\n",
         )
 
 

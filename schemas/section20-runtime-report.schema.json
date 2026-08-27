@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://valp.dev/schema/valp-section20-runtime-report.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "adapter",
+    "herdr_used",
+    "installation_id",
+    "bootstrap",
+    "checks",
+    "restart_and_rotation",
+    "task_failure",
+    "task_completion",
+    "completed_at",
+    "report_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "valp-section20-runtime-report.v1"},
+    "task_id": {"type": "string", "minLength": 1},
+    "adapter": {"type": "string", "minLength": 1},
+    "herdr_used": {"const": false},
+    "installation_id": {"type": "string", "minLength": 1},
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hello_schema", "first_message_sequence", "selected_leader", "active_epoch", "epoch_zero_rejection", "plugin_manifest_digest", "capability_registry_digest", "state_projection_digest"],
+      "properties": {
+        "hello_schema": {"const": "valp-hello.v1"},
+        "first_message_sequence": {"const": 1},
+        "selected_leader": {"type": "string", "minLength": 1},
+        "active_epoch": {"const": 1},
+        "epoch_zero_rejection": {"const": "VALP-E-LEADER-EPOCH"},
+        "plugin_manifest_digest": {"$ref": "#/$defs/digest"},
+        "capability_registry_digest": {"$ref": "#/$defs/digest"},
+        "state_projection_digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 16,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "requirement", "status", "evidence_refs"],
+        "properties": {
+          "id": {"type": "integer", "minimum": 1, "maximum": 16},
+          "requirement": {"type": "string", "minLength": 1},
+          "status": {"const": "pass"},
+          "evidence_refs": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        }
+      }
+    },
+    "restart_and_rotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state_digest_reproduced", "registry_digest_reproduced", "health_policy_digest", "health_record_digest", "replacement_leader", "active_epoch", "stale_epoch_rejection"],
+      "properties": {
+        "state_digest_reproduced": {"const": true},
+        "registry_digest_reproduced": {"const": true},
+        "health_policy_digest": {"$ref": "#/$defs/digest"},
+        "health_record_digest": {"$ref": "#/$defs/digest"},
+        "replacement_leader": {"type": "string", "minLength": 1},
+        "active_epoch": {"const": 2},
+        "stale_epoch_rejection": {"const": "VALP-E-LEADER-EPOCH"}
+      }
+    },
+    "task_failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "failure_code"],
+      "properties": {
+        "status": {"const": "blocked"},
+        "failure_code": {"const": "missing_expected_evidence"}
+      }
+    },
+    "task_completion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["control_task_status", "runtime_receipt_ref", "verification_evidence_id", "verified_claim_id", "review_id", "reviewed_subject_digests", "strict_audit", "fail_count"],
+      "properties": {
+        "control_task_status": {"const": "done"},
+        "runtime_receipt_ref": {"type": "string", "minLength": 1},
+        "verification_evidence_id": {"type": "string", "minLength": 1},
+        "verified_claim_id": {"type": "string", "minLength": 1},
+        "review_id": {"type": "string", "minLength": 1},
+        "reviewed_subject_digests": {"type": "array", "items": {"$ref": "#/$defs/digest"}, "minItems": 1},
+        "strict_audit": {"const": "pass"},
+        "fail_count": {"const": 0}
+      }
+    },
+    "completed_at": {"type": "string", "format": "date-time"},
+    "report_digest": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

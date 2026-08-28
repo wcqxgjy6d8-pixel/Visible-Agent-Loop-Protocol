@@ -7,11 +7,17 @@
 
 This page records a sanitized process-evidence excerpt for VALP's dispatch path.
 
-![VALP v0.3.0 ontology-guided evidence workflow](../assets/valp-workflow-loop-v0.3.0.gif)
+![Oh! My Agent Teams cover](../assets/oh-my-agent-teams-cover-v0.3.0.png)
 
-The animation explains the public control path and the advisory Ontology /
+![VALP execution flow](../assets/oh-my-agent-teams-execution-v0.3.0.png)
+
+The diagram explains the public control path and the advisory Ontology /
 authoritative evidence and independent-review boundary at a glance. It is not live-runtime proof; the
 commands and fixture outputs below are the machine-checkable evidence.
+
+See the [authority map](../assets/oh-my-agent-teams-authority-v0.3.0.png),
+[completion gates](../assets/oh-my-agent-teams-completion-v0.3.0.png), or the
+[responsive explainer](../oh-my-agent-teams.html).
 
 It is not a standalone public live Full Mode completion case study. A full case
 study must publish a complete sanitized task folder, runtime submission proof,

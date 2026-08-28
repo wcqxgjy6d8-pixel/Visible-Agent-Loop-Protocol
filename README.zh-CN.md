@@ -68,16 +68,17 @@ Doctor 观察当前能力真值
   -> 可选的确定性单任务 Task Graph 投影
 ```
 
-![VALP v0.3.0 ontology 引导的完整工作流](docs/assets/valp-workflow-loop-v0.3.0.gif)
+![Oh! My Agent Teams 封面](docs/assets/oh-my-agent-teams-cover-v0.3.0.png)
 
-这张 ontology 引导动图是解释图，不是 Runtime 或 release 证明。Ontology 只用于
+![VALP 执行流程](docs/assets/oh-my-agent-teams-execution-v0.3.0.png)
+
+这张 ontology 引导图是解释图，不是 Runtime 或 release 证明。Ontology 只用于
 路由与上下文投影，证据 ledger、独立审查与 `valp audit` 才是权威；Task Graph 只是下游只读投影。逐步语义见
 [完整可见流程](docs/visual-flow.md)，可复核的真实 publish/dispatch 片段见
 [公开过程证据](docs/case-studies/visible-dispatch-process-proof.md)。
-也可查看 [PNG](docs/assets/valp-workflow-loop-v0.3.0.png)、
-[GIF](docs/assets/valp-workflow-loop-v0.3.0.gif)、可编辑的
-[Excalidraw 源文件](docs/assets/valp-workflow-loop-v0.3.0.excalidraw) 与
-[资产说明](docs/assets/valp-workflow-loop-v0.3.0-spec.json)。
+也可查看[权威边界图](docs/assets/oh-my-agent-teams-authority-v0.3.0.png)、
+[完成门禁图](docs/assets/oh-my-agent-teams-completion-v0.3.0.png)，或
+[响应式完整说明](docs/oh-my-agent-teams.html)。
 
 Task Graph 只读显示单个任务已有的 receipts、evidence 与 audit 摘要，不能生成
 证据或改变审计结果。Neo4j 不在 v0.3.0 发布版中，也不是依赖；后续版本可以把它作为

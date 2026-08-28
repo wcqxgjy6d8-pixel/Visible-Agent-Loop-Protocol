@@ -1,11 +1,22 @@
-# Visible Agent Loop Protocol
+# Oh! My Agent Teams
 
-Agent says done. VALP asks for proof.
+## Let one person run a real agent team
 
-VALP is an open protocol for visible, evidence-backed autonomous and
-multi-agent work.
+**Agents say done. VALP asks for proof.**
 
-![VALP audit demo: PASS to FAIL to PASS](assets/valp-audit-demo.svg)
+Start with one machine, two agents, and one small task. One agent executes,
+another checks, and VALP records the evidence needed to decide whether the work
+is actually complete. For an OPC (one-person company), it is a way to turn
+research, building, testing, and review into a team you can supervise. For
+teams, enterprises, and runtime developers, it is a common evidence and audit
+path across agents, tools, and orchestrators.
+
+`Oh! My Agent Teams` is the human-facing entry point. **VALP — Visible Agent
+Loop Protocol** is the trust layer underneath: execution success is not the
+same thing as delivery completion.
+
+See the [minimal audit demo](minimal-audit-demo.md) for the text-based
+PASS / FAIL / PASS example.
 
 Start here:
 
@@ -48,16 +59,18 @@ review, recommendation resolution, approval, synthesis, feedback, and
 `valp audit` close the task. The optional Task Graph then projects that one
 task without changing it. See the [visual flow](visual-flow.md).
 
-![VALP 0.3 Doctor to Audit workflow](assets/valp-v03-open-core-overview.gif)
+![VALP v0.3.0 ontology-guided complete workflow](assets/valp-workflow-loop-v0.3.0.gif)
 
-Neo4j is not part of this candidate. A future version may use it as an optional
-ontology projection, but never as protocol truth, completion proof, or audit
-authority.
+The animation is an ontology-guided explanatory map, not runtime or release
+proof. Ontology is advisory for routing and context projection; the task-local
+evidence ledger, independent review, and `valp audit` remain authoritative.
+Task Graph is a downstream read-only projection. Neo4j is not part of the
+`v0.3.0` release. A future version may use it as an optional ontology projection,
+but never as protocol truth, completion proof, or audit authority.
 
-VALP source currently defines the `0.3.0` protocol candidate and `0.3.0`
-reference CLI. Stable status, external review, same-commit CI, merge, tag,
-release, and post-release smoke remain pending. It is not a hosted production
-platform.
+VALP `v0.3.0` is the published protocol release and `0.3.0` reference CLI.
+The release completed external review, same-commit CI, merge, immutable tag,
+release, and post-release smoke. It is not a hosted production platform.
 
 ## Protocol 0.3 Layered Architecture
 
@@ -101,19 +114,19 @@ work creates deterministic Adapter obligations, while a task-local,
 digest-chained effect ledger records pending, fulfilled, or blocked outcomes
 against real proof without replaying effects.
 This remains a bounded Kernel and Reference System implementation, not proof of
-every external runtime, platform, or production deployment. No cross-platform
-parity or release support is claimed. The protocol target is `0.3.0` and the
+every external runtime, platform, or production deployment. No universal runtime
+or platform parity is claimed. The protocol target is `0.3.0` and the
 current reference CLI is `0.3.0`. See the [promotion-readiness matrix](layered-runtime-promotion-readiness.md)
 for the exact boundary between local implementation evidence and live or
 cross-platform gates.
 
-## v0.3.0 Protocol Candidate And Reference CLI
+## v0.3.0 Protocol And Reference CLI
 
 The protocol target is `0.3.0` and the current reference CLI is `0.3.0`. The
 [v0.3 installation control plane RFC](rfcs/0001-v0.3-installation-control-plane.md)
 is incorporated into the reference CLI, schemas, and conformance runner.
-Stable-version Done Criteria and release gates remain open; candidate status
-does not broaden adapter, platform, or production-support claims.
+Protocol and reference-CLI release gates are closed; release status does not
+broaden adapter, platform, or production-support claims.
 
 The `0.3.0` implementation extends VALP's evidence discipline from individual tasks to the
 installation control plane: the user selects an Installation Leader;

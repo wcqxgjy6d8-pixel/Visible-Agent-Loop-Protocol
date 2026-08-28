@@ -1,6 +1,25 @@
-# Visible Agent Loop Protocol
+# Oh! My Agent Teams
 
-Agent says done. VALP asks for proof.
+## Let one person run a real agent team
+
+**Agents say done. VALP asks for proof.**
+
+You do not need a large company or ten agents to get started. Begin with one
+Windows, macOS, or Linux machine, two agents, and one small task: one agent does
+the work, another checks it, and VALP makes the completion claim inspectable.
+
+For an OPC (one-person company), this can mean a research agent, builder,
+testing agent, and review agent working as a team while you keep the decisions
+that matter. For teams and enterprises, it means a traceable path from
+assignment to artifact, verification, review, approval, and audit. For runtime
+developers, VALP provides common receipt, evidence, review, and audit semantics
+across models, tools, and orchestrators.
+
+`Oh! My Agent Teams` is the entry point that makes people curious. `VALP` is
+the evidence and acceptance protocol that makes the result believable.
+
+This repository remains the normative home of the **Visible Agent Loop
+Protocol** and the `valp` reference CLI.
 
 [![Verify VALP Examples](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/actions/workflows/verify.yml/badge.svg)](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/actions/workflows/verify.yml)
 ![GitHub Release](https://img.shields.io/github/v/release/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol?display_name=tag)
@@ -22,7 +41,8 @@ bin/valp audit examples/minimal-task
 bin/valp graph examples/full-mode-task --format all
 ```
 
-![VALP audit demo: PASS to FAIL to PASS](docs/assets/valp-audit-demo.svg)
+See the [minimal audit demo](docs/minimal-audit-demo.md) for the text-based
+PASS / FAIL / PASS example.
 
 For automated Full Mode, [HERDR](https://github.com/ogulcancelik/herdr) is the
 current reference runtime. HERDR is not required by the protocol; any runtime
@@ -56,26 +76,32 @@ Doctor observes current capability truth
   -> optional deterministic single-task Task Graph projection
 ```
 
-![VALP 0.3 Doctor to Audit workflow](docs/assets/valp-v03-open-core-overview.gif)
+![VALP v0.3.0 ontology-guided complete workflow](docs/assets/valp-workflow-loop-v0.3.0.gif)
 
-The animation is an explanatory map, not runtime or release proof. The
-[visual timeline](docs/visual-flow.md) defines each handoff, while the
+This ontology-guided animation is an explanatory map, not runtime or release
+proof. Ontology is advisory for routing and context projection; the evidence
+ledger plus independent review and `valp audit` remain authoritative. Task
+Graph is a downstream read-only projection. The [visual timeline](docs/visual-flow.md)
+defines each handoff, while the
 [public process proof](docs/case-studies/visible-dispatch-process-proof.md)
 shows machine-checkable excerpts from a real publish-and-dispatch run.
+View the [PNG](docs/assets/valp-workflow-loop-v0.3.0.png),
+[GIF](docs/assets/valp-workflow-loop-v0.3.0.gif), editable
+[Excalidraw source](docs/assets/valp-workflow-loop-v0.3.0.excalidraw), or
+[asset specification](docs/assets/valp-workflow-loop-v0.3.0-spec.json).
 
 The Task Graph is a read-only view of one task's existing receipts, evidence,
 and audit summary. It never creates proof or changes audit state. Neo4j is not
-implemented, required, or included in this candidate. A later version may use
+implemented, required, or included in the `v0.3.0` release. A later version may use
 it only as an optional ontology projection; it must remain downstream of the
 task ledger and can never become routing, evidence, or audit authority.
 
 ## Current Status
 
-VALP source defines the `0.3.0` protocol candidate and an MIT-licensed
-`0.3.0` reference CLI. Evaluate it only from a candidate branch at its exact
-SHA. It is not a stable release until the RFC-required real non-HERDR E2E,
-profile-specific conformance, required checks, external review, merge,
-immutable tag, release metadata, and post-release smoke checks are complete.
+VALP `v0.3.0` is the published protocol release and MIT-licensed reference CLI.
+Use the immutable `v0.3.0` tag or matching `main` commit for reproducible source.
+The release completed the required non-HERDR E2E, profile conformance, CI,
+review, merge, immutable tag, release metadata, and post-release smoke gates.
 The `v0.2.0` release remains available as legacy reproduction and migration
 history. See [versioning and compatibility](docs/versioning-and-compatibility.md).
 It is not a mature hosted platform and should not be described as
@@ -132,11 +158,11 @@ source repository, currently documented at
 depend on HERDR specifically. See [docs/project-status.md](docs/project-status.md)
 for the current evidence and gap matrix.
 
-## v0.3.0 Protocol Candidate And Reference CLI
+## v0.3.0 Protocol And Reference CLI
 
 The protocol wire/version target is `0.3.0`; the current reference CLI package
 is `0.3.0`. RFC 0001 semantics are incorporated into `SPEC.md`, schemas, and
-the reference CLI, but its stable-version Done Criteria are not yet closed.
+the reference CLI, and the protocol/reference-CLI release gates are closed.
 Read the [implementation guide](docs/v0.3-implementation.md) and the
 [accepted RFC](docs/rfcs/0001-v0.3-installation-control-plane.md).
 
@@ -158,8 +184,8 @@ The `0.3.0` core adds:
 - provider-neutral plugin manifest validation, explicit legacy migration plans,
   and a core conformance runner with negative and recovery tests.
 
-Candidate status applies to the protocol and reference CLI. No runtime,
-provider, platform, production, or stable-release reliability is implied.
+Release status applies to the protocol and reference CLI. No runtime,
+provider, platform, or production reliability is implied.
 
 Read the [full RFC](docs/rfcs/0001-v0.3-installation-control-plane.md) and the
 [current evidence matrix](docs/project-status.md) side by side: one describes
@@ -289,14 +315,15 @@ python -m pip install -e ".[dev]"
 valp audit examples/minimal-task
 ```
 
-The candidate distribution contract is explicit: an exact-SHA source checkout
-or release source archive is the complete protocol bundle containing `SPEC.md`,
+The release distribution contract is explicit: the immutable `v0.3.0` tag,
+matching `main` commit, or release source archive is the complete protocol bundle
+containing `SPEC.md`,
 schemas, docs, examples, tests, and the reference CLI. The Python wheel is a
 CLI-only artifact. It intentionally does not invent Git provenance or replace
 the public protocol bundle. `scripts/verify-wheel.sh` builds that wheel, checks
 its contents and version, installs it in isolation, and runs the currently
-implemented profile-scoped smoke checks. Full RFC profile conformance remains a
-separate stable-release gate.
+implemented profile-scoped smoke checks. Runtime, hosted-provider, and platform
+claims remain separate evidence gates.
 
 Reference-runtime trial:
 
@@ -750,7 +777,6 @@ Visible-Agent-Loop-Protocol/
 
 ## Status
 
-Protocol target `0.3.0` and reference CLI `0.3.0` are publication
-candidates; external review, same-commit CI, merge, tag, release, and
-post-release smoke remain pending. HERDR remains the current reference runtime,
+The `v0.3.0` protocol and reference CLI are published from reviewed,
+same-commit CI-verified `main` history. HERDR remains the current reference runtime,
 not a protocol requirement.

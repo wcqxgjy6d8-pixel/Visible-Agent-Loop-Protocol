@@ -1,0 +1,34 @@
+{
+  "schema_version": "valp-public-workflow-asset.v1",
+  "asset": {
+    "png": "valp-workflow-loop-v0.3.0.png",
+    "gif": "valp-workflow-loop-v0.3.0.gif",
+    "excalidraw": "valp-workflow-loop-v0.3.0.excalidraw",
+    "canvas": {"width": 2400, "height": 1600},
+    "animation": {"frames": 75, "fps": 12.5, "duration_seconds": 6.08}
+  },
+  "title": "The Complete VALP Loop",
+  "subtitle": "Protocol Lifecycle (ontology-guided, evidence-authoritative)",
+  "diagram_sections": ["Ontology Nodes", "Evidence Ledger", "Task Graph"],
+  "boundaries": {
+    "ontology": "Advisory routing and context projection only; it is not completion proof or authority.",
+    "evidence_ledger": "Task-local, identity-bound evidence and independent review are authoritative proof inputs.",
+    "task_graph": "A deterministic downstream read-only projection; it cannot write authority, evidence, or audit state.",
+    "runtime_completed": "Advisory until the required evidence, review, approval when policy requires it, synthesis, and strict audit close the task."
+  },
+  "lifecycle": [
+    "Publish",
+    "Refresh capability, context, and adapter facts",
+    "Leader assigns WorkItems",
+    "Validate skills, provider, preflight, and context",
+    "Dispatch with identity-bound runtime submission proof",
+    "Execute and verify expected evidence",
+    "Independent exact-artifact review and recommendation resolution",
+    "Evidence plus independent review complete?",
+    "Conditional approval and required synthesis/learning record",
+    "Strict valp audit",
+    "Separately gated task state"
+  ],
+  "failure_path": "Missing proof or a failed review enters a bounded fix, redispatch, and re-review loop. Unresolved approval or audit failure remains blocked or failed.",
+  "learning_feedback": "A prior for future routing only, never proof for the current task."
+}

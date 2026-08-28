@@ -2,16 +2,16 @@
 
 > The original local recording from 2026-07-06 was removed from the publication
 > tree because it exposed machine-specific paths, runtime identifiers, and
-> provider details. The replacement public asset is a Chinese animated GIF;
+> provider details. The public asset below is an ontology-guided workflow map;
 > this page keeps the machine-checkable audit evidence in text and commands.
 
 This page records a sanitized process-evidence excerpt for VALP's dispatch path.
 
-![VALP 0.3 open-core evidence flow](../assets/valp-v03-open-core-overview.gif)
+![VALP v0.3.0 ontology-guided evidence workflow](../assets/valp-workflow-loop-v0.3.0.gif)
 
-The GIF explains the public control path at a glance. It is not live-runtime
-proof; the commands and fixture outputs below are the machine-checkable
-evidence.
+The animation explains the public control path and the advisory Ontology /
+authoritative evidence and independent-review boundary at a glance. It is not live-runtime proof; the
+commands and fixture outputs below are the machine-checkable evidence.
 
 It is not a standalone public live Full Mode completion case study. A full case
 study must publish a complete sanitized task folder, runtime submission proof,

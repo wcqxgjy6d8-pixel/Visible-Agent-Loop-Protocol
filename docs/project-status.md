@@ -1,8 +1,9 @@
 # Project Status And Evidence
 
-VALP source currently defines the `0.3.0` protocol candidate and `0.3.0`
-reference CLI. Stable status remains blocked on RFC 0001 Sections 20 and 21,
-same-commit CI, external review, merge, tag, release, and post-release smoke.
+VALP `0.3.0` is the published protocol release and `0.3.0` reference CLI.
+Protocol release gates are closed by reviewed merge, same-commit CI, immutable
+tag, GitHub Release, and post-release smoke. Runtime, platform, and production
+claims remain limited to the evidence matrix below.
 Treat VALP as a portable evidence standard and coordination shape, not as a
 finished multi-agent platform.
 
@@ -10,23 +11,23 @@ finished multi-agent platform.
 
 | Area | Current state |
 |---|---|
-| Protocol | `0.3.0` protocol candidate and `0.3.0` reference CLI |
+| Protocol | Published `v0.3.0` protocol and `0.3.0` reference CLI |
 | Repository license | MIT |
 | Reference CLI | `bin/valp` with task workflow, v0.3 installation, leader, capability, migration, plugin, hello, conformance, audit, and doctor commands |
 | Reference runtime | HERDR for the documented Full Mode path |
 | Other runtime adapters | Local-process and LangGraph API adapters are implemented; LangGraph includes approved, identity-bound cancellation effect execution, but its proof uses the local development runtime rather than production hosting |
 | Public examples | Three synthetic fixtures, two sanitized real task case studies, and one sanitized visible-dispatch process ledger |
-| Public release | No `v0.3.0` release exists; evaluate the candidate from an exact local or remote SHA; `v0.2.0` remains immutable legacy history |
+| Public release | [`v0.3.0`](https://github.com/wcqxgjy6d8-pixel/Visible-Agent-Loop-Protocol/releases/tag/v0.3.0), pinned to merge commit `ef40dc0d3c5b33dd5fa2a2ff0a4721136ec67819`; `v0.2.0` remains immutable legacy history |
 
-## v0.3.0 Protocol Candidate And Reference CLI
+## v0.3.0 Protocol And Reference CLI
 
 [RFC 0001: VALP v0.3 Installation Control Plane](rfcs/0001-v0.3-installation-control-plane.md)
-is implemented as the executable `0.3.0` protocol candidate and `0.3.0`
-reference CLI. Its stable-version Done Criteria remain open. Runtime, adapter,
+is implemented as the executable `0.3.0` protocol release and `0.3.0`
+reference CLI. Runtime, adapter,
 platform, and production claims remain limited to the evidence in this matrix.
 The implementation guide is [docs/v0.3-implementation.md](v0.3-implementation.md).
 
-The candidate `0.3.0` core covers control-root bootstrap, Doctor-backed Leader
+The released `0.3.0` core covers control-root bootstrap, Doctor-backed Leader
 candidate discovery, selection/start separation, exact installation-owned
 Leader session binding, restart/rotation epoch fencing, message/event ledgers,
 replayable state, capability layers, plugin manifest boundary checks, migration
@@ -84,8 +85,8 @@ an identity-bound `resume_pending` bridge only when a provider has registered
 real invocation and duplicate-suppression proof. A local external subprocess
 provider now proves approved invocation, provider-owned status reconciliation,
 post-consumption crash recovery, and exactly one `resume_consumed`. Production
-provider hosting, native runtime E2E on every platform, release support, and
-production reliability remain separate evidence gates. On the current macOS
+provider hosting, native runtime E2E on every platform, and production
+reliability remain separate evidence gates. On the current macOS
 development host, HERDR 0.8.0 / protocol 19 also produced a live
 `coordinator.continue` invocation receipt for
 `VALP-HERDR-AUTO-CONTINUATION-20260821`; the strict continuation ledger
@@ -95,8 +96,8 @@ replay did not issue a second HERDR continuation request.
 ## Verified In This Repository
 
 The [layered runtime promotion-readiness matrix](layered-runtime-promotion-readiness.md)
-separates current source and macOS verification from pending same-commit CI,
-live runtime, independent review, strict audit, and release gates.
+separates completed release evidence from still-pending live runtime, hosted,
+platform, and production gates.
 
 These checks prove the repository artifacts, not live runtime deployment:
 
@@ -126,7 +127,7 @@ platform.
 | Automation policy evidence | Covered for schema, examples, and audit gate | `schemas/automation-policy.schema.json`, `examples/full-mode-task/automation-policy.json`, `tests/test_valp_audit.py` |
 | Context pack evidence | Covered for schema, CLI generation, examples, and audit gate | `schemas/context-pack.schema.json`, `valp_cli/workflow.py`, `examples/full-mode-task/context-pack.json` |
 | User-facing Task Graph projection | Covered as a deterministic, read-only view of one task; it displays receipt/evidence links, missing-evidence states, and an audit summary without becoming proof or authority | `valp_cli/task_graph.py`, `schemas/task-graph.schema.json`, `docs/task-graph.md`, `tests/test_task_graph.py` |
-| Optional Neo4j Ontology projection | Deferred beyond this candidate; not implemented, required, or included | Any future projection must remain downstream of task ledgers and must never become routing, evidence, state, or audit authority |
+| Optional Neo4j Ontology projection | Deferred beyond the `v0.3.0` release; not implemented, required, or included in this release | Any future projection must remain downstream of task ledgers and must never become routing, evidence, state, or audit authority |
 | Learning feedback evidence | Covered for schema, examples, and audit gate | `schemas/learning-feedback.schema.json`, `examples/full-mode-task/learning-feedback.json`, `tests/test_valp_audit.py` |
 | Doctor/User/Leader authority chain | Covered for capability passports, explicit user-selected Leader evidence, Leader declarations, validation blockers, and publish-without-routing behavior | `tests/test_valp_doctor.py`, `tests/test_valp_workflow.py` |
 | Assignment declaration and validation schemas | Covered for bundled examples and negative cases | `schemas/assignment-declaration.schema.json`, `schemas/assignment-validation.schema.json`, `tests/test_schema_examples.py` |
@@ -197,7 +198,7 @@ and exports the required receipts and evidence.
 | Provider-specific live cancellation breadth remains bounded | LangGraph and the reference Queue now have executable cancellation/proof paths; HERDR 0.7.4 still exposes no atomic cancel command | Keep HERDR cancellation unsupported until the runtime executes the operation and records identity-bound effect proof; retain Queue production-host and cross-platform proof as separate gates |
 | Optional App installer behavior is not a protocol runtime | First-launch UX can accidentally hide path, Leader binding, preflight, and submit boundaries | First-install health gate is specified; any App must expose the same CLI-verifiable evidence |
 | Windows local Full Mode is conditional | Native Windows runtime support is beta-dependent | Recommend SSH remote for stable Windows workflow |
-| Stable release is not yet closed | RFC real-E2E, profile conformance, review, CI, tag, release, and post-release smoke remain open | Evaluate the exact candidate SHA and do not present it as the default stable install |
+| Protocol/reference CLI release | Closed by PR #35, `v0.3.0` tag, GitHub Release, and post-release smoke | Keep runtime, provider, platform, and production claims scoped to their own evidence |
 | Small public community | Social proof is low | Avoid community-size overclaims |
 
 ## Promotion Language
@@ -231,4 +232,4 @@ HERDR-free automation path already shipped
 1. Turn the visible dispatch process proof into a full sanitized live Full Mode
    completion case study with runtime submission proof and final audit output.
 2. Add an independently operated hosted or agent-provider adapter path.
-3. Grow RFCs, failure cases, and adapter feedback around the `v0.3.0` candidate.
+3. Grow RFCs, failure cases, and adapter feedback around the released `v0.3.0` line.

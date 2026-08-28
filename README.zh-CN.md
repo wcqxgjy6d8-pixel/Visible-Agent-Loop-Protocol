@@ -1,24 +1,55 @@
-# Visible Agent Loop Protocol 中文入口
+# Oh! My Agent Teams
+
+## 让一个人，也能带着一支 Agent 团队做事
+
+**Agent 说做完，VALP 要证据。**
+
+你不需要先成立一间大公司，也不需要先部署十个 Agent。
+
+从一台 Windows、macOS 或 Linux 电脑、两个 Agent 和一个小任务开始：
+
+- 一个 Agent 负责执行；
+- 一个 Agent 负责检查；
+- VALP 负责确认这件事是否真的完成。
+
+它不只是把 Agent 接在一起聊天，而是把派工、执行、产物、验证、审查和最终结论，
+串成一条看得见的工作记录。
+
+## 一个人的公司，也可以有自己的 Agent Team
+
+你正在经营一个 OPC（One-Person Company，一人公司）：
+
+研究 Agent 找市场资料，Builder Agent 写功能，测试 Agent 验证结果，Review Agent
+找问题，而你只在真正重要的地方做决定。
+
+你不用一直盯着每个窗口问“你到底做完了吗？”。VALP 会要求答案附带证据：
+
+- 任务交给了谁？
+- Agent 是否真的收到并执行？
+- 产物放在哪里？
+- 测试和验证是否完成？
+- 有没有独立审查？
+- 为什么这次可以进入 Done？
+
+## 从个人试玩，到企业交付
+
+对普通用户，你可以从两个 Agent 开始，亲手体验一次完整的协作流程。
+
+对 OPC 创业者，你可以把研究、开发、内容、测试和运营工作拆给不同 Agent，自己保留
+决策权。
+
+对企业团队，你可以追踪不同 Agent 的分工、证据、审查与批准，知道一个交付为什么
+可以完成，而不是只看到一句“Done”。
+
+对 Runtime 和 Orchestrator 开发者，VALP 提供通用的 receipts、evidence、review
+和 audit 语义，让不同模型、工具和 Agent 系统都能用同一种方式证明工作结果。
+
+`Oh! My Agent Teams` 是让人想点进来的入口；`VALP` 是让人相信结果的证据与验收协议。
+
+这两个身份都指向同一个问题：**执行成功，不等于交付完成。**
 
 本页是中文入口，不是协议规范原文。若本页与 `SPEC.md`、`schemas/` 或
 `valp audit` 行为冲突，以英文规范和机器可验证规则为准。
-
-VALP 是一个面向多 Agent 工作流的可见证据协议。它解决的问题很窄：
-
-```text
-Agent 或 Runtime 说 done，用户凭什么相信？
-```
-
-VALP 要求任务过程留下可审计的证据：
-
-- 谁被分配了任务；
-- dispatch 有没有真的提交；
-- 预期证据是什么；
-- 证据文件是否存在；
-- 验证、审查、审批是否通过；
-- 最终结论引用了哪些证据。
-
-所以 VALP 更像一个多 Agent 工作流的验收单，而不是聊天提示词集合。
 
 ## 完整工作流
 
@@ -37,14 +68,19 @@ Doctor 观察当前能力真值
   -> 可选的确定性单任务 Task Graph 投影
 ```
 
-![VALP 0.3 Doctor 到 Audit 工作流](docs/assets/valp-v03-open-core-overview.gif)
+![VALP v0.3.0 ontology 引导的完整工作流](docs/assets/valp-workflow-loop-v0.3.0.gif)
 
-这张动图是解释图，不是 Runtime 或 release 证明。逐步语义见
+这张 ontology 引导动图是解释图，不是 Runtime 或 release 证明。Ontology 只用于
+路由与上下文投影，证据 ledger、独立审查与 `valp audit` 才是权威；Task Graph 只是下游只读投影。逐步语义见
 [完整可见流程](docs/visual-flow.md)，可复核的真实 publish/dispatch 片段见
 [公开过程证据](docs/case-studies/visible-dispatch-process-proof.md)。
+也可查看 [PNG](docs/assets/valp-workflow-loop-v0.3.0.png)、
+[GIF](docs/assets/valp-workflow-loop-v0.3.0.gif)、可编辑的
+[Excalidraw 源文件](docs/assets/valp-workflow-loop-v0.3.0.excalidraw) 与
+[资产说明](docs/assets/valp-workflow-loop-v0.3.0-spec.json)。
 
 Task Graph 只读显示单个任务已有的 receipts、evidence 与 audit 摘要，不能生成
-证据或改变审计结果。Neo4j 不在本候选版中，也不是依赖；下一版可以把它作为
+证据或改变审计结果。Neo4j 不在 v0.3.0 发布版中，也不是依赖；后续版本可以把它作为
 可选 ontology 投影，但它只能读取既有 task ledger，永远不能成为路由、证据或
 审计权威。
 
@@ -76,20 +112,17 @@ branch、push、pull request 或 merge 是用户与其 Agent 自己的后续工�
 
 ## 版本入口与兼容性
 
-当前候选协议版本线是 `v0.3.0`，reference CLI package 为
-`0.3.0`，可以从候选分支和精确 SHA 做明确评估。RFC 要求的真实
-non-HERDR E2E、分 profile conformance、required checks、external review、merge、
-不可变 tag、GitHub release metadata 和 post-release smoke 尚未全部完成；
-在此之前它不是 stable release。`v0.2.0` 只保留为
+当前正式发布版本为 `v0.3.0`，reference CLI package 为 `0.3.0`。该发布已完成
+同提交验证、审查、合并、不可变 tag、GitHub Release 与发布后 smoke。`v0.2.0` 只保留为
 旧运行复现与迁移来源；旧 tag 和 release 会保留为不可变的历史记录。升级与兼容规则见
 [版本与兼容性](docs/versioning-and-compatibility.md)。
 
-## v0.3.0 候选协议与参考 CLI
+## v0.3.0 已发布协议与参考 CLI
 
 协议 wire/version target 是 `0.3.0`，当前 reference CLI package 是
 `0.3.0`。[RFC 0001](docs/rfcs/0001-v0.3-installation-control-plane.md)
-语义已纳入 `SPEC.md`、schemas 与 reference CLI，但 stable-version Done Criteria
-尚未闭合。请看 [v0.3 implementation guide](docs/v0.3-implementation.md)。
+语义已纳入 `SPEC.md`、schemas 与 reference CLI，协议与 reference CLI 发布关卡已闭合。
+请看 [v0.3 implementation guide](docs/v0.3-implementation.md)。
 
 如果把 Prompt、Tools、Agents 看成 Software 3.0 的执行层，VALP 更像外面的
 控制与验收层：它不负责让模型突然更聪明，而是让控制决策和 done claim
@@ -107,8 +140,8 @@ non-HERDR E2E、分 profile conformance、required checks、external review、me
 - Provider-neutral plugin manifest 检查、显式 migration，以及包含负面与恢复
   场景的 conformance tests。
 
-当前是协议与 reference CLI 候选版，不表示任何 Runtime、Provider、
-平台、生产部署或 stable release 已得到证明。
+v0.3.0 发布证明的是本仓库所测试的协议核心和 reference CLI；不表示任何
+Runtime、Provider、平台或生产部署已普遍得到证明。
 
 对外声明按证据包分层：协议与 reference CLI 由 schemas、测试和 bundled audits
 证明；自动 Full Mode 由具体 runtime adapter 的 dispatch/session/evidence/review

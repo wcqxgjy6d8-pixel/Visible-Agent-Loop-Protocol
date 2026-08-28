@@ -40,19 +40,19 @@ Doctor 观察能力护照 -> 用户选择 Installation Leader -> 发布任务
 
 完整时序见[可见工作流](../visual-flow.md)，图谱边界见
 [Task Graph 与 Ontology](../task-graph.md)。Task Graph 不能生成 proof，也不能
-改变 audit。Neo4j 不属于本候选版；下一版如采用，也只能作为读取现有 ledger 的
+改变 audit。Neo4j 不属于 v0.3.0 发布版；后续如采用，也只能作为读取现有 ledger 的
 可选 ontology 投影，不能成为路由、证据或审计权威。
 
 ## 版本入口与兼容性
 
-当前使用版本线是 `v0.3.0`，可以从候选分支和精确 SHA 做明确评估。`v0.3` 的
-required checks、external review、merge、不可变 tag 和 release 仍是发布流程 gate；
-完成前，候选版本不是默认的公开安装入口。`v0.2.0` 只保留为旧运行复现与迁移来源；详细规则见
+当前正式发布版本是 `v0.3.0`，可使用不可变 tag 或对应 `main` commit。该版本已完成
+required checks、external review、merge、不可变 tag、GitHub Release 和发布后 smoke。
+`v0.2.0` 只保留为旧运行复现与迁移来源；详细规则见
 [版本与兼容性](../versioning-and-compatibility.md)。
 
-## v0.3.0：从任务验收到安装级控制平面
+## v0.3.0：已发布的安装级控制平面
 
-当前协议候选版本是 `0.3.0`，reference CLI 候选版本是 `0.3.0`。
+当前正式协议版本是 `0.3.0`，已发布 reference CLI 版本是 `0.3.0`。
 [RFC 0001](../rfcs/0001-v0.3-installation-control-plane.md) 已接受，其
 installation-control-plane core、schemas、claim/review、task reducer 和
 local-process adapter 已在 reference CLI 中落地。Runtime 支持范围仍以具体
@@ -67,13 +67,13 @@ adapter 证据为边界。
 | 能力真值 | 当前 scan、routing、provider matrix 和 task evidence | 持久 registry 分开记录 `official_claim`、`local_presence`、`live_callable`、`task_verified` |
 | 执行契约 | task receipts、expected evidence、review、approval、audit | 严格 message、event-sourced state、claim-evidence、deterministic failure、exact-artifact review |
 | Provider 边界 | Runtime adapter 导出同等 receipts 和 evidence | Provider plugin 使用 manifest、最小权限和隔离边界，不能直接改协议 core state |
-| 稳定证明 | 仓库测试、bundled examples，以及本地 LangGraph API 的真实非 HERDR false-done E2E | 必须补齐实现、迁移、负面/恢复 conformance，以及更强的重启与 continuation 证明 |
+| 稳定证明 | 仓库测试、bundled examples、跨平台 CI，以及本地 LangGraph API 的真实非 HERDR false-done E2E | 生产托管、真实 HERDR Full Mode 崩溃恢复、原生 Windows Full Mode 仍需独立证据 |
 
 这里最重要的不是多几个名词，而是 proof bar：用户选择 Leader 不等于信任
 Leader；发现 CLI、Skill 或 MCP 不等于已经能调用；Runtime completed 仍不等于
 VALP Done；写完 RFC 更不等于功能已经发布。
 
-未来 `0.3.0` 的稳定称号只会覆盖协议与 reference CLI，不表示跨 runtime continuation
+`v0.3.0` 的稳定发布范围只覆盖协议与 reference CLI，不表示跨 runtime continuation
 或生产部署已经普遍成立。当前 LangGraph 开发 runtime 的公开脱敏 E2E 只证明
 该 adapter/runtime pair。请同时查看[当前项目状态](../project-status.md)，
 不要把局部证明扩张成通用平台承诺。

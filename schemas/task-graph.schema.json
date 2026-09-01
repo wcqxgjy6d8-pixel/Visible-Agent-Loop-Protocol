@@ -4,7 +4,7 @@
   "title": "VALP Task Graph",
   "description": "A deterministic, projection-only, evidence-linked user-facing view of one VALP task. It is not an authority or proof source.",
   "type": "object",
-  "required": ["schema_version", "graph_kind", "authority", "projection_only", "task_id", "status", "audit", "nodes", "edges"],
+  "required": ["schema_version", "graph_kind", "authority", "projection_only", "task_id", "status", "summary", "audit", "nodes", "edges", "task_state_transition_digest"],
   "properties": {
     "schema_version": {"const": "valp-task-graph.v1"},
     "graph_kind": {"const": "task_graph"},
@@ -12,6 +12,62 @@
     "projection_only": {"const": true},
     "task_id": {"type": "string", "minLength": 1, "pattern": "^[^/\\\\]+$"},
     "status": {"enum": ["unknown", "new", "published", "scanning_capabilities", "scanning_context", "loading_local_overlay", "selecting_runtime_adapter", "classifying_task", "selecting_profile", "decomposing_tasks", "recommending_skills", "building_provider_matrix", "scoring_routes", "routing_capabilities", "routing_squad", "dispatching", "suspended", "planned", "locked", "executing", "verifying", "reviewing", "resolving_agent_recommendations", "fixing", "approval_required", "recording", "running", "blocked", "done", "failed", "cancelled", "pass", "warn", "fail"]},
+    "summary": {
+      "type": "object",
+      "required": ["current_status", "task_state_transition_digest", "current_blockers", "missing_evidence", "correction", "automation", "approval", "cost", "continuation", "next_action"],
+      "properties": {
+        "current_status": {"type": "string", "minLength": 1},
+        "task_state_transition_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "current_blockers": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "missing_evidence": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]*$"}},
+        "correction": {
+          "type": "object", "additionalProperties": false,
+          "required": ["round", "max_rounds", "status"],
+          "properties": {
+            "round": {"type": "integer", "minimum": 0},
+            "max_rounds": {"type": "integer", "minimum": 0},
+            "status": {"enum": ["not_started", "active", "fixed", "blocked", "failed", "superseded"]}
+          }
+        },
+        "automation": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "mode", "selected_action"],
+          "properties": {
+            "status": {"enum": ["recorded", "not_recorded"]},
+            "mode": {"type": "string", "minLength": 1},
+            "selected_action": {"type": "string", "minLength": 1}
+          }
+        },
+        "approval": {
+          "type": "object", "additionalProperties": false,
+          "required": ["gate", "required", "outstanding"],
+          "properties": {
+            "gate": {"enum": ["not_required", "needs_approval", "passed", "blocked", "failed", "unknown"]},
+            "required": {"type": "boolean"},
+            "outstanding": {"type": "integer", "minimum": 0}
+          }
+        },
+        "cost": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {"enum": ["not_recorded", "budgeted", "estimated", "evidenced"]},
+            "ref": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]*$"}
+          }
+        },
+        "continuation": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {"enum": ["not_available", "unknown", "pending", "received", "verified", "accepted", "started", "consumed", "rejected", "failed", "superseded", "waiting", "resumed", "suspended"]},
+            "event": {"type": "string", "minLength": 1},
+            "ref": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]*$"}
+          }
+        },
+        "next_action": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "audit": {
       "type": "object",
       "required": ["status", "pass_count", "warn_count", "fail_count", "skip_count"],
@@ -24,6 +80,7 @@
       },
       "additionalProperties": false
     },
+    "task_state_transition_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "ontology_ref": {"const": "ontology is used for routing; it is not this user-facing graph"},
     "nodes": {
       "type": "array",

@@ -3141,6 +3141,15 @@ for this projection. The graph remains separate from any ontology or routing
 projection: ontology may inform routing, while the Task Graph only presents
 task-local ledger and audit state.
 
+The graph `status` MUST be copied from the authoritative `state.json` workflow
+projection when that projection is present. Audit success, complete receipts,
+and existing evidence MUST NOT promote an earlier operational phase (such as
+`dispatching`) to `done`. Each graph MUST expose a
+`task_state_transition_digest` over the canonical task id, revision, status,
+gates, and active blockers; the same digest MUST appear in its `summary`.
+Consumers MAY use this digest to detect that a graph and a state snapshot came
+from different task-state transitions.
+
 Agents must not make runtime/build/test/lint/UI verification claims without
 concrete evidence. Claims such as "build passed", "tests passed", "UI verified",
 or equivalent must cite a command log, screenshot, receipt, or evidence path.

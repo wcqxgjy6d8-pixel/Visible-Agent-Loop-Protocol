@@ -34,6 +34,20 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     return records
 
 
+def _receipt_ledger(task_dir: Path) -> tuple[str, list[dict[str, Any]]]:
+    """Load the authoritative adopted ledger when a task uses runtime v3."""
+    adopted = [
+        adapter_id
+        for adapter_id in ("herdr", "queue", "manual", "langgraph")
+        if (task_dir / "runtime" / adapter_id / "adoption.json").is_file()
+    ]
+    if len(adopted) == 1:
+        ref = f"runtime/{adopted[0]}/receipts.v3.jsonl"
+        return ref, _load_jsonl(task_dir / ref)
+    ref = "dispatch-receipts.jsonl"
+    return ref, _load_jsonl(task_dir / ref)
+
+
 def _task_goal(task_dir: Path, task_id: str) -> str:
     try:
         lines = task_dir.joinpath("task.md").read_text(encoding="utf-8").splitlines()
@@ -74,7 +88,17 @@ def _expected_refs(task_dir: Path, evidence_board: dict[str, Any], receipts: lis
                 expanded.add(ref.replace("<agent>", agent))
         else:
             expanded.add(ref)
-    return sorted(ref for ref in expanded if _is_safe_task_ref(ref))
+    # Evidence-board claims may name an evidence class (for example
+    # "command log") rather than a file. Only project file-like refs into the
+    # graph; receipt expected_refs remain authoritative for work-item artifacts.
+    file_refs = {
+        ref
+        for ref in expanded
+        if ref == "dispatch-receipts.jsonl"
+        or "/" in ref
+        or ref.endswith((".json", ".jsonl", ".md", ".txt"))
+    }
+    return sorted(ref for ref in file_refs if _is_safe_task_ref(ref))
 
 
 def _is_safe_task_ref(value: str) -> bool:
@@ -121,15 +145,162 @@ def _audit_summary(audit_report: dict[str, Any] | None) -> dict[str, Any]:
     return {"status": status if status in {"pass", "warn", "fail", "not_run"} else "not_run", **counts}
 
 
+def _task_state_transition_digest(state: dict[str, Any]) -> str:
+    """Bind the graph to the authoritative workflow-state snapshot.
+
+    The Task Graph is a read model, so it must not manufacture a terminal
+    status from audit/receipt evidence.  This digest gives consumers a stable
+    identity for the status transition snapshot they read alongside the graph.
+    Volatile metadata and unrelated task fields are intentionally excluded.
+    """
+    transition = {
+        "task_id": str(state.get("task_id") or ""),
+        "revision": state.get("revision", 0),
+        "status": str(state.get("status") or "unknown"),
+        "gates": state.get("gates") if isinstance(state.get("gates"), dict) else {},
+        "active_blockers": state.get("active_blockers") if isinstance(state.get("active_blockers"), list) else [],
+    }
+    payload = json.dumps(transition, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _receipt_status(receipts: list[dict[str, Any]], agent: str) -> str:
-    events = [str(item.get("event") or "") for item in receipts if str(item.get("agent") or "") == agent]
-    if "dispatch_completed" in events:
+    """Project the current state from the latest valid receipt for an Agent.
+
+    A historical completion must not hide a later blocked retry. Receipts with
+    an explicit event sequence are ordered by that sequence; legacy records
+    retain their append order.
+    """
+    candidates = [
+        (index, item)
+        for index, item in enumerate(receipts)
+        if str(item.get("agent") or "") == agent
+        and str(item.get("event") or "") in {
+            "dispatch_written",
+            "dispatch_inserted",
+            "dispatch_submitted",
+            "dispatch_completed",
+            "dispatch_blocked",
+            "manual_blocked",
+            "manual_result_attested",
+        }
+    ]
+    if not candidates:
+        return "planned"
+    all_sequenced = all(type(item.get("event_sequence")) is int for _, item in candidates)
+    _, latest = max(candidates, key=lambda pair: (int(pair[1]["event_sequence"]) if all_sequenced else pair[0], pair[0]))
+    event = str(latest.get("event") or "")
+    if event in {"dispatch_completed", "manual_result_attested"}:
         return "completed"
-    if "dispatch_submitted" in events:
+    if event == "dispatch_submitted":
         return "running"
-    if "dispatch_blocked" in events or "manual_blocked" in events:
+    if event in {"dispatch_blocked", "manual_blocked"}:
         return "blocked"
     return "planned"
+
+
+def _correction_summary(task_dir: Path) -> dict[str, Any]:
+    correction = _load_json(task_dir / "correction-cycle.json")
+    rounds = correction.get("rounds") if isinstance(correction.get("rounds"), list) else []
+    max_rounds = correction.get("max_rounds")
+    if type(max_rounds) is not int or max_rounds < 0:
+        budget = _load_json(task_dir / "iteration-budget.json")
+        max_rounds = budget.get("max_fix_review_rounds")
+    if type(max_rounds) is not int or max_rounds < 0:
+        max_rounds = 0
+    status = str(correction.get("status") or ("active" if rounds else "not_started"))
+    if status not in {"not_started", "active", "fixed", "blocked", "failed", "superseded"}:
+        status = "active" if rounds else "not_started"
+    return {"round": len(rounds), "max_rounds": max_rounds, "status": status}
+
+
+def _automation_summary(task_dir: Path) -> dict[str, Any]:
+    policy = _load_json(task_dir / "automation-policy.json")
+    return {
+        "status": "recorded" if policy else "not_recorded",
+        "mode": str(policy.get("mode") or "unknown"),
+        "selected_action": str(policy.get("selected_action") or "unknown"),
+    }
+
+
+def _approval_summary(state: dict[str, Any]) -> dict[str, Any]:
+    gates = state.get("gates") if isinstance(state.get("gates"), dict) else {}
+    required = state.get("approval_required")
+    required_items = required if isinstance(required, list) else []
+    gate = str(gates.get("approval") or ("needs_approval" if required_items else "unknown"))
+    if gate not in {"not_required", "needs_approval", "passed", "blocked", "failed", "unknown"}:
+        gate = "unknown"
+    return {"gate": gate, "required": bool(required_items), "outstanding": len(required_items)}
+
+
+def _cost_summary(task_dir: Path) -> dict[str, Any]:
+    report = _load_json(task_dir / "cost-report.json")
+    budget = _load_json(task_dir / "cost-budget.json")
+    if report:
+        status = "evidenced" if report.get("actual_billed_status") == "evidenced" else "estimated"
+        ref = "cost-report.json"
+    elif budget:
+        status = "budgeted"
+        ref = "cost-budget.json"
+    else:
+        status = "not_recorded"
+        ref = None
+    result: dict[str, Any] = {"status": status}
+    if ref:
+        result["ref"] = ref
+    return result
+
+
+def _continuation_summary(task_dir: Path, state: dict[str, Any]) -> dict[str, Any]:
+    events = _load_jsonl(task_dir / "continuations" / "events.jsonl")
+    if events:
+        latest = events[-1]
+        event = str(latest.get("event") or "unknown")
+        status_map = {
+            "resume_pending": "pending",
+            "resume_received": "received",
+            "digest_verified": "verified",
+            "resume_accepted": "accepted",
+            "continuation_started": "started",
+            "resume_consumed": "consumed",
+            "continuation_rejected": "rejected",
+            "continuation_failed": "failed",
+            "continuation_superseded": "superseded",
+        }
+        return {"status": status_map.get(event, "unknown"), "event": event, "ref": "continuations/events.jsonl"}
+    suspension = state.get("suspension") if isinstance(state.get("suspension"), dict) else {}
+    suspension_status = str(suspension.get("status") or "")
+    if suspension_status in {"waiting", "resumed", "suspended"}:
+        return {"status": suspension_status, "ref": "state.json#suspension"}
+    return {"status": "not_available"}
+
+
+def _current_blockers(
+    state: dict[str, Any],
+    routing: dict[str, Any],
+    audit: dict[str, Any],
+    missing_evidence: list[str],
+) -> list[str]:
+    blockers: list[str] = []
+    for source in (state, routing):
+        for key in ("active_blockers", "capabilities_missing", "blockers"):
+            values = source.get(key)
+            if isinstance(values, list):
+                blockers.extend(str(value) for value in values if value)
+    approval = state.get("approval_required")
+    if isinstance(approval, list):
+        blockers.extend("approval_required:" + str(item.get("kind") or item) for item in approval if item)
+    if missing_evidence:
+        blockers.append("missing_expected_evidence")
+    if audit.get("fail_count", 0) > 0:
+        blockers.append("audit_failures")
+    unique: list[str] = []
+    seen: set[str] = set()
+    for item in blockers:
+        if item and item not in seen:
+            seen.add(item)
+            unique.append(item)
+    return unique
 
 
 def _role_assignments(state: dict[str, Any], routing: dict[str, Any], declaration: dict[str, Any]) -> dict[str, str]:
@@ -147,11 +318,48 @@ def build_task_graph(task_dir: Path, audit_report: dict[str, Any] | None = None)
     routing = _load_json(task_dir / "routing.json")
     declaration = _load_json(task_dir / "assignment-declaration.json")
     evidence_board = _load_json(task_dir / "evidence-board.json")
-    receipts = _load_jsonl(task_dir / "dispatch-receipts.jsonl")
+    receipt_ref, receipts = _receipt_ledger(task_dir)
     source_task_id = str(state.get("task_id") or routing.get("task_id") or task_dir.name)
     task_id = _graph_id(source_task_id, "task")
     assignments = dict(sorted(_role_assignments(state, routing, declaration).items()))
     expected_refs = _expected_refs(task_dir, evidence_board, receipts)
+    audit = _audit_summary(audit_report)
+    missing_evidence = [ref for ref in expected_refs if not (task_dir / ref).is_file()]
+    # state.json is the authoritative workflow-state projection.  Audit and
+    # receipts explain that state but cannot silently promote dispatching (or
+    # any other phase) to done in this downstream read model.
+    task_status = str(state.get("status") or "unknown")
+    transition_digest = _task_state_transition_digest(state)
+    blockers = _current_blockers(state, routing, audit, missing_evidence)
+    approval = _approval_summary(state)
+    if approval["gate"] in {"needs_approval", "blocked", "failed"} and not any(
+        item.startswith("approval_required:") for item in blockers
+    ):
+        blockers.append("approval_gate_unresolved")
+    if blockers:
+        next_action = "Resolve current blockers, then refresh valp audit."
+    elif missing_evidence:
+        next_action = "Produce missing expected evidence, then refresh valp audit."
+    elif audit["status"] == "fail":
+        next_action = "Address audit failures before treating the task as complete."
+    elif approval["gate"] == "needs_approval":
+        next_action = "Obtain the required approval before continuing."
+    elif task_status == "done" and audit["status"] == "pass":
+        next_action = "No action: task and audit are currently closed."
+    else:
+        next_action = "Continue the declared workflow and refresh valp audit."
+    summary = {
+        "current_status": task_status,
+        "task_state_transition_digest": transition_digest,
+        "current_blockers": [_display(item) for item in blockers],
+        "missing_evidence": missing_evidence,
+        "correction": _correction_summary(task_dir),
+        "automation": _automation_summary(task_dir),
+        "approval": approval,
+        "cost": _cost_summary(task_dir),
+        "continuation": _continuation_summary(task_dir, state),
+        "next_action": next_action,
+    }
 
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
@@ -160,7 +368,7 @@ def build_task_graph(task_dir: Path, audit_report: dict[str, Any] | None = None)
         "id": f"task:{task_id}",
         "kind": "task",
         "label": _display(source_task_id),
-        "status": str(state.get("status") or "unknown"),
+        "status": task_status,
         "detail": _display(_task_goal(task_dir, source_task_id)),
         "refs": ["state.json", "task.md"],
     })
@@ -169,12 +377,12 @@ def build_task_graph(task_dir: Path, audit_report: dict[str, Any] | None = None)
         role_id = _graph_id(role, "role")
         agent_token = _graph_id(agent, "agent")
         work_id = f"workitem:{role_id}"
-        status = _receipt_status(receipts, agent)
+        work_status = _receipt_status(receipts, agent)
         nodes.append({
             "id": work_id,
             "kind": "workitem",
             "label": _display(role),
-            "status": status,
+            "status": work_status,
             "detail": f"Assigned to {_display(agent)}",
             "refs": ["assignment-declaration.json", "routing.json"],
         })
@@ -220,13 +428,12 @@ def build_task_graph(task_dir: Path, audit_report: dict[str, Any] | None = None)
             "label": _display(event),
             "status": "recorded",
             "detail": _display(f"{agent} · {receipt.get('ts', '')}".strip(" ·")),
-            "refs": ["dispatch-receipts.jsonl"],
+            "refs": [receipt_ref],
         })
         role = next((_graph_id(role, "role") for role, owner in assignments.items() if owner == agent), None)
         if role:
             edges.append({"from": f"workitem:{role}", "to": node_id, "type": "RECORDED_AS"})
 
-    audit = _audit_summary(audit_report)
     audit_status = audit["status"]
     nodes.append({
         "id": "audit:valp",
@@ -245,7 +452,9 @@ def build_task_graph(task_dir: Path, audit_report: dict[str, Any] | None = None)
         "authority": "task-local-ledger-and-audit",
         "projection_only": True,
         "task_id": task_id,
-        "status": str(state.get("status") or "unknown"),
+        "status": task_status,
+        "summary": summary,
+        "task_state_transition_digest": transition_digest,
         "audit": audit,
         "nodes": sorted(nodes, key=lambda node: str(node["id"])),
         "edges": sorted(edges, key=lambda edge: (str(edge["from"]), str(edge["to"]), str(edge["type"]))),
@@ -303,9 +512,10 @@ def render_task_graph(graph: dict[str, Any], output_dir: Path, formats: set[str]
     if "html" in formats:
         path = output_dir / "task-graph.html"
         payload = json.dumps(graph, ensure_ascii=False, sort_keys=True, separators=(",", ":")).replace("</", "<\\/")
+        summary = graph.get("summary") or {}
         page = f"""<!doctype html><meta charset=\"utf-8\"><title>VALP Task Graph · {html.escape(graph['task_id'])}</title>
-<style>body{{margin:0;background:#0b1015;color:#dce6ed;font:14px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}}header{{padding:20px 24px;border-bottom:1px solid #2a3945}}h1{{margin:0 0 6px;font-size:20px}}p{{margin:0;color:#9fb0bc}}main{{overflow:auto;padding:18px}}svg{{display:block;min-width:1100px;max-width:none}}.meta{{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;color:#b9c9d4}}a{{color:#8dc7ff}}</style>
-<header><h1>VALP Task Graph · {html.escape(graph['task_id'])}</h1><p>{html.escape(str(graph.get('ontology_ref', '')))}</p><div class=\"meta\"><span>Status: {html.escape(str(graph.get('status')))}</span><span>Audit: {html.escape(str(graph.get('audit', {}).get('status','not_run')))}</span><span>Projection only: yes</span></div></header><main>{svg}</main><script type=\"application/json\" id=\"task-graph\">{payload}</script>"""
+<style>body{{margin:0;background:#0b1015;color:#dce6ed;font:14px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}}header{{padding:20px 24px;border-bottom:1px solid #2a3945}}h1{{margin:0 0 6px;font-size:20px}}p{{margin:0;color:#9fb0bc}}main{{overflow:auto;padding:18px}}svg{{display:block;min-width:1100px;max-width:none}}.meta{{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;color:#b9c9d4}}.summary{{margin-top:14px;line-height:1.7;color:#dce6ed}}a{{color:#8dc7ff}}</style>
+<header><h1>VALP Task Graph · {html.escape(graph['task_id'])}</h1><p>{html.escape(str(graph.get('ontology_ref', '')))}</p><div class=\"meta\"><span>Status: {html.escape(str(graph.get('status')))}</span><span>Audit: {html.escape(str(graph.get('audit', {}).get('status','not_run')))}</span><span>Projection only: yes</span></div><section class=\"summary\"><strong>Next action:</strong> {html.escape(str(summary.get('next_action', '')))}<br><strong>Blockers:</strong> {html.escape(', '.join(summary.get('current_blockers', [])) or 'none')}<br><strong>Missing evidence:</strong> {html.escape(', '.join(summary.get('missing_evidence', [])) or 'none')}</section></header><main>{svg}</main><script type=\"application/json\" id=\"task-graph\">{payload}</script>"""
         path.write_text(page, encoding="utf-8")
         written.append(path)
     return written

@@ -1,6 +1,11 @@
-# VALP 中文注解
+# Oh! My Agent Teams · VALP 中文注解
 
 根目录中文入口见 [../../README.zh-CN.md](../../README.zh-CN.md)。
+
+**Agent 说做完，VALP 要证据。**
+
+`Oh! My Agent Teams` 是人类入口；VALP（Visible Agent Loop Protocol）是其
+下方的可见证据与验收协议。执行成功不等于交付完成。
 
 本页是中文注解，不是协议规范原文。若本页与 `SPEC.md`、`schemas/` 或
 `valp audit` 行为冲突，以英文规范和机器可验证规则为准。
@@ -47,8 +52,7 @@ Doctor 观察能力护照 -> 用户选择 Installation Leader -> 发布任务
 
 当前正式发布版本是 `v0.3.0`，可使用不可变 tag 或对应 `main` commit。该版本已完成
 required checks、external review、merge、不可变 tag、GitHub Release 和发布后 smoke。
-`v0.2.0` 只保留为旧运行复现与迁移来源；详细规则见
-[版本与兼容性](../versioning-and-compatibility.md)。
+版本历史与迁移说明见 [版本与兼容性](../versioning-and-compatibility.md)。
 
 ## v0.3.0：已发布的安装级控制平面
 
@@ -98,6 +102,10 @@ HERDR 只是当前参考 Runtime。其他 Runtime 只要能导出同等的 recei
 evidence、state mapping 和 audit 数据，也可以实现 VALP。
 
 ## 最小体验路径
+
+如果你要从 Forward-Deployed Engineer（FDE，前线部署工程师）的一线交付场景开始，请先读 [FDE 现场交付 walkthrough](../case-studies/fde-field-delivery.md)。它把
+`valp configure`、route validation、Task Graph 摘要和 `valp audit` 串起来，并
+明确区分配置/源码证据、Runtime 证据与生产证据。
 
 如果你只是想理解协议，不需要先安装 Runtime：
 

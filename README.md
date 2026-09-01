@@ -86,19 +86,20 @@ Doctor observes current capability truth
   -> optional deterministic single-task Task Graph projection
 ```
 
-![VALP v0.3.0 ontology-guided complete workflow](docs/assets/valp-workflow-loop-v0.3.0.gif)
+![Oh! My Agent Teams cover](docs/assets/oh-my-agent-teams-cover-v0.3.0.png)
 
-This ontology-guided animation is an explanatory map, not runtime or release
+![VALP execution flow](docs/assets/oh-my-agent-teams-execution-v0.3.0.png)
+
+This ontology-guided diagram is an explanatory map, not runtime or release
 proof. Ontology is advisory for routing and context projection; the evidence
 ledger plus independent review and `valp audit` remain authoritative. Task
 Graph is a downstream read-only projection. The [visual timeline](docs/visual-flow.md)
 defines each handoff, while the
 [public process proof](docs/case-studies/visible-dispatch-process-proof.md)
 shows machine-checkable excerpts from a real publish-and-dispatch run.
-View the [PNG](docs/assets/valp-workflow-loop-v0.3.0.png),
-[GIF](docs/assets/valp-workflow-loop-v0.3.0.gif), editable
-[Excalidraw source](docs/assets/valp-workflow-loop-v0.3.0.excalidraw), or
-[asset specification](docs/assets/valp-workflow-loop-v0.3.0-spec.json).
+View the [authority map](docs/assets/oh-my-agent-teams-authority-v0.3.0.png),
+[completion gates](docs/assets/oh-my-agent-teams-completion-v0.3.0.png), or the
+[responsive explainer](docs/oh-my-agent-teams.html).
 
 The Task Graph is a read-only view of one task's existing receipts, evidence,
 and audit summary. It never creates proof or changes audit state. Neo4j is not

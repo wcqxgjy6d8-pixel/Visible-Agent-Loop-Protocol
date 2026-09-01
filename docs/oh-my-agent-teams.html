@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Oh! My Agent Teams - VALP Explainer</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f4f7fb;
+      --white: #fff;
+      --ink: #111318;
+      --muted: #5e6673;
+      --rule: #c9d0da;
+      --blue: #2155f5;
+      --blue-soft: #e6edff;
+      --green: #00a86b;
+      --green-soft: #daf5e9;
+      --red: #e23c46;
+      --red-soft: #ffe2e5;
+      --yellow: #f4c542;
+      --display: "Arial Black", "Helvetica Neue", Arial, sans-serif;
+      --body: "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+      --mono: "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: #dce2ea;
+      color: var(--ink);
+      font-family: var(--body);
+      letter-spacing: 0;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+
+    .deck {
+      width: min(1200px, calc(100vw - 56px));
+      margin: 28px auto 72px;
+      box-shadow: 0 26px 70px rgba(17, 19, 24, .16);
+    }
+    .sheet {
+      position: relative;
+      width: 100%;
+      overflow: hidden;
+      isolation: isolate;
+      background: var(--paper);
+      border: 1px solid #aab3bf;
+      border-bottom: 0;
+    }
+    .sheet:last-child { border-bottom: 1px solid #aab3bf; }
+    .grid-paper::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -3;
+      background-image:
+        linear-gradient(var(--rule) 1px, transparent 1px),
+        linear-gradient(90deg, var(--rule) 1px, transparent 1px);
+      background-size: 48px 48px;
+      opacity: .3;
+    }
+
+    /* Cover */
+    .cover {
+      aspect-ratio: 1200 / 630;
+      min-height: 630px;
+    }
+    .cover::after {
+      content: "";
+      position: absolute;
+      right: -80px;
+      top: -120px;
+      z-index: -2;
+      width: 510px;
+      height: 820px;
+      background: var(--blue);
+      transform: rotate(12deg);
+    }
+    .topline {
+      position: absolute;
+      left: 54px;
+      right: 54px;
+      top: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      font: 700 13px var(--mono);
+      text-transform: uppercase;
+    }
+    .protocol { display: flex; align-items: center; gap: 12px; }
+    .protocol-mark {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      background: var(--ink);
+      color: var(--white);
+      font: 15px var(--display);
+    }
+    .edition { color: rgba(255, 255, 255, .88); text-align: right; }
+    .headline {
+      position: absolute;
+      left: 54px;
+      top: 96px;
+      z-index: 3;
+      width: 730px;
+    }
+    h1 {
+      margin-bottom: 0;
+      font: 900 88px/.9 var(--display);
+      letter-spacing: 0;
+    }
+    h1 .oh {
+      display: block;
+      width: fit-content;
+      padding: 4px 15px 10px;
+      background: var(--red);
+      color: var(--white);
+      box-shadow: 8px 8px 0 var(--ink);
+      transform: rotate(-2deg);
+    }
+    h1 .teams { display: block; margin-top: 19px; white-space: nowrap; }
+    .promise {
+      width: 570px;
+      margin: 28px 0 0;
+      font-size: 23px;
+      line-height: 1.34;
+      font-weight: 700;
+    }
+    .promise strong { color: var(--blue); }
+    .proof-bench {
+      position: absolute;
+      right: 38px;
+      top: 103px;
+      z-index: 4;
+      width: 390px;
+      height: 400px;
+    }
+    .gate {
+      position: absolute;
+      left: 102px;
+      top: 0;
+      width: 225px;
+      height: 364px;
+      border: 12px solid var(--ink);
+      border-bottom-width: 26px;
+      background: rgba(255, 255, 255, .12);
+    }
+    .gate::before {
+      content: "PROOF GATE";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: -34px;
+      color: var(--white);
+      font: 800 12px var(--mono);
+      text-align: center;
+    }
+    .gate::after {
+      content: "";
+      position: absolute;
+      left: 20px;
+      right: 20px;
+      top: 49%;
+      height: 5px;
+      background: var(--yellow);
+      box-shadow: 0 16px 0 var(--ink);
+    }
+    .ticket {
+      position: absolute;
+      width: 224px;
+      min-height: 112px;
+      padding: 13px 15px 12px;
+      background: var(--white);
+      border: 2px solid var(--ink);
+      box-shadow: 7px 7px 0 rgba(17, 19, 24, .24);
+      font-family: var(--mono);
+    }
+    .ticket header {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding-bottom: 9px;
+      border-bottom: 2px solid var(--ink);
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .ticket p {
+      margin: 10px 0 0;
+      font-size: 12px;
+      line-height: 1.45;
+      font-weight: 700;
+    }
+    .verdict {
+      display: inline-block;
+      margin-top: 11px;
+      padding: 4px 7px;
+      color: var(--white);
+      font: 900 11px var(--mono);
+    }
+    .ticket.research { left: 0; top: 58px; transform: rotate(-7deg); }
+    .ticket.research .verdict { background: var(--green); }
+    .ticket.build { right: 0; top: 168px; transform: rotate(5deg); }
+    .ticket.build .verdict { background: var(--red); }
+    .ticket.review { left: 38px; bottom: -5px; transform: rotate(-2deg); }
+    .ticket.review .verdict { background: var(--blue); }
+    .principle {
+      position: absolute;
+      left: 54px;
+      bottom: 37px;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font: 800 14px var(--mono);
+      text-transform: uppercase;
+    }
+    .principle span {
+      padding: 7px 9px;
+      border: 2px solid var(--ink);
+      background: var(--white);
+    }
+    .principle i { width: 25px; height: 2px; background: var(--ink); }
+    .microcopy {
+      position: absolute;
+      right: 54px;
+      bottom: 31px;
+      z-index: 5;
+      width: 350px;
+      margin: 0;
+      color: var(--white);
+      font-size: 13px;
+      line-height: 1.4;
+      font-weight: 700;
+      text-align: right;
+    }
+
+    /* Shared explainer layout */
+    .section-inner {
+      width: min(1088px, calc(100% - 108px));
+      margin: 0 auto;
+      padding: 72px 0 78px;
+    }
+    .section-heading {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 315px;
+      gap: 54px;
+      align-items: end;
+      padding-bottom: 34px;
+      border-bottom: 4px solid var(--ink);
+    }
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 0 0 13px;
+      color: var(--blue);
+      font: 900 12px/1.4 var(--mono);
+      text-transform: uppercase;
+    }
+    .eyebrow::before { content: ""; width: 28px; height: 8px; background: var(--blue); }
+    .section-heading h2 {
+      margin: 0;
+      font: 58px/1 var(--display);
+      letter-spacing: 0;
+    }
+    .section-heading .intro {
+      margin: 0;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.55;
+      font-weight: 650;
+    }
+
+    /* Execution map */
+    .process-list { position: relative; margin: 0; padding: 0; list-style: none; }
+    .process-list::before {
+      content: "";
+      position: absolute;
+      left: 47px;
+      top: 50px;
+      bottom: 50px;
+      width: 4px;
+      background: var(--ink);
+    }
+    .process-step {
+      position: relative;
+      display: grid;
+      grid-template-columns: 96px minmax(0, 1fr) 278px;
+      gap: 30px;
+      min-height: 157px;
+      padding: 33px 0 30px;
+      border-bottom: 1px solid #919aa7;
+    }
+    .process-step:last-child { border-bottom: 0; }
+    .step-number {
+      position: relative;
+      z-index: 2;
+      width: 54px;
+      height: 54px;
+      display: grid;
+      place-items: center;
+      margin-left: 21px;
+      border: 4px solid var(--ink);
+      background: var(--white);
+      font: 21px var(--display);
+    }
+    [data-tone="blue"] .step-number,
+    [data-tone="red"] .step-number,
+    [data-tone="green"] .step-number { color: var(--white); }
+    [data-tone="blue"] .step-number { background: var(--blue); }
+    [data-tone="red"] .step-number { background: var(--red); }
+    [data-tone="green"] .step-number { background: var(--green); }
+    .step-copy { min-width: 0; }
+    .step-label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--blue);
+      font: 900 12px/1.3 var(--mono);
+      text-transform: uppercase;
+    }
+    .step-copy h3 {
+      margin: 0 0 9px;
+      font: 27px/1.15 var(--display);
+      letter-spacing: 0;
+    }
+    .step-copy p {
+      max-width: 580px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.58;
+      font-weight: 600;
+    }
+    .proof-slip {
+      position: relative;
+      align-self: center;
+      min-height: 91px;
+      padding: 13px 14px;
+      border: 2px solid var(--ink);
+      background: var(--white);
+      box-shadow: 5px 5px 0 rgba(17, 19, 24, .16);
+      font-family: var(--mono);
+    }
+    .proof-slip::before {
+      content: "PROOF";
+      position: absolute;
+      right: 11px;
+      top: 10px;
+      padding: 3px 5px;
+      background: var(--ink);
+      color: var(--white);
+      font-size: 9px;
+      font-weight: 900;
+    }
+    .proof-slip strong, .proof-slip span { display: block; max-width: calc(100% - 50px); }
+    .proof-slip strong { margin-bottom: 7px; font-size: 11px; line-height: 1.35; }
+    .proof-slip span { color: var(--muted); font-size: 11px; line-height: 1.45; font-weight: 700; }
+    .handoff-note {
+      display: grid;
+      grid-template-columns: 180px minmax(0, 1fr);
+      gap: 28px;
+      align-items: center;
+      margin-top: 18px;
+      padding: 22px 26px;
+      background: var(--ink);
+      color: var(--white);
+    }
+    .handoff-note strong { color: var(--yellow); font: 900 13px var(--mono); text-transform: uppercase; }
+    .handoff-note p { margin: 0; font-size: 15px; line-height: 1.55; font-weight: 650; }
+
+    /* Authority map */
+    .roles-sheet { background: var(--white); }
+    .role-table { margin-top: 38px; border-top: 2px solid var(--ink); }
+    .role-row {
+      display: grid;
+      grid-template-columns: 170px minmax(0, 1fr) minmax(0, .82fr);
+      border-bottom: 1px solid #919aa7;
+    }
+    .role-name, .role-control, .role-limit { padding: 24px 22px; }
+    .role-name {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-right: 1px solid #919aa7;
+      font: 19px/1.2 var(--display);
+    }
+    .role-index {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      background: var(--ink);
+      color: var(--white);
+      font: 11px var(--mono);
+    }
+    .role-control {
+      border-right: 1px solid #919aa7;
+      font-size: 15px;
+      line-height: 1.55;
+      font-weight: 700;
+    }
+    .role-limit { color: var(--muted); font-size: 14px; line-height: 1.55; font-weight: 600; }
+    .role-limit b {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--red);
+      font: 900 10px var(--mono);
+      text-transform: uppercase;
+    }
+    .authority-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-top: 48px;
+      border: 2px solid var(--ink);
+    }
+    .authority-item {
+      min-height: 144px;
+      padding: 19px 18px;
+      border-right: 2px solid var(--ink);
+    }
+    .authority-item:last-child { border-right: 0; }
+    .authority-item span {
+      display: block;
+      margin-bottom: 17px;
+      font: 900 10px var(--mono);
+      text-transform: uppercase;
+    }
+    .authority-item strong {
+      display: block;
+      margin-bottom: 8px;
+      font: 19px/1.1 var(--display);
+    }
+    .authority-item p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; font-weight: 650; }
+    .advisory { background: var(--blue-soft); }
+    .proof { background: var(--green-soft); }
+    .judge { background: var(--yellow); }
+    .view { background: var(--red-soft); }
+
+    /* Completion gate */
+    .done-sheet { min-height: 760px; background: var(--ink); color: var(--white); }
+    .done-sheet::before {
+      content: "";
+      position: absolute;
+      right: -180px;
+      top: -160px;
+      width: 580px;
+      height: 580px;
+      border: 54px solid var(--blue);
+      transform: rotate(19deg);
+      opacity: .85;
+      z-index: -1;
+    }
+    .done-sheet .section-heading { border-bottom-color: var(--white); }
+    .done-sheet .section-heading .intro { color: #c4cbd5; }
+    .done-sheet .eyebrow { color: var(--yellow); }
+    .done-sheet .eyebrow::before { background: var(--yellow); }
+    .completion-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 330px;
+      gap: 64px;
+      margin-top: 43px;
+      align-items: start;
+    }
+    .checklist { margin: 0; padding: 0; list-style: none; }
+    .checklist li {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+      padding: 14px 0;
+      border-bottom: 1px solid #49505a;
+      font-size: 16px;
+      line-height: 1.45;
+      font-weight: 650;
+    }
+    .checkmark {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      background: var(--green);
+      color: var(--white);
+      font: 17px var(--display);
+    }
+    .checklist code { color: var(--yellow); font: 13px var(--mono); }
+    .audit-ticket {
+      position: relative;
+      padding: 24px 22px 20px;
+      background: var(--white);
+      color: var(--ink);
+      border: 3px solid var(--ink);
+      box-shadow: 12px 12px 0 var(--blue);
+      transform: rotate(1.5deg);
+      font-family: var(--mono);
+    }
+    .audit-ticket::before, .audit-ticket::after {
+      content: "";
+      position: absolute;
+      left: -3px;
+      width: calc(100% + 6px);
+      height: 8px;
+      background: repeating-linear-gradient(90deg, transparent 0 12px, var(--ink) 12px 18px);
+    }
+    .audit-ticket::before { top: -11px; }
+    .audit-ticket::after { bottom: -11px; }
+    .ticket-kicker {
+      display: flex;
+      justify-content: space-between;
+      padding-bottom: 13px;
+      border-bottom: 2px dashed var(--ink);
+      font-size: 10px;
+      font-weight: 900;
+    }
+    .audit-pass {
+      display: block;
+      margin: 22px 0 8px;
+      color: var(--green);
+      font: 35px/1 var(--display);
+    }
+    .audit-count { display: block; margin-bottom: 24px; font-size: 18px; font-weight: 900; }
+    .audit-ticket p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; font-weight: 700; }
+    .state-gate {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      margin-top: 57px;
+      border: 2px solid var(--white);
+    }
+    .state-gate div { padding: 18px 20px; border-right: 2px solid var(--white); }
+    .state-gate div:last-child { border-right: 0; }
+    .state-gate strong, .state-gate span { display: block; }
+    .state-gate strong { margin-bottom: 6px; font: 19px var(--display); }
+    .state-gate span { color: #b6bdc7; font-size: 12px; line-height: 1.4; font-weight: 650; }
+    .state-gate .done strong { color: #4ee4aa; }
+    .state-gate .blocked strong { color: var(--yellow); }
+    .state-gate .failed strong { color: #ff7780; }
+    .closing-note {
+      display: flex;
+      justify-content: space-between;
+      gap: 32px;
+      margin-top: 44px;
+      padding-top: 24px;
+      border-top: 1px solid #49505a;
+      color: #b6bdc7;
+      font: 700 11px/1.55 var(--mono);
+    }
+    .closing-note strong { color: var(--white); }
+
+    @media (max-width: 900px) {
+      .deck { width: min(calc(100% - 32px), 760px); margin-top: 16px; }
+      .cover { min-height: 850px; aspect-ratio: auto; }
+      .cover::after { right: -260px; top: 390px; height: 640px; }
+      .topline { left: 36px; right: 36px; }
+      .edition { color: var(--ink); }
+      .headline { left: 36px; top: 100px; width: calc(100% - 72px); }
+      h1 { font-size: 64px; }
+      .proof-bench { right: 40px; top: 410px; }
+      .principle { left: 36px; bottom: 36px; }
+      .microcopy { right: 36px; bottom: 32px; }
+      .section-inner { width: calc(100% - 72px); }
+      .section-heading { grid-template-columns: 1fr; gap: 20px; }
+      .process-step { grid-template-columns: 84px minmax(0, 1fr); }
+      .process-list::before { left: 41px; }
+      .step-number { margin-left: 14px; }
+      .proof-slip { grid-column: 2; max-width: 390px; }
+      .role-row { grid-template-columns: 150px minmax(0, 1fr); }
+      .role-name { grid-row: span 2; }
+      .role-control { border-right: 0; }
+      .role-limit { grid-column: 2; padding-top: 0; }
+      .authority-strip { grid-template-columns: repeat(2, 1fr); }
+      .authority-item:nth-child(2) { border-right: 0; }
+      .authority-item:nth-child(-n + 2) { border-bottom: 2px solid var(--ink); }
+      .completion-layout { grid-template-columns: 1fr; }
+      .audit-ticket { width: min(360px, 90%); justify-self: center; }
+    }
+
+    @media (max-width: 560px) {
+      .deck { width: calc(100% - 24px); margin: 12px auto 36px; box-shadow: 0 14px 38px rgba(17, 19, 24, .14); }
+      .cover { min-height: 740px; }
+      .cover::after { right: -250px; top: 360px; height: 600px; }
+      .topline { left: 24px; right: 24px; top: 22px; font-size: 10px; }
+      .protocol { gap: 8px; }
+      .protocol-mark { width: 26px; height: 26px; font-size: 13px; }
+      .edition { max-width: 96px; }
+      .headline { left: 24px; top: 82px; width: calc(100% - 48px); }
+      h1 { font-size: 44px; line-height: .94; }
+      h1 .teams { margin-top: 14px; white-space: normal; }
+      .promise { width: 100%; margin-top: 22px; font-size: 18px; }
+      .proof-bench { right: 0; top: 350px; transform: scale(.72); transform-origin: top right; }
+      .principle { left: 24px; bottom: 23px; z-index: 6; flex-wrap: wrap; gap: 7px; width: 190px; font-size: 11px; }
+      .principle i { display: none; }
+      .microcopy { right: 22px; bottom: 22px; z-index: 7; width: 142px; font-size: 11px; }
+      .section-inner { width: calc(100% - 40px); padding: 52px 0 58px; }
+      .section-heading { gap: 18px; padding-bottom: 25px; }
+      .section-heading h2 { font-size: 39px; }
+      .section-heading .intro { font-size: 15px; }
+      .process-list::before { left: 24px; top: 38px; bottom: 44px; }
+      .process-step { grid-template-columns: 50px minmax(0, 1fr); gap: 14px; padding: 28px 0 27px; }
+      .step-number { width: 38px; height: 38px; margin-left: 5px; border-width: 3px; font-size: 16px; }
+      .step-copy h3 { font-size: 22px; }
+      .step-copy p { font-size: 14px; }
+      .proof-slip { grid-column: 2; min-height: 84px; box-shadow: 4px 4px 0 rgba(17, 19, 24, .14); }
+      .handoff-note { grid-template-columns: 1fr; gap: 8px; padding: 20px; }
+      .role-table { margin-top: 30px; }
+      .role-row { grid-template-columns: 1fr; }
+      .role-name, .role-control, .role-limit { padding: 17px 16px; }
+      .role-name { grid-row: auto; border-right: 0; border-bottom: 1px solid var(--rule); }
+      .role-control { border-right: 0; padding-bottom: 8px; }
+      .role-limit { grid-column: auto; padding-top: 6px; }
+      .authority-strip { grid-template-columns: 1fr; margin-top: 34px; }
+      .authority-item { min-height: 0; border-right: 0; border-bottom: 2px solid var(--ink); }
+      .authority-item:last-child { border-bottom: 0; }
+      .completion-layout { gap: 48px; margin-top: 32px; }
+      .checklist li { grid-template-columns: 34px minmax(0, 1fr); gap: 12px; font-size: 14px; }
+      .checkmark { width: 28px; height: 28px; font-size: 15px; }
+      .state-gate { grid-template-columns: 1fr; margin-top: 46px; }
+      .state-gate div { border-right: 0; border-bottom: 1px solid #6a717b; }
+      .state-gate div:last-child { border-bottom: 0; }
+      .closing-note { display: block; }
+      .closing-note span { display: block; margin-top: 10px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+    <section class="sheet cover grid-paper" aria-labelledby="cover-title">
+      <header class="topline">
+        <div class="protocol">
+          <span class="protocol-mark" aria-hidden="true">V</span>
+          <span>VALP / Visible Agent Loop Protocol</span>
+        </div>
+        <div class="edition">Open protocol / v0.3.0</div>
+      </header>
+
+      <div class="headline">
+        <h1 id="cover-title">
+          <span class="oh">Oh!</span>
+          <span class="teams">My Agent Teams</span>
+        </h1>
+        <p class="promise">
+          一个人，也能带着一支 Agent 团队做事。<br>
+          Agent 说完成，<strong>VALP 检查证据。</strong>
+        </p>
+      </div>
+
+      <div class="proof-bench" aria-label="Agent work passing through an evidence gate">
+        <div class="gate" aria-hidden="true"></div>
+        <article class="ticket research">
+          <header><span>RESEARCH.AGENT</span><span>01</span></header>
+          <p>sources: 12<br>citations: attached</p>
+          <span class="verdict">EVIDENCE READY</span>
+        </article>
+        <article class="ticket build">
+          <header><span>BUILD.AGENT</span><span>02</span></header>
+          <p>tests: 803 passed<br>review: missing</p>
+          <span class="verdict">NOT DONE</span>
+        </article>
+        <article class="ticket review">
+          <header><span>REVIEW.AGENT</span><span>03</span></header>
+          <p>exact artifact checked<br>audit: fail_count=0</p>
+          <span class="verdict">PROOF ACCEPTED</span>
+        </article>
+      </div>
+
+      <footer class="principle" aria-label="VALP proof sequence">
+        <span>Visible work</span><i></i><span>Receipts</span><i></i><span>Audit</span>
+      </footer>
+      <p class="microcopy">User-selected Leader. Independent review.<br>Evidence before Done.</p>
+    </section>
+
+    <section class="sheet grid-paper" aria-labelledby="workflow-title">
+      <div class="section-inner">
+        <header class="section-heading">
+          <div>
+            <p class="eyebrow">Operation map / 06 gates</p>
+            <h2 id="workflow-title">它怎么执行</h2>
+          </div>
+          <p class="intro">不是把几个 Agent 拉进群聊。每一步都留下可回看的决定、收据与产物，下一步只在门禁满足后发生。</p>
+        </header>
+
+        <ol class="process-list">
+          <li class="process-step" data-tone="blue">
+            <div class="step-number">01</div>
+            <div class="step-copy">
+              <span class="step-label">Observe / Publish</span>
+              <h3>先确认谁能做，再把意图变成任务</h3>
+              <p>Doctor 观察当前 Agent 能力；用户明确选择 Installation Leader 并发布任务。任务目标、风险与预期证据从这里进入可审计记录。</p>
+            </div>
+            <div class="proof-slip"><strong>USER INTENT</strong><span>capability passport<br>task.md + approval risk</span></div>
+          </li>
+          <li class="process-step">
+            <div class="step-number">02</div>
+            <div class="step-copy">
+              <span class="step-label">Declare</span>
+              <h3>Leader 拆解工作，并声明角色</h3>
+              <p>Leader 定义 WorkItems，指定谁实现、谁只读复核，并为每项工作声明必须返回的证据。VALP 不会暗中替用户选择 Leader，也不会替 Leader 偷换 Agent。</p>
+            </div>
+            <div class="proof-slip"><strong>ASSIGNMENT</strong><span>WorkItems + roles<br>expected evidence refs</span></div>
+          </li>
+          <li class="process-step" data-tone="red">
+            <div class="step-number">03</div>
+            <div class="step-copy">
+              <span class="step-label">Validate / Dispatch</span>
+              <h3>先过能力与权限检查，再公开派工</h3>
+              <p>VALP 检查能力、上下文、Skill、权限与证据契约；运行时通过 preflight 后绑定 Worker 会话并可见派发。只把文字塞进窗口，不等于真正提交。</p>
+            </div>
+            <div class="proof-slip"><strong>VISIBLE HANDOFF</strong><span>preflight + binding<br>dispatch_submitted</span></div>
+          </li>
+          <li class="process-step">
+            <div class="step-number">04</div>
+            <div class="step-copy">
+              <span class="step-label">Execute / Verify</span>
+              <h3>Worker 做事，也必须交出证据</h3>
+              <p>Worker 执行、研究或制作，并返回精确产物、命令记录和身份绑定的完成收据。验证针对真实文件与真实工具输出，不接受一句“done”代替结果。</p>
+            </div>
+            <div class="proof-slip"><strong>WORKER RETURN</strong><span>artifact + command log<br>dispatch_completed</span></div>
+          </li>
+          <li class="process-step" data-tone="blue">
+            <div class="step-number">05</div>
+            <div class="step-copy">
+              <span class="step-label">Review / Correct</span>
+              <h3>独立复核；有问题就有界返工</h3>
+              <p>Reviewer 以只读方式检查同一份精确产物。严重问题进入修复、再派发、再验证、再复核；最多三轮，同一阻塞重复出现就缩小范围或停下来问用户。</p>
+            </div>
+            <div class="proof-slip"><strong>INDEPENDENT CHECK</strong><span>findings + review<br>correction-cycle</span></div>
+          </li>
+          <li class="process-step" data-tone="green">
+            <div class="step-number">06</div>
+            <div class="step-copy">
+              <span class="step-label">Resolve / Audit</span>
+              <h3>处理建议与审批，最后才审计收口</h3>
+              <p>Leader 处理各 Agent 的建议；高风险动作等待用户批准；随后记录最终结论与反馈。<code>valp audit</code> 检查整条证据链，生命周期状态再单独进入 Done、Blocked 或 Failed。</p>
+            </div>
+            <div class="proof-slip"><strong>GATED CLOSURE</strong><span>recommendations + approval<br>audit + final state</span></div>
+          </li>
+        </ol>
+
+        <div class="handoff-note">
+          <strong>The key distinction</strong>
+          <p>运行时显示 completed，只说明执行状态变化；只有收据、预期证据、验证、独立复核和审计一起闭合，VALP 才接受完成主张。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="sheet roles-sheet" aria-labelledby="roles-title">
+      <div class="section-inner">
+        <header class="section-heading">
+          <div>
+            <p class="eyebrow">Authority map / no hidden control</p>
+            <h2 id="roles-title">谁控制什么</h2>
+          </div>
+          <p class="intro">Agent 可以很聪明，但权限不能含糊。决定权、执行权、复核权和裁决权被刻意拆开。</p>
+        </header>
+
+        <div class="role-table" role="table" aria-label="VALP role and authority boundaries">
+          <div class="role-row" role="row">
+            <div class="role-name" role="cell"><span class="role-index">U</span>User</div>
+            <div class="role-control" role="cell">选择 Leader；设定目标；批准发布、上传、释放、认证或破坏性操作。</div>
+            <div class="role-limit" role="cell"><b>Boundary</b>未明确批准时，高风险动作停在门外。</div>
+          </div>
+          <div class="role-row" role="row">
+            <div class="role-name" role="cell"><span class="role-index">L</span>Leader</div>
+            <div class="role-control" role="cell">拆解 WorkItems；声明 Worker 与 Reviewer；综合结果；决定建议如何进入当前范围。</div>
+            <div class="role-limit" role="cell"><b>Boundary</b>不能绕过用户批准，也不能把自己的判断伪装成 Worker 证据。</div>
+          </div>
+          <div class="role-row" role="row">
+            <div class="role-name" role="cell"><span class="role-index">W</span>Worker</div>
+            <div class="role-control" role="cell">在限定范围内执行任务；使用可达工具；返回精确产物、命令证据与建议。</div>
+            <div class="role-limit" role="cell"><b>Boundary</b>“我完成了”不是证明；不能自行扩大权限或发布结果。</div>
+          </div>
+          <div class="role-row" role="row">
+            <div class="role-name" role="cell"><span class="role-index">R</span>Reviewer</div>
+            <div class="role-control" role="cell">独立、只读地检查实现与证据；记录阻塞问题、风险和可操作建议。</div>
+            <div class="role-limit" role="cell"><b>Boundary</b>不修改被审对象；复核结论不能替代缺失的原始证据。</div>
+          </div>
+          <div class="role-row" role="row">
+            <div class="role-name" role="cell"><span class="role-index">V</span>VALP</div>
+            <div class="role-control" role="cell">验证声明、控制派发门禁、记录收据、检查证据链并运行确定性审计。</div>
+            <div class="role-limit" role="cell"><b>Boundary</b>协议不秘密选择 Agent，不制造证据，也不把图表当成事实。</div>
+          </div>
+        </div>
+
+        <div class="authority-strip" aria-label="Ontology, evidence, audit and task graph boundaries">
+          <div class="authority-item advisory">
+            <span>Advisory brain</span><strong>Ontology</strong>
+            <p>帮助分解、路由与投影上下文；它给建议，不给完成证明。</p>
+          </div>
+          <div class="authority-item proof">
+            <span>Proof</span><strong>Evidence</strong>
+            <p>真实产物、收据与验证记录；每个主张都能回到精确引用。</p>
+          </div>
+          <div class="authority-item judge">
+            <span>Judge</span><strong>Audit</strong>
+            <p>确定性检查门禁是否闭合；不是模型投票，也不是视觉印象。</p>
+          </div>
+          <div class="authority-item view">
+            <span>Read-only dashboard</span><strong>Task Graph</strong>
+            <p>把已有任务事实投影给用户看；只读，不改变证据或审计状态。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="sheet done-sheet" aria-labelledby="done-title">
+      <div class="section-inner">
+        <header class="section-heading">
+          <div>
+            <p class="eyebrow">Acceptance desk / final gate</p>
+            <h2 id="done-title">什么时候才算完成</h2>
+          </div>
+          <p class="intro">完成不是一句话，也不是一个绿色状态灯。它是一组能被别人重新检查的事实。</p>
+        </header>
+
+        <div class="completion-layout">
+          <ul class="checklist">
+            <li><span class="checkmark">V</span><span>Leader 声明的全部预期证据都存在，并指向任务内的精确产物。</span></li>
+            <li><span class="checkmark">V</span><span>真实提交与完成收据绑定到正确的 Agent、会话和 WorkItem。</span></li>
+            <li><span class="checkmark">V</span><span>验证通过；独立复核没有未解决的 critical / high 阻塞项。</span></li>
+            <li><span class="checkmark">V</span><span>所有选中 Agent 的建议已接受、合并、限定后续、拒绝或升级，不被静默忽略。</span></li>
+            <li><span class="checkmark">V</span><span>需要用户批准的动作已经明确批准；没有从沉默中推断权限。</span></li>
+            <li><span class="checkmark">V</span><span>最终综合与反馈已记录；<code>valp audit</code> 返回 <code>fail_count=0</code>。</span></li>
+          </ul>
+
+          <aside class="audit-ticket" aria-label="Example accepted audit ticket">
+            <div class="ticket-kicker"><span>VALP / AUDIT</span><span>FINAL</span></div>
+            <span class="audit-pass">PASS</span>
+            <span class="audit-count">fail_count = 0</span>
+            <p>Evidence present<br>Review resolved<br>Approval satisfied<br>Recommendations closed</p>
+            <span class="verdict" style="background: var(--green);">PROOF ACCEPTED</span>
+          </aside>
+        </div>
+
+        <div class="state-gate" aria-label="Separate task lifecycle outcomes">
+          <div class="done"><strong>Done</strong><span>所有适用门禁已闭合，完成主张可被复查。</span></div>
+          <div class="blocked"><strong>Blocked</strong><span>外部依赖或授权缺失，证据保留，任务不冒充完成。</span></div>
+          <div class="failed"><strong>Failed</strong><span>验证、复核或有界修复未通过，明确记录失败原因。</span></div>
+        </div>
+
+        <footer class="closing-note">
+          <strong>VALP / Visible Agent Loop Protocol</strong>
+          <span>Explanatory map only. Not runtime, Full Mode, platform-parity, or production-reliability proof.</span>
+        </footer>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

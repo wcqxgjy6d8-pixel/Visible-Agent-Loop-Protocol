@@ -66,14 +66,20 @@ review, recommendation resolution, approval, synthesis, feedback, and
 `valp audit` close the task. The optional Task Graph then projects that one
 task without changing it. See the [visual flow](visual-flow.md).
 
-![VALP v0.3.0 ontology-guided complete workflow](assets/valp-workflow-loop-v0.3.0.gif)
+![Oh! My Agent Teams cover](assets/oh-my-agent-teams-cover-v0.3.0.png)
 
-The animation is an ontology-guided explanatory map, not runtime or release
+![VALP execution flow](assets/oh-my-agent-teams-execution-v0.3.0.png)
+
+The diagram is an ontology-guided explanatory map, not runtime or release
 proof. Ontology is advisory for routing and context projection; the task-local
 evidence ledger, independent review, and `valp audit` remain authoritative.
 Task Graph is a downstream read-only projection. Neo4j is not part of the
 `v0.3.0` release. A future version may use it as an optional ontology projection,
 but never as protocol truth, completion proof, or audit authority.
+
+See the [authority map](assets/oh-my-agent-teams-authority-v0.3.0.png),
+[completion gates](assets/oh-my-agent-teams-completion-v0.3.0.png), and the
+[responsive explainer](oh-my-agent-teams.html).
 
 VALP `v0.3.0` is the published protocol release and `0.3.0` reference CLI.
 The release completed external review, same-commit CI, merge, immutable tag,

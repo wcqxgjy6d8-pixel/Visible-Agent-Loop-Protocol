@@ -557,6 +557,43 @@ class SchemaExampleTests(unittest.TestCase):
         self.assertNotIn("0.3 rc", normalized)
         self.assertNotIn("next: ontology", normalized)
 
+        for relative_path, asset_prefix in (
+            ("README.md", "docs/assets/"),
+            ("README.zh-CN.md", "docs/assets/"),
+            ("docs/index.md", "assets/"),
+            ("docs/case-studies/visible-dispatch-process-proof.md", "../assets/"),
+        ):
+            document = (ROOT / relative_path).read_text(encoding="utf-8")
+            with self.subTest(path=relative_path):
+                self.assertRegex(
+                    document,
+                    rf"!\[[^]]+\]\({re.escape(asset_prefix)}oh-my-agent-teams-cover-v0\.3\.0\.png\)",
+                )
+                self.assertRegex(
+                    document,
+                    rf"!\[[^]]+\]\({re.escape(asset_prefix)}oh-my-agent-teams-execution-v0\.3\.0\.png\)",
+                )
+                self.assertNotIn("valp-workflow-loop-v0.3.0.gif", document)
+
+    def test_oh_my_agent_teams_static_sections_and_responsive_source(self) -> None:
+        expected_sizes = {
+            "oh-my-agent-teams-cover-v0.3.0.png": (1200, 630),
+            "oh-my-agent-teams-execution-v0.3.0.png": (1200, 1482),
+            "oh-my-agent-teams-authority-v0.3.0.png": (1200, 937),
+            "oh-my-agent-teams-completion-v0.3.0.png": (1200, 1021),
+        }
+        for filename, dimensions in expected_sizes.items():
+            with self.subTest(asset=filename):
+                header = (ROOT / "docs/assets" / filename).read_bytes()
+                self.assertEqual(header[:8], b"\x89PNG\r\n\x1a\n")
+                width = int.from_bytes(header[16:20], "big")
+                height = int.from_bytes(header[20:24], "big")
+                self.assertEqual((width, height), dimensions)
+                self.assertGreater(len(header), 1000)
+        html = (ROOT / "docs/oh-my-agent-teams.html").read_text(encoding="utf-8")
+        for marker in ("cover-title", "workflow-title", "roles-title", "done-title"):
+            self.assertIn(marker, html)
+
     def test_dispatch_receipt_docs_show_concrete_v2_submission_identity(self) -> None:
         document = (ROOT / "docs" / "dispatch-receipts.md").read_text(encoding="utf-8")
         self.assertIn("Legacy/non-deterministic receipt example", document)

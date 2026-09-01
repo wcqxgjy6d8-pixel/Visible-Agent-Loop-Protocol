@@ -48,6 +48,16 @@ For automated Full Mode, [HERDR](https://github.com/ogulcancelik/herdr) is the
 current reference runtime. HERDR is not required by the protocol; any runtime
 can be VALP-compatible when it exports the required receipts and evidence.
 
+For a field-oriented starting point, read the [FDE field delivery
+walkthrough](docs/case-studies/fde-field-delivery.md). It shows how to
+preview a Leader-declared configuration, validate routing, inspect the current
+loop state, and hand over evidence without claiming runtime or production
+proof that has not been collected.
+
+The optional [FDE workbench boundary](docs/fde-workbench-boundary.md) keeps any
+future UI in the ecosystem layer: the task ledger, receipts, evidence, and
+`valp audit` remain authoritative.
+
 Languages: [English](README.md) | [中文](README.zh-CN.md)
 
 中文注解入口: [README.zh-CN.md](README.zh-CN.md) and
@@ -103,8 +113,8 @@ VALP `v0.3.0` is the published protocol release and MIT-licensed reference CLI.
 Use the immutable `v0.3.0` tag or matching `main` commit for reproducible source.
 The release completed the required non-HERDR E2E, profile conformance, CI,
 review, merge, immutable tag, release metadata, and post-release smoke gates.
-The `v0.2.0` release remains available as legacy reproduction and migration
-history. See [versioning and compatibility](docs/versioning-and-compatibility.md).
+Release history and migration notes live in
+[versioning and compatibility](docs/versioning-and-compatibility.md).
 It is not a mature hosted platform and should not be described as
 production-ready by itself.
 

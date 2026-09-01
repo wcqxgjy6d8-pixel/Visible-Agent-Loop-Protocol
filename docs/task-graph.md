@@ -59,6 +59,21 @@ This is a deterministic refresh path, not a claim of a live database or a
 real-time browser subscription. A graph can show `blocked`, `failed`, or
 missing evidence; it never makes `valp audit` pass.
 
+`state.json` is the authoritative workflow-state projection for the graph's
+`status`. The graph never promotes a phase such as `dispatching` to `done`
+just because audit and receipt evidence look complete. Each projection also
+contains `task_state_transition_digest` (and the same field in `summary`), a
+SHA-256 over the task id, revision, status, gates, and active blockers. Consumers
+can use it to detect that a graph and a state snapshot came from different
+transitions.
+
+The projection also exposes a stable `summary` object for field operators:
+`current_status`, `current_blockers`, `missing_evidence`, correction
+`round/max_rounds`, automation action, approval gate, cost recording,
+continuation state, and a deterministic `next_action`. These are read-model
+signals assembled from task-local artifacts; they do not grant approval,
+advance a loop, or replace an audit result.
+
 `task-graph.schema.json` owns the public projection shape. It allows only the
 six displayed node kinds, defined edge types, and safe task-relative refs.
 Implementations must reject or omit absolute paths and traversal refs instead

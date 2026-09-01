@@ -15,6 +15,11 @@ path across agents, tools, and orchestrators.
 Loop Protocol** is the trust layer underneath: execution success is not the
 same thing as delivery completion.
 
+This repository is the normative home of the open VALP protocol and its
+reference CLI. For a field-oriented starting point, read the [FDE field
+delivery walkthrough](case-studies/fde-field-delivery.md), which separates
+configuration/source evidence from runtime and production proof.
+
 See the [minimal audit demo](minimal-audit-demo.md) for the text-based
 PASS / FAIL / PASS example.
 
@@ -31,6 +36,8 @@ Start here:
 - [Compound learning loop](compound-learning-loop.md)
 - [When Agent "Done" Is Not Done](when-agent-done-is-not-done.md)
 - [Minimal audit demo](minimal-audit-demo.md)
+- [FDE field delivery walkthrough](case-studies/fde-field-delivery.md)
+- [FDE workbench boundary](fde-workbench-boundary.md)
 - [Visible dispatch process proof](case-studies/visible-dispatch-process-proof.md)
 - [Failure gallery](failure-gallery.md)
 - [Correction cycle evidence](correction-cycle.md)
@@ -76,7 +83,9 @@ See the [authority map](assets/oh-my-agent-teams-authority-v0.3.0.png),
 
 VALP `v0.3.0` is the published protocol release and `0.3.0` reference CLI.
 The release completed external review, same-commit CI, merge, immutable tag,
-release, and post-release smoke. It is not a hosted production platform.
+release, and post-release smoke. Release history and migration notes live in
+[versioning and compatibility](versioning-and-compatibility.md). It is not a
+hosted production platform.
 
 ## Protocol 0.3 Layered Architecture
 

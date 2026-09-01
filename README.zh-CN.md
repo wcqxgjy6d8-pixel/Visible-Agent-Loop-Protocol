@@ -114,9 +114,8 @@ branch、push、pull request 或 merge 是用户与其 Agent 自己的后续工�
 ## 版本入口与兼容性
 
 当前正式发布版本为 `v0.3.0`，reference CLI package 为 `0.3.0`。该发布已完成
-同提交验证、审查、合并、不可变 tag、GitHub Release 与发布后 smoke。`v0.2.0` 只保留为
-旧运行复现与迁移来源；旧 tag 和 release 会保留为不可变的历史记录。升级与兼容规则见
-[版本与兼容性](docs/versioning-and-compatibility.md)。
+同提交验证、审查、合并、不可变 tag、GitHub Release 与发布后 smoke。版本历史与迁移
+说明见 [版本与兼容性](docs/versioning-and-compatibility.md)。
 
 ## v0.3.0 已发布协议与参考 CLI
 
@@ -158,6 +157,14 @@ provider-consumed ledger，以及在 provider 已消费、VALP 未落盘 receipt
 培训和支持服务属于独立的商业交付层，不随本仓库打包，也不把客户数据、凭证、
 本机控制根目录或部署密钥带进来。详细边界见
 [Open core and commercial boundary](docs/open-source-commercial-boundary.md)。
+
+如果你是一线 Forward-Deployed Engineer（FDE，前线部署工程师），先看[现场交付 walkthrough](docs/case-studies/fde-field-delivery.md)：
+它演示如何预览并应用 Leader 声明的配置、做 route validation、查看 Task Graph
+当前状态、补齐证据并交付可复核的 handoff。文档明确标出 synthetic/local/Manual
+边界，不把配置成功或 runtime `completed` 写成生产证明。
+
+UI/工作台属于生态层，不进入协议内核；其边界与权威来源见
+[FDE workbench boundary](docs/fde-workbench-boundary.md)。
 
 这里真正可推广的不是“VALP 内置 223 个 skill”。Skill 来自企业已经安装或接入的
 Agent / Runtime 环境：Doctor 先扫描每个 Agent 实际可达的 skill；用户选择的
